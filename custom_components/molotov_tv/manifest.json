@@ -1,0 +1,12 @@
+{
+  "domain": "molotov_tv",
+  "name": "Molotov TV",
+  "config_flow": true,
+  "documentation": "https://www.molotov.tv",
+  "requirements": ["pychromecast>=14.0.0"],
+  "after_dependencies": ["http"],
+  "codeowners": [],
+  "iot_class": "cloud_polling",
+  "version": "0.1.0",
+  "min_version": "2025.10.0"
+}

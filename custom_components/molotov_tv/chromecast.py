@@ -1,0 +1,289 @@
+# BSD 2-Clause License
+#
+# Copyright (c) 2026, Renaud Allard <renaud@allard.it>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""Chromecast casting helpers for Molotov TV."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class MolotovCastError(Exception):
+    """Raised when Chromecast casting fails."""
+
+
+async def async_cast_media(
+    hass: HomeAssistant,
+    *,
+    cast_target: str,
+    app_id: str,
+    asset_url: str,
+    content_type: str,
+    custom_data: dict[str, Any],
+    title: str | None,
+    is_live: bool,
+) -> None:
+    """Cast media to a Chromecast using the Molotov receiver."""
+
+    await hass.async_add_executor_job(
+        _cast_media_blocking,
+        cast_target,
+        app_id,
+        asset_url,
+        content_type,
+        custom_data,
+        title,
+        is_live,
+    )
+
+
+def _cast_media_blocking(
+    cast_target: str,
+    app_id: str,
+    asset_url: str,
+    content_type: str,
+    custom_data: dict[str, Any],
+    title: str | None,
+    is_live: bool,
+) -> None:
+    try:
+        import pychromecast
+        from pychromecast.controllers import media
+    except Exception as err:  # pragma: no cover - dependency import
+        raise MolotovCastError("pychromecast is not available") from err
+
+    _LOGGER.debug(
+        "pychromecast version: %s, available attrs: %s",
+        getattr(pychromecast, "__version__", "unknown"),
+        [a for a in dir(pychromecast) if not a.startswith("_")],
+    )
+
+    cast = None
+    browser = None
+    stop_discovery = None
+
+    try:
+        # Try to get stop_discovery function
+        try:
+            from pychromecast.discovery import stop_discovery
+        except ImportError:
+            _LOGGER.debug("stop_discovery not in pychromecast.discovery")
+            stop_discovery = None
+
+        # Try different pychromecast APIs
+        chromecasts = None
+
+        # Method 1: get_chromecasts with known_hosts (pychromecast 14+)
+        if chromecasts is None and hasattr(pychromecast, "get_chromecasts"):
+            _LOGGER.debug("Trying get_chromecasts(known_hosts=[%s])", cast_target)
+            try:
+                import inspect
+                sig = inspect.signature(pychromecast.get_chromecasts)
+                params = list(sig.parameters.keys())
+                _LOGGER.debug("get_chromecasts params: %s", params)
+
+                if "known_hosts" in params:
+                    result = pychromecast.get_chromecasts(
+                        known_hosts=[cast_target], timeout=10
+                    )
+                    if isinstance(result, tuple) and len(result) >= 2:
+                        chromecasts, browser = result[0], result[1]
+                    else:
+                        chromecasts = result
+                    _LOGGER.debug(
+                        "get_chromecasts result: chromecasts=%s, browser=%s",
+                        chromecasts, browser
+                    )
+            except Exception as err:
+                _LOGGER.debug("get_chromecasts failed: %s", err)
+
+        # Method 2: get_listed_chromecasts (older API)
+        if chromecasts is None and hasattr(pychromecast, "get_listed_chromecasts"):
+            _LOGGER.debug("Trying get_listed_chromecasts")
+            try:
+                import inspect
+                sig = inspect.signature(pychromecast.get_listed_chromecasts)
+                params = list(sig.parameters.keys())
+                _LOGGER.debug("get_listed_chromecasts params: %s", params)
+
+                result = pychromecast.get_listed_chromecasts()
+                if isinstance(result, tuple) and len(result) >= 2:
+                    chromecasts, browser = result[0], result[1]
+                else:
+                    chromecasts = result
+                _LOGGER.debug(
+                    "get_listed_chromecasts result: %d devices", len(chromecasts) if chromecasts else 0
+                )
+            except Exception as err:
+                _LOGGER.debug("get_listed_chromecasts failed: %s", err)
+
+        # Method 3: Direct Chromecast instantiation (legacy)
+        if chromecasts is None:
+            _LOGGER.debug("Trying direct Chromecast(%s)", cast_target)
+            try:
+                cast = pychromecast.Chromecast(cast_target)
+                chromecasts = [cast]
+                _LOGGER.debug("Direct Chromecast instantiation succeeded")
+            except Exception as err:
+                _LOGGER.debug("Direct Chromecast failed: %s", err)
+
+        # Method 4: Chromecast with host kwarg
+        if chromecasts is None:
+            _LOGGER.debug("Trying Chromecast(host=%s)", cast_target)
+            try:
+                cast = pychromecast.Chromecast(host=cast_target)
+                chromecasts = [cast]
+                _LOGGER.debug("Chromecast(host=) succeeded")
+            except Exception as err:
+                _LOGGER.debug("Chromecast(host=) failed: %s", err)
+
+        if not chromecasts:
+            raise MolotovCastError(
+                f"Chromecast '{cast_target}' was not found on the network. "
+                f"pychromecast version: {getattr(pychromecast, '__version__', 'unknown')}"
+            )
+
+        # Find matching chromecast by host
+        cast = None
+        for cc in chromecasts:
+            cc_host = None
+            if hasattr(cc, "host"):
+                cc_host = cc.host
+            elif hasattr(cc, "cast_info") and hasattr(cc.cast_info, "host"):
+                cc_host = cc.cast_info.host
+            elif hasattr(cc, "socket_client") and hasattr(cc.socket_client, "host"):
+                cc_host = cc.socket_client.host
+
+            _LOGGER.debug(
+                "Found chromecast: name=%s, host=%s, type=%s, attrs=%s",
+                getattr(cc, "name", getattr(cc, "friendly_name", "unknown")),
+                cc_host,
+                type(cc).__name__,
+                [a for a in dir(cc) if not a.startswith("_")][:20],
+            )
+
+            if cc_host == cast_target or cast is None:
+                cast = cc
+                if cc_host == cast_target:
+                    break
+
+        if cast is None:
+            raise MolotovCastError(
+                f"Chromecast '{cast_target}' not in discovered devices"
+            )
+
+        _LOGGER.debug("Using chromecast: %s", cast)
+        _LOGGER.debug("Waiting for chromecast connection...")
+        cast.wait()
+        _LOGGER.debug("Chromecast connected, device=%s", getattr(cast, "device", None))
+
+        if "cast_agent" not in custom_data and getattr(cast, "device", None):
+            device = cast.device
+            custom_data = {
+                **custom_data,
+                "cast_agent": {
+                    "model": getattr(device, "model_name", None)
+                    or getattr(device, "friendly_name", None)
+                    or "",
+                    "serial": str(getattr(device, "uuid", "")),
+                    "osVersion": str(getattr(device, "cast_type", "")),
+                },
+            }
+
+        _LOGGER.debug("Launching cast app: %s", app_id)
+        _launch_cast_app(cast, app_id)
+
+        stream_type = (
+            media.STREAM_TYPE_LIVE if is_live else media.STREAM_TYPE_BUFFERED
+        )
+        _LOGGER.debug(
+            "Playing media: url=%s, type=%s, stream_type=%s",
+            asset_url[:100], content_type, stream_type
+        )
+
+        # custom_data must be passed via media_info in newer pychromecast
+        media_info = {"customData": custom_data}
+        _LOGGER.debug("media_info keys: %s", list(media_info.get("customData", {}).keys()))
+
+        if title:
+            cast.media_controller.play_media(
+                asset_url,
+                content_type,
+                title=title,
+                stream_type=stream_type,
+                media_info=media_info,
+            )
+        else:
+            cast.media_controller.play_media(
+                asset_url,
+                content_type,
+                stream_type=stream_type,
+                media_info=media_info,
+            )
+
+        _LOGGER.debug("Waiting for media controller to become active...")
+        cast.media_controller.block_until_active()
+        _LOGGER.debug("Cast complete")
+
+    except MolotovCastError:
+        raise
+    except Exception as err:
+        _LOGGER.exception("Unexpected error during cast")
+        raise MolotovCastError(f"Cast failed: {err}") from err
+    finally:
+        if browser is not None and stop_discovery is not None:
+            try:
+                _LOGGER.debug("Stopping discovery browser")
+                stop_discovery(browser)
+            except Exception as err:
+                _LOGGER.debug("Failed to stop discovery: %s", err)
+        if cast is not None:
+            try:
+                _LOGGER.debug("Disconnecting chromecast")
+                cast.disconnect()
+            except Exception as err:
+                _LOGGER.debug("Failed to disconnect: %s", err)
+
+
+def _launch_cast_app(cast: Any, app_id: str) -> None:
+    if hasattr(cast, "receiver_controller"):
+        _LOGGER.debug("Using receiver_controller.launch_app")
+        cast.receiver_controller.launch_app(app_id)
+        return
+    if hasattr(cast, "start_app"):
+        _LOGGER.debug("Using start_app")
+        cast.start_app(app_id)
+        return
+    if hasattr(cast, "launch_app"):
+        _LOGGER.debug("Using launch_app")
+        cast.launch_app(app_id)
+        return
+    raise MolotovCastError("Chromecast does not support launching apps")
