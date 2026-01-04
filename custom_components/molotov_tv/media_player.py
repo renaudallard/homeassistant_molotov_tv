@@ -1429,50 +1429,109 @@ def _parse_past_programs_as_replays(
     replay_cutoff = now - replay_window
 
     # Try to extract programs from various response formats
-    programs = data.get("programs", [])
-    if not programs:
-        items = data.get("items", [])
-        if items:
-            programs = items
+    programs: list[dict[str, Any]] = []
+
+    # Direct programs array
+    if data.get("programs"):
+        programs = data.get("programs", [])
+        _LOGGER.debug("Found programs directly: %d", len(programs))
+
+    # Items array
+    if not programs and data.get("items"):
+        programs = data.get("items", [])
+        _LOGGER.debug("Found items directly: %d", len(programs))
+
+    # Sections with items
     if not programs:
         sections = data.get("sections", [])
+        _LOGGER.debug("Found %d sections", len(sections))
         for section in sections:
             if isinstance(section, dict):
                 section_items = section.get("items", [])
+                _LOGGER.debug(
+                    "Section '%s' has %d items",
+                    section.get("title", section.get("slug", "unknown")),
+                    len(section_items),
+                )
                 programs.extend(section_items)
 
     _LOGGER.debug("Parsing %d programs for replays", len(programs))
+
+    # Log first program structure for debugging
+    if programs:
+        first = programs[0]
+        _LOGGER.debug(
+            "First program keys: %s",
+            list(first.keys()) if isinstance(first, dict) else type(first),
+        )
+        if isinstance(first, dict):
+            # Check for nested data
+            if first.get("data"):
+                _LOGGER.debug("First program has 'data' key with: %s", list(first["data"].keys()))
+            if first.get("video"):
+                _LOGGER.debug("First program has 'video' key with: %s", list(first["video"].keys()))
+
+    parsed_count = 0
+    skipped_no_time = 0
+    skipped_future = 0
+    skipped_old = 0
 
     for program in programs:
         if not isinstance(program, dict):
             continue
 
-        # Parse timestamps
+        # Extract nested data if present
+        payload = program.get("data", program)
+        video = payload.get("video", {})
+
+        # Parse timestamps from various locations
         start = _parse_timestamp(
-            program.get("startUTCMillis")
+            video.get("start_at")
+            or video.get("start")
+            or payload.get("startUTCMillis")
+            or payload.get("start_at")
+            or payload.get("start")
+            or program.get("startUTCMillis")
             or program.get("start_at")
             or program.get("start")
         )
         end = _parse_timestamp(
-            program.get("endUTCMillis")
+            video.get("end_at")
+            or video.get("end")
+            or payload.get("endUTCMillis")
+            or payload.get("end_at")
+            or payload.get("end")
+            or program.get("endUTCMillis")
             or program.get("end_at")
             or program.get("end")
         )
 
         if start is None or end is None:
+            skipped_no_time += 1
             continue
 
         # Only include past programs within replay window
         if end > now:
+            skipped_future += 1
             continue
         if start < replay_cutoff:
+            skipped_old += 1
             continue
 
-        title = program.get("title") or program.get("name") or "Untitled"
+        parsed_count += 1
+
+        title = (
+            payload.get("title")
+            or _format_value(payload.get("title_formatter"))
+            or payload.get("name")
+            or program.get("title")
+            or "Untitled"
+        )
         episode_title = (
-            program.get("episodeTitle")
-            or program.get("episode_title")
-            or program.get("subtitle")
+            payload.get("episodeTitle")
+            or payload.get("episode_title")
+            or payload.get("subtitle")
+            or _format_value(payload.get("subtitle_formatter"))
         )
 
         # Build replay URL
@@ -1483,15 +1542,24 @@ def _parse_past_programs_as_replays(
                 title=title,
                 asset_url=asset_url,
                 is_live=False,
-                description=program.get("description"),
+                description=payload.get("description"),
                 episode_title=episode_title,
-                thumbnail=program.get("thumbnail") or _extract_item_image(program),
-                poster=program.get("poster")
-                or _extract_item_image(program, prefer_poster=True),
+                thumbnail=payload.get("thumbnail") or _extract_item_image(payload),
+                poster=payload.get("poster")
+                or _extract_item_image(payload, prefer_poster=True),
                 start=start,
                 end=end,
             )
         )
+
+    _LOGGER.debug(
+        "Replay parsing: total=%d, parsed=%d, no_time=%d, future=%d, old=%d",
+        len(programs),
+        parsed_count,
+        skipped_no_time,
+        skipped_future,
+        skipped_old,
+    )
 
     return replays
 
