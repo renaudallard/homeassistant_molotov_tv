@@ -329,6 +329,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if channel is None:
             raise HomeAssistantError("Channel was not found in the EPG")
 
+        _LOGGER.debug(
+            "Browsing channel %s (%s), has %d programs in EPG",
+            channel.label,
+            channel_id,
+            len(channel.programs),
+        )
+
         children = [
             BrowseMedia(
                 title=f"▶ Live - {channel.label}",
@@ -342,15 +349,35 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         ]
 
         # Add current/upcoming programs
+        now = dt_util.utcnow()
         for program in channel.programs:
             start_ts = int(program.start.timestamp())
             end_ts = int(program.end.timestamp())
+
+            # Determine program status
+            if program.start <= now < program.end:
+                status = "🔴 "  # Currently airing
+            elif program.end <= now:
+                status = "⏪ "  # Past (replay available)
+            else:
+                status = ""  # Future
+
             title = program.title
             if program.episode_title:
                 title = f"{program.title} - {program.episode_title}"
+
+            _LOGGER.debug(
+                "Program: %s, start=%s, end=%s, now=%s, status=%s",
+                title[:30],
+                program.start.isoformat(),
+                program.end.isoformat(),
+                now.isoformat(),
+                status.strip() or "future",
+            )
+
             children.append(
                 BrowseMedia(
-                    title=title,
+                    title=f"{status}{title}",
                     media_class=MediaClass.TV_SHOW,
                     media_content_id=(
                         f"{MEDIA_PROGRAM_PREFIX}:{channel.channel_id}:{start_ts}:{end_ts}"
@@ -413,25 +440,45 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def _async_fetch_channel_replays(self, channel_id: str) -> list[BrowseAsset]:
         """Fetch replays for a specific channel."""
-        # First try the API endpoint
+        # First try the dedicated replay API endpoint
         try:
             data = await self._api.async_get_channel_replays(channel_id)
             assets = _extract_replay_assets(data, self._api)
             if assets:
                 _LOGGER.debug(
-                    "Found %d replays from API for channel %s", len(assets), channel_id
+                    "Found %d replays from replay API for channel %s",
+                    len(assets),
+                    channel_id,
                 )
                 return assets
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch channel replays for %s: %s", channel_id, err)
 
+        # Try to get past programs via API
+        try:
+            data = await self._api.async_get_channel_past_programs(channel_id)
+            programs = _parse_past_programs_as_replays(data, channel_id, self._api)
+            if programs:
+                _LOGGER.debug(
+                    "Found %d replays from past programs API for channel %s",
+                    len(programs),
+                    channel_id,
+                )
+                return programs
+        except MolotovApiError as err:
+            _LOGGER.debug(
+                "Failed to fetch past programs for %s: %s", channel_id, err
+            )
+
         # Fall back to using past programs from coordinator data
         epg_data = self.coordinator.data
         if epg_data is None:
+            _LOGGER.debug("No EPG data available for channel %s replays", channel_id)
             return []
 
         channel = _find_channel(epg_data, channel_id)
         if channel is None:
+            _LOGGER.debug("Channel %s not found in EPG data", channel_id)
             return []
 
         # Get past programs as replays (programs that ended in the last 7 days)
@@ -439,18 +486,41 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         replay_window = timedelta(days=7)
         replay_cutoff = now - replay_window
 
+        _LOGGER.debug(
+            "Checking %d programs in EPG for channel %s, looking for past programs",
+            len(channel.programs),
+            channel_id,
+        )
+
         replays: list[BrowseAsset] = []
         for program in channel.programs:
             # Skip programs that haven't ended yet (these are live or upcoming)
             if program.end > now:
+                _LOGGER.debug(
+                    "Skipping future/live program: %s (ends %s)",
+                    program.title[:30],
+                    program.end.isoformat(),
+                )
                 continue
             # Skip programs older than replay window
             if program.start < replay_cutoff:
+                _LOGGER.debug(
+                    "Skipping old program: %s (started %s)",
+                    program.title[:30],
+                    program.start.isoformat(),
+                )
                 continue
 
             # Build replay URL with start_over
             asset_url = self._api.build_asset_url(
                 "channel", channel_id, start_over=True
+            )
+
+            _LOGGER.debug(
+                "Adding replay: %s (start=%s, end=%s)",
+                program.title[:30],
+                program.start.isoformat(),
+                program.end.isoformat(),
             )
 
             replays.append(
@@ -467,10 +537,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
-        if replays:
-            _LOGGER.debug(
-                "Found %d replays from EPG for channel %s", len(replays), channel_id
-            )
+        _LOGGER.debug(
+            "Found %d replays from EPG for channel %s", len(replays), channel_id
+        )
 
         return replays
 
@@ -1348,6 +1417,83 @@ def _parse_asset_item(
         start=start,
         end=end,
     )
+
+
+def _parse_past_programs_as_replays(
+    data: dict[str, Any], channel_id: str, api: MolotovApi
+) -> list[BrowseAsset]:
+    """Parse past programs data into replay assets."""
+    replays: list[BrowseAsset] = []
+    now = dt_util.utcnow()
+    replay_window = timedelta(days=7)
+    replay_cutoff = now - replay_window
+
+    # Try to extract programs from various response formats
+    programs = data.get("programs", [])
+    if not programs:
+        items = data.get("items", [])
+        if items:
+            programs = items
+    if not programs:
+        sections = data.get("sections", [])
+        for section in sections:
+            if isinstance(section, dict):
+                section_items = section.get("items", [])
+                programs.extend(section_items)
+
+    _LOGGER.debug("Parsing %d programs for replays", len(programs))
+
+    for program in programs:
+        if not isinstance(program, dict):
+            continue
+
+        # Parse timestamps
+        start = _parse_timestamp(
+            program.get("startUTCMillis")
+            or program.get("start_at")
+            or program.get("start")
+        )
+        end = _parse_timestamp(
+            program.get("endUTCMillis")
+            or program.get("end_at")
+            or program.get("end")
+        )
+
+        if start is None or end is None:
+            continue
+
+        # Only include past programs within replay window
+        if end > now:
+            continue
+        if start < replay_cutoff:
+            continue
+
+        title = program.get("title") or program.get("name") or "Untitled"
+        episode_title = (
+            program.get("episodeTitle")
+            or program.get("episode_title")
+            or program.get("subtitle")
+        )
+
+        # Build replay URL
+        asset_url = api.build_asset_url("channel", channel_id, start_over=True)
+
+        replays.append(
+            BrowseAsset(
+                title=title,
+                asset_url=asset_url,
+                is_live=False,
+                description=program.get("description"),
+                episode_title=episode_title,
+                thumbnail=program.get("thumbnail") or _extract_item_image(program),
+                poster=program.get("poster")
+                or _extract_item_image(program, prefer_poster=True),
+                start=start,
+                end=end,
+            )
+        )
+
+    return replays
 
 
 def _extract_replay_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:

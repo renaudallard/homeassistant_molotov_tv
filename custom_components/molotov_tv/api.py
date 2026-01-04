@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 import gzip
 import io
 import json
@@ -329,6 +330,7 @@ class MolotovApi:
             f"v3/channels/{channel_id}/catchup/sections",
             f"v2/channels/{channel_id}/catchup",
             f"v3/remote/replay/from-channel/{channel_id}",
+            f"v2/channels/{channel_id}/programs",
         ]
 
         last_error: MolotovApiError | None = None
@@ -338,11 +340,25 @@ class MolotovApi:
                 _LOGGER.debug("Trying channel replay endpoint: %s", url)
                 result = await self._request("GET", url, auth=True)
                 _LOGGER.debug(
-                    "Channel %s replay response keys: %s",
+                    "Channel %s replay response from %s: keys=%s",
                     channel_id,
+                    endpoint,
                     list(result.keys()) if isinstance(result, dict) else type(result),
                 )
-                return result
+                # Check if we got useful data
+                if isinstance(result, dict):
+                    has_sections = bool(result.get("sections"))
+                    has_items = bool(result.get("items"))
+                    has_programs = bool(result.get("programs"))
+                    _LOGGER.debug(
+                        "Channel %s replay data check: sections=%s, items=%s, programs=%s",
+                        channel_id,
+                        has_sections,
+                        has_items,
+                        has_programs,
+                    )
+                    if has_sections or has_items or has_programs:
+                        return result
             except MolotovApiError as err:
                 _LOGGER.debug("Channel replay endpoint %s failed: %s", endpoint, err)
                 last_error = err
@@ -354,6 +370,41 @@ class MolotovApi:
             last_error,
         )
         return {"sections": []}
+
+    async def async_get_channel_past_programs(
+        self, channel_id: str, days: int = 7
+    ) -> dict[str, Any]:
+        """Fetch past programs for a channel (for replay)."""
+
+        await self.async_ensure_logged_in()
+
+        # Calculate time range for past programs
+        now = dt_util.utcnow()
+        from_ts = int((now - timedelta(days=days)).timestamp() * 1000)
+        to_ts = int(now.timestamp() * 1000)
+
+        # Try different endpoints for past programs
+        endpoints = [
+            f"v3.1/remote/programs/from-channel/{channel_id}?from={from_ts}&to={to_ts}",
+            f"v2/channels/{channel_id}/programs?from={from_ts}&to={to_ts}",
+            f"v3/epg/channels/{channel_id}?from={from_ts}&to={to_ts}",
+        ]
+
+        for endpoint in endpoints:
+            try:
+                url = urljoin(self._base_api_url, endpoint)
+                _LOGGER.debug("Trying past programs endpoint: %s", url)
+                result = await self._request("GET", url, auth=True)
+                _LOGGER.debug(
+                    "Past programs response for channel %s: keys=%s",
+                    channel_id,
+                    list(result.keys()) if isinstance(result, dict) else type(result),
+                )
+                return result
+            except MolotovApiError as err:
+                _LOGGER.debug("Past programs endpoint %s failed: %s", endpoint, err)
+
+        return {"programs": []}
 
     async def async_get_all_recordings(self) -> list[dict[str, Any]]:
         """Fetch all recordings with pagination."""
