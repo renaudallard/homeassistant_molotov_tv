@@ -320,89 +320,138 @@ class MolotovApi:
         )
 
     async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
-        """Fetch replay/catchup content for a channel."""
+        """Fetch replay/catchup content for a channel from home sections."""
 
         await self.async_ensure_logged_in()
 
-        # Try multiple endpoints for channel replays
-        endpoints = [
-            f"v2/channels/{channel_id}/replay/sections",
-            f"v3/channels/{channel_id}/catchup/sections",
-            f"v2/channels/{channel_id}/catchup",
-            f"v3/remote/replay/from-channel/{channel_id}",
-            f"v2/channels/{channel_id}/programs",
-        ]
+        # Replays in Molotov come from home sections, filtered by channel
+        # The home sections contain VOD items with video.type="vod"
+        try:
+            home_data = await self.async_get_home_sections()
+        except MolotovApiError as err:
+            _LOGGER.debug("Failed to fetch home sections for replays: %s", err)
+            return {"sections": [], "channel_id": channel_id}
 
-        last_error: MolotovApiError | None = None
-        for endpoint in endpoints:
-            try:
-                url = urljoin(self._base_api_url, endpoint)
-                _LOGGER.debug("Trying channel replay endpoint: %s", url)
-                result = await self._request("GET", url, auth=True)
-                _LOGGER.debug(
-                    "Channel %s replay response from %s: keys=%s",
-                    channel_id,
-                    endpoint,
-                    list(result.keys()) if isinstance(result, dict) else type(result),
+        # Filter sections and items by channel_id
+        filtered_sections: list[dict[str, Any]] = []
+        for section in home_data.get("sections", []):
+            if not isinstance(section, dict):
+                continue
+
+            context = section.get("context", {})
+            # Look for catchup/replay sections
+            is_catchup = context.get("is_catchup", False)
+            is_replay = context.get("is_replay", False)
+
+            if not (is_catchup or is_replay):
+                # Also check section slug/title for replay indicators
+                slug = section.get("slug", "")
+                title = section.get("title", "")
+                if not any(
+                    kw in (slug + title).lower()
+                    for kw in ["replay", "catchup", "vod", "revoir", "rattrapage"]
+                ):
+                    continue
+
+            # Filter items by channel_id
+            items = section.get("items", [])
+            channel_items = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+
+                # Check channel_id in metadata or video
+                metadata = item.get("metadata", {})
+                video = item.get("video", {})
+                item_channel = (
+                    metadata.get("channel_id")
+                    or video.get("channel_id")
+                    or item.get("channel_id")
                 )
-                # Check if we got useful data
-                if isinstance(result, dict):
-                    has_sections = bool(result.get("sections"))
-                    has_items = bool(result.get("items"))
-                    has_programs = bool(result.get("programs"))
-                    _LOGGER.debug(
-                        "Channel %s replay data check: sections=%s, items=%s, programs=%s",
-                        channel_id,
-                        has_sections,
-                        has_items,
-                        has_programs,
-                    )
-                    if has_sections or has_items or has_programs:
-                        return result
-            except MolotovApiError as err:
-                _LOGGER.debug("Channel replay endpoint %s failed: %s", endpoint, err)
-                last_error = err
 
-        # Return empty result if all endpoints fail
+                if str(item_channel) == str(channel_id):
+                    # Only include VOD type items
+                    video_type = video.get("type", "")
+                    if video_type == "vod":
+                        channel_items.append(item)
+                        _LOGGER.debug(
+                            "Found VOD item for channel %s: %s (vod_id=%s)",
+                            channel_id,
+                            item.get("title", "unknown")[:30],
+                            video.get("id"),
+                        )
+
+            if channel_items:
+                filtered_section = {**section, "items": channel_items}
+                filtered_sections.append(filtered_section)
+
         _LOGGER.debug(
-            "All channel replay endpoints failed for %s, last error: %s",
+            "Found %d replay sections with %d items for channel %s",
+            len(filtered_sections),
+            sum(len(s.get("items", [])) for s in filtered_sections),
             channel_id,
-            last_error,
         )
-        return {"sections": []}
+
+        return {"sections": filtered_sections, "channel_id": channel_id}
 
     async def async_get_channel_past_programs(
         self, channel_id: str, days: int = 7
     ) -> dict[str, Any]:
-        """Fetch past programs for a channel (for replay)."""
+        """Fetch programs for a channel including past ones (for replay)."""
 
         await self.async_ensure_logged_in()
 
-        # Calculate time range for past programs
+        # Calculate time range: 7 days ago to now
+        # Also try without time params to see what we get
         now = dt_util.utcnow()
         from_ts = int((now - timedelta(days=days)).timestamp() * 1000)
         to_ts = int(now.timestamp() * 1000)
 
-        # Try different endpoints for past programs
+        _LOGGER.debug(
+            "Fetching programs for channel %s: from=%s (%s) to=%s (%s)",
+            channel_id,
+            from_ts,
+            (now - timedelta(days=days)).isoformat(),
+            to_ts,
+            now.isoformat(),
+        )
+
+        # Try different endpoints for programs
         endpoints = [
+            # Without time params first - see what we get
+            f"v3.1/remote/programs/from-channel/{channel_id}",
+            # With time params
             f"v3.1/remote/programs/from-channel/{channel_id}?from={from_ts}&to={to_ts}",
-            f"v2/channels/{channel_id}/programs?from={from_ts}&to={to_ts}",
-            f"v3/epg/channels/{channel_id}?from={from_ts}&to={to_ts}",
+            # Try start/end params instead
+            f"v3.1/remote/programs/from-channel/{channel_id}?start={from_ts}&end={to_ts}",
         ]
 
         for endpoint in endpoints:
             try:
                 url = urljoin(self._base_api_url, endpoint)
-                _LOGGER.debug("Trying past programs endpoint: %s", url)
+                _LOGGER.debug("Trying programs endpoint: %s", url)
                 result = await self._request("GET", url, auth=True)
                 _LOGGER.debug(
-                    "Past programs response for channel %s: keys=%s",
+                    "Programs response for channel %s: keys=%s",
                     channel_id,
                     list(result.keys()) if isinstance(result, dict) else type(result),
                 )
-                return result
+                # Check if we got any content
+                sections = result.get("sections", [])
+                if sections:
+                    items_count = sum(
+                        len(s.get("items", [])) for s in sections if isinstance(s, dict)
+                    )
+                    _LOGGER.debug(
+                        "Endpoint %s returned %d sections with %d total items",
+                        endpoint.split("?")[0],
+                        len(sections),
+                        items_count,
+                    )
+                    if items_count > 0:
+                        return result
             except MolotovApiError as err:
-                _LOGGER.debug("Past programs endpoint %s failed: %s", endpoint, err)
+                _LOGGER.debug("Programs endpoint %s failed: %s", endpoint, err)
 
         return {"programs": []}
 

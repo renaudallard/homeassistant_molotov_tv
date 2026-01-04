@@ -1345,6 +1345,8 @@ def _coerce_bool(value: str | None) -> bool:
 def _extract_asset_reference(item: dict[str, Any]) -> tuple[str, str, bool] | None:
     payload = _extract_item_payload(item)
     actions = _extract_item_actions(item, payload)
+
+    # First try to get from play/cast action URLs
     for key in ("play", "play_start_over", "cast", "cast_start_over"):
         action = actions.get(key)
         if not isinstance(action, dict):
@@ -1352,6 +1354,17 @@ def _extract_asset_reference(item: dict[str, Any]) -> tuple[str, str, bool] | No
         ref = _parse_asset_reference_from_url(action.get("url"))
         if ref:
             return ref
+
+    # Fall back to video object (for VOD items)
+    video = payload.get("video")
+    if isinstance(video, dict):
+        video_type = video.get("type")
+        video_id = video.get("id")
+        if video_type and video_id:
+            # VOD items support start_over
+            start_over = video_type == "vod"
+            return str(video_type), str(video_id), start_over
+
     return None
 
 
@@ -1469,12 +1482,21 @@ def _parse_past_programs_as_replays(
             if first.get("data"):
                 _LOGGER.debug("First program has 'data' key with: %s", list(first["data"].keys()))
             if first.get("video"):
-                _LOGGER.debug("First program has 'video' key with: %s", list(first["video"].keys()))
+                video = first["video"]
+                _LOGGER.debug("First program has 'video' key with: %s", list(video.keys()))
+                _LOGGER.debug(
+                    "First program video times: start_at=%s, end_at=%s, available_from=%s, available_until=%s",
+                    video.get("start_at"),
+                    video.get("end_at"),
+                    video.get("available_from"),
+                    video.get("available_until"),
+                )
+            _LOGGER.debug("First program title: %s", first.get("title", "no title"))
 
     parsed_count = 0
     skipped_no_time = 0
     skipped_future = 0
-    skipped_old = 0
+    skipped_not_available = 0
 
     for program in programs:
         if not isinstance(program, dict):
@@ -1483,8 +1505,10 @@ def _parse_past_programs_as_replays(
         # Extract nested data if present
         payload = program.get("data", program)
         video = payload.get("video", {})
+        if not isinstance(video, dict):
+            video = {}
 
-        # Parse timestamps from various locations
+        # Parse program timestamps
         start = _parse_timestamp(
             video.get("start_at")
             or video.get("start")
@@ -1506,16 +1530,35 @@ def _parse_past_programs_as_replays(
             or program.get("end")
         )
 
+        # Parse replay availability window
+        available_from = _parse_timestamp(
+            video.get("available_from")
+            or payload.get("available_from")
+            or program.get("available_from")
+        )
+        available_until = _parse_timestamp(
+            video.get("available_until")
+            or payload.get("available_until")
+            or program.get("available_until")
+        )
+
         if start is None or end is None:
             skipped_no_time += 1
             continue
 
-        # Only include past programs within replay window
-        if end > now:
+        # Skip programs that haven't started yet (future programs)
+        if start > now:
             skipped_future += 1
             continue
-        if start < replay_cutoff:
-            skipped_old += 1
+
+        # Check if replay is currently available
+        if available_from and available_until:
+            if not (available_from <= now <= available_until):
+                skipped_not_available += 1
+                continue
+        elif end < replay_cutoff:
+            # No availability info, use 7-day window from end time
+            skipped_not_available += 1
             continue
 
         parsed_count += 1
@@ -1534,8 +1577,10 @@ def _parse_past_programs_as_replays(
             or _format_value(payload.get("subtitle_formatter"))
         )
 
-        # Build replay URL
-        asset_url = api.build_asset_url("channel", channel_id, start_over=True)
+        # Build replay URL - use video type and id if available
+        video_type = video.get("type", "channel")
+        video_id = video.get("id") or video.get("program_id") or channel_id
+        asset_url = api.build_asset_url(video_type, str(video_id), start_over=True)
 
         replays.append(
             BrowseAsset(
@@ -1553,12 +1598,12 @@ def _parse_past_programs_as_replays(
         )
 
     _LOGGER.debug(
-        "Replay parsing: total=%d, parsed=%d, no_time=%d, future=%d, old=%d",
+        "Replay parsing: total=%d, parsed=%d, no_time=%d, future=%d, not_available=%d",
         len(programs),
         parsed_count,
         skipped_no_time,
         skipped_future,
-        skipped_old,
+        skipped_not_available,
     )
 
     return replays
