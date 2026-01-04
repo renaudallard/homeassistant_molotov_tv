@@ -643,14 +643,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def _async_get_cast_targets(self) -> list[str]:
         targets: list[str] = []
 
+        # First get zeroconf discovered targets - these are actually on the network
+        discovered_targets = await self._async_discover_cast_targets()
+        _LOGGER.debug("Cast targets from zeroconf discovery: %s", discovered_targets)
+
+        # Build a set of discovered IPs/hosts for validation
+        discovered_hosts: set[str] = set()
+        for target in discovered_targets:
+            _, host = _split_manual_target(target)
+            if host:
+                discovered_hosts.add(host)
+
+        # Only include entity registry targets if they match a discovered host
         registry_targets = self._discover_cast_targets()
         _LOGGER.debug("Cast targets from entity registry: %s", registry_targets)
         for target in registry_targets:
-            if target not in targets:
-                targets.append(target)
+            resolved = self._resolve_cast_target(target)
+            if resolved and resolved in discovered_hosts:
+                if target not in targets:
+                    targets.append(target)
+                    _LOGGER.debug("Including registry target %s (host %s is on network)", target, resolved)
+            else:
+                _LOGGER.debug("Skipping registry target %s (host %s not discovered)", target, resolved)
 
-        discovered_targets = await self._async_discover_cast_targets()
-        _LOGGER.debug("Cast targets from zeroconf discovery: %s", discovered_targets)
+        # Add discovered targets
         for target in discovered_targets:
             if target not in targets:
                 targets.append(target)
