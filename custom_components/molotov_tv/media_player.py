@@ -94,7 +94,6 @@ from .const import (
     MEDIA_RECORDING_PREFIX,
     MEDIA_RECORDINGS,
     MEDIA_REPLAY_PREFIX,
-    MEDIA_REPLAYS,
     MEDIA_ROOT,
     MOLOTOV_AGENT,
 )
@@ -164,7 +163,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._attr_unique_id = entry.entry_id
         self._attr_name = entry.title
         self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
-        self._replay_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         self._active_cast_target: str | None = None
@@ -183,10 +181,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return self._browse_root()
 
         if media_content_id == MEDIA_CHANNELS:
+            # Refresh EPG data when browsing channels
+            await self.coordinator.async_request_refresh()
+            data = self.coordinator.data
+            if data is None:
+                raise HomeAssistantError("EPG data is not available yet")
             return self._browse_channels(data)
-
-        if media_content_id == MEDIA_REPLAYS:
-            return await self._async_browse_replays()
 
         if media_content_id == MEDIA_RECORDINGS:
             return await self._async_browse_recordings()
@@ -248,14 +248,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                 ),
                 BrowseMedia(
-                    title="Replays",
-                    media_class=MediaClass.DIRECTORY,
-                    media_content_id=MEDIA_REPLAYS,
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=True,
-                ),
-                BrowseMedia(
                     title="Recordings",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_RECORDINGS,
@@ -288,13 +280,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             can_expand=True,
             children=children,
         )
-
-    async def _async_browse_replays(self) -> BrowseMedia:
-        assets = self._get_cached_assets(self._replay_cache)
-        if assets is None:
-            assets = await self._async_fetch_replays()
-            self._replay_cache = (dt_util.utcnow(), assets)
-        return self._browse_assets("Replays", MEDIA_REPLAYS, MEDIA_REPLAY_PREFIX, assets)
 
     async def _async_browse_recordings(self) -> BrowseMedia:
         assets = self._get_cached_assets(self._recording_cache)
@@ -428,12 +413,66 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def _async_fetch_channel_replays(self, channel_id: str) -> list[BrowseAsset]:
         """Fetch replays for a specific channel."""
+        # First try the API endpoint
         try:
             data = await self._api.async_get_channel_replays(channel_id)
+            assets = _extract_replay_assets(data, self._api)
+            if assets:
+                _LOGGER.debug(
+                    "Found %d replays from API for channel %s", len(assets), channel_id
+                )
+                return assets
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch channel replays for %s: %s", channel_id, err)
+
+        # Fall back to using past programs from coordinator data
+        epg_data = self.coordinator.data
+        if epg_data is None:
             return []
-        return _extract_replay_assets(data, self._api)
+
+        channel = _find_channel(epg_data, channel_id)
+        if channel is None:
+            return []
+
+        # Get past programs as replays (programs that ended in the last 7 days)
+        now = dt_util.utcnow()
+        replay_window = timedelta(days=7)
+        replay_cutoff = now - replay_window
+
+        replays: list[BrowseAsset] = []
+        for program in channel.programs:
+            # Skip programs that haven't ended yet (these are live or upcoming)
+            if program.end > now:
+                continue
+            # Skip programs older than replay window
+            if program.start < replay_cutoff:
+                continue
+
+            # Build replay URL with start_over
+            asset_url = self._api.build_asset_url(
+                "channel", channel_id, start_over=True
+            )
+
+            replays.append(
+                BrowseAsset(
+                    title=program.title,
+                    asset_url=asset_url,
+                    is_live=False,
+                    description=program.description,
+                    episode_title=program.episode_title,
+                    thumbnail=program.thumbnail,
+                    poster=program.poster,
+                    start=program.start,
+                    end=program.end,
+                )
+            )
+
+        if replays:
+            _LOGGER.debug(
+                "Found %d replays from EPG for channel %s", len(replays), channel_id
+            )
+
+        return replays
 
     def _browse_assets(
         self,
@@ -882,15 +921,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if dt_util.utcnow() - fetched_at > ASSET_CACHE_TTL:
             return None
         return assets
-
-    async def _async_fetch_replays(self) -> list[BrowseAsset]:
-        try:
-            data = await self._api.async_get_home_sections()
-        except MolotovApiError as err:
-            _LOGGER.warning("Failed to fetch replays: %s", err)
-            return []
-        assets = _extract_replay_assets(data, self._api)
-        return _sort_assets(assets)
 
     async def _async_fetch_recordings(self) -> list[BrowseAsset]:
         assets: list[BrowseAsset] = []

@@ -322,9 +322,38 @@ class MolotovApi:
         """Fetch replay/catchup content for a channel."""
 
         await self.async_ensure_logged_in()
-        # Try the channel-specific replay endpoint
-        url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/replay/sections")
-        return await self._request("GET", url, auth=True)
+
+        # Try multiple endpoints for channel replays
+        endpoints = [
+            f"v2/channels/{channel_id}/replay/sections",
+            f"v3/channels/{channel_id}/catchup/sections",
+            f"v2/channels/{channel_id}/catchup",
+            f"v3/remote/replay/from-channel/{channel_id}",
+        ]
+
+        last_error: MolotovApiError | None = None
+        for endpoint in endpoints:
+            try:
+                url = urljoin(self._base_api_url, endpoint)
+                _LOGGER.debug("Trying channel replay endpoint: %s", url)
+                result = await self._request("GET", url, auth=True)
+                _LOGGER.debug(
+                    "Channel %s replay response keys: %s",
+                    channel_id,
+                    list(result.keys()) if isinstance(result, dict) else type(result),
+                )
+                return result
+            except MolotovApiError as err:
+                _LOGGER.debug("Channel replay endpoint %s failed: %s", endpoint, err)
+                last_error = err
+
+        # Return empty result if all endpoints fail
+        _LOGGER.debug(
+            "All channel replay endpoints failed for %s, last error: %s",
+            channel_id,
+            last_error,
+        )
+        return {"sections": []}
 
     async def async_get_all_recordings(self) -> list[dict[str, Any]]:
         """Fetch all recordings with pagination."""
