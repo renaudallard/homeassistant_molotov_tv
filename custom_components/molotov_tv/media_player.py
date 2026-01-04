@@ -612,6 +612,39 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     def _find_cast_entity(self, host: str) -> str | None:
         """Find the media_player entity ID for a Chromecast host."""
+        _LOGGER.debug("Looking for cast entity with host %s", host)
+
+        # First, try to find by checking entity states directly
+        for entity_id in self.hass.states.async_entity_ids("media_player"):
+            state = self.hass.states.get(entity_id)
+            if not state:
+                continue
+
+            # Check various attributes where the host might be stored
+            attrs = state.attributes
+            entity_host = (
+                attrs.get("host")
+                or attrs.get("address")
+                or attrs.get("ip_address")
+                or attrs.get("ip")
+            )
+
+            if entity_host == host:
+                _LOGGER.debug("Found cast entity %s by host attribute", entity_id)
+                return entity_id
+
+            # Check if it's a cast entity and try to match by resolving
+            if "cast" in entity_id or attrs.get("app_id"):
+                resolved = self._resolve_cast_target(entity_id)
+                _LOGGER.debug(
+                    "Checking entity %s: resolved=%s, target=%s",
+                    entity_id, resolved, host
+                )
+                if resolved == host:
+                    _LOGGER.debug("Found cast entity %s by resolution", entity_id)
+                    return entity_id
+
+        # Fallback: check entity registry
         registry = er.async_get(self.hass)
         if hasattr(er, "async_entries_for_domain"):
             entries = er.async_entries_for_domain(registry, "media_player")
@@ -621,24 +654,51 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 for entry in registry.entities.values()
                 if entry.domain == "media_player"
             ]
+
         for entry in entries:
             if entry.platform != "cast":
                 continue
             if entry.disabled_by is not None:
                 continue
             resolved = self._resolve_cast_target(entry.entity_id)
+            _LOGGER.debug(
+                "Registry check: entity=%s, resolved=%s, target=%s",
+                entry.entity_id, resolved, host
+            )
             if resolved == host:
-                _LOGGER.debug("Found cast entity %s for host %s", entry.entity_id, host)
+                _LOGGER.debug("Found cast entity %s via registry", entry.entity_id)
                 return entry.entity_id
-        _LOGGER.debug("No cast entity found for host %s", host)
+
+        _LOGGER.warning("No cast entity found for host %s", host)
         return None
 
     async def _async_call_cast_service(self, service: str, **kwargs: Any) -> None:
         """Call a media_player service on the active cast entity."""
+        _LOGGER.debug(
+            "Control request: service=%s, active_entity=%s, active_target=%s",
+            service, self._active_cast_entity, self._active_cast_target
+        )
+
         if not self._active_cast_entity:
-            _LOGGER.warning("No active cast entity to control")
-            return
+            # Try to find entity again using stored target
+            if self._active_cast_target:
+                self._active_cast_entity = self._find_cast_entity(self._active_cast_target)
+                _LOGGER.debug("Re-found cast entity: %s", self._active_cast_entity)
+
+            if not self._active_cast_entity:
+                _LOGGER.warning(
+                    "No active cast entity to control (target=%s)",
+                    self._active_cast_target
+                )
+                return
+
         state = self.hass.states.get(self._active_cast_entity)
+        _LOGGER.debug(
+            "Cast entity state: %s (state=%s)",
+            self._active_cast_entity,
+            state.state if state else "None"
+        )
+
         if not state or state.state == "unavailable":
             _LOGGER.warning("Cast entity %s is unavailable", self._active_cast_entity)
             self._active_cast_entity = None
@@ -646,9 +706,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._attr_state = STATE_IDLE
             self.async_write_ha_state()
             return
+
         service_data = {ATTR_ENTITY_ID: self._active_cast_entity, **kwargs}
-        _LOGGER.debug("Calling %s on %s with %s", service, self._active_cast_entity, kwargs)
-        await self.hass.services.async_call("media_player", service, service_data)
+        _LOGGER.debug("Calling media_player.%s with data: %s", service, service_data)
+        try:
+            await self.hass.services.async_call("media_player", service, service_data)
+            _LOGGER.debug("Service call completed successfully")
+        except Exception as err:
+            _LOGGER.error("Service call failed: %s", err)
 
     async def async_media_play(self) -> None:
         """Send play command to active cast."""
