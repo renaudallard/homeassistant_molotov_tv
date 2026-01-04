@@ -78,6 +78,8 @@ from .chromecast import (
     async_cast_seek,
     async_cast_volume,
     async_cast_mute,
+    async_cast_skip_forward,
+    async_cast_skip_back,
 )
 from .const import (
     CONF_CAST_TARGET,
@@ -146,6 +148,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         | MediaPlayerEntityFeature.SEEK
         | MediaPlayerEntityFeature.NEXT_TRACK
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
+        | MediaPlayerEntityFeature.TURN_OFF
     )
     _attr_state = STATE_IDLE
 
@@ -748,12 +751,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:
-        """Send next track command - not supported for Molotov."""
-        pass
+        """Skip forward 30 seconds."""
+        if self._active_cast_target:
+            await async_cast_skip_forward(self.hass, self._active_cast_target, 30)
 
     async def async_media_previous_track(self) -> None:
-        """Send previous track command - not supported for Molotov."""
-        pass
+        """Skip back 10 seconds."""
+        if self._active_cast_target:
+            await async_cast_skip_back(self.hass, self._active_cast_target, 10)
 
     async def async_media_seek(self, position: float) -> None:
         """Send seek command to active cast."""
@@ -781,6 +786,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Mute/unmute active cast."""
         if self._active_cast_target:
             await async_cast_mute(self.hass, self._active_cast_target, mute)
+
+    async def async_turn_off(self) -> None:
+        """Turn off (stop) the active cast."""
+        await self.async_media_stop()
 
     def _build_cast_request(self, media_id: str) -> tuple[str, str | None, bool]:
         now = dt_util.utcnow()

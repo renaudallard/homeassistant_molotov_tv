@@ -348,6 +348,16 @@ async def async_cast_mute(hass: HomeAssistant, host: str, mute: bool) -> None:
     await hass.async_add_executor_job(_cast_control, host, "mute", mute)
 
 
+async def async_cast_skip_forward(hass: HomeAssistant, host: str, seconds: float = 30) -> None:
+    """Skip forward on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "skip_forward", seconds)
+
+
+async def async_cast_skip_back(hass: HomeAssistant, host: str, seconds: float = 10) -> None:
+    """Skip back on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "skip_back", seconds)
+
+
 def _cast_control(host: str, action: str, *args: Any) -> None:
     """Execute a control action on a Chromecast."""
     cast = get_active_cast(host)
@@ -377,6 +387,20 @@ def _cast_control(host: str, action: str, *args: Any) -> None:
             cast.set_volume(args[0])
         elif action == "mute" and args:
             cast.set_volume_muted(args[0])
+        elif action == "skip_forward" and args:
+            status = mc.status
+            if status and status.current_time is not None:
+                new_pos = status.current_time + args[0]
+                mc.seek(new_pos)
+            else:
+                _LOGGER.warning("Cannot skip forward: no current position")
+        elif action == "skip_back" and args:
+            status = mc.status
+            if status and status.current_time is not None:
+                new_pos = max(0, status.current_time - args[0])
+                mc.seek(new_pos)
+            else:
+                _LOGGER.warning("Cannot skip back: no current position")
         else:
             _LOGGER.warning("Unknown cast action: %s", action)
             return
