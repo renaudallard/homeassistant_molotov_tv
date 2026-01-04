@@ -41,11 +41,27 @@ from homeassistant.components.media_player import (
     MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
+    MediaPlayerState,
 )
 from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.const import STATE_IDLE
+from homeassistant.const import (
+    SERVICE_MEDIA_PAUSE,
+    SERVICE_MEDIA_PLAY,
+    SERVICE_MEDIA_STOP,
+    SERVICE_MEDIA_NEXT_TRACK,
+    SERVICE_MEDIA_PREVIOUS_TRACK,
+    SERVICE_MEDIA_SEEK,
+    SERVICE_VOLUME_SET,
+    SERVICE_VOLUME_UP,
+    SERVICE_VOLUME_DOWN,
+    SERVICE_VOLUME_MUTE,
+    STATE_IDLE,
+    STATE_PLAYING,
+    STATE_PAUSED,
+    ATTR_ENTITY_ID,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -110,7 +126,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     """Molotov TV media player for browsing the EPG and casting."""
 
     _attr_supported_features = (
-        MediaPlayerEntityFeature.BROWSE_MEDIA | MediaPlayerEntityFeature.PLAY_MEDIA
+        MediaPlayerEntityFeature.BROWSE_MEDIA
+        | MediaPlayerEntityFeature.PLAY_MEDIA
+        | MediaPlayerEntityFeature.PAUSE
+        | MediaPlayerEntityFeature.STOP
+        | MediaPlayerEntityFeature.PLAY
+        | MediaPlayerEntityFeature.VOLUME_SET
+        | MediaPlayerEntityFeature.VOLUME_STEP
+        | MediaPlayerEntityFeature.VOLUME_MUTE
+        | MediaPlayerEntityFeature.SEEK
+        | MediaPlayerEntityFeature.NEXT_TRACK
+        | MediaPlayerEntityFeature.PREVIOUS_TRACK
     )
     _attr_state = STATE_IDLE
 
@@ -129,6 +155,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._replay_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
+        self._active_cast_target: str | None = None
+        self._active_cast_entity: str | None = None
 
     async def async_browse_media(
         self,
@@ -519,8 +547,105 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 title=title,
                 is_live=is_live,
             )
+            # Track the active cast target for remote control
+            self._active_cast_target = resolved_target
+            self._active_cast_entity = self._find_cast_entity(resolved_target)
+            self._attr_state = STATE_PLAYING
+            self.async_write_ha_state()
+            _LOGGER.debug(
+                "Cast started, tracking entity: %s (target: %s)",
+                self._active_cast_entity, resolved_target
+            )
         except MolotovCastError as err:
             raise HomeAssistantError(str(err)) from err
+
+    def _find_cast_entity(self, host: str) -> str | None:
+        """Find the media_player entity ID for a Chromecast host."""
+        registry = er.async_get(self.hass)
+        if hasattr(er, "async_entries_for_domain"):
+            entries = er.async_entries_for_domain(registry, "media_player")
+        else:
+            entries = [
+                entry
+                for entry in registry.entities.values()
+                if entry.domain == "media_player"
+            ]
+        for entry in entries:
+            if entry.platform != "cast":
+                continue
+            if entry.disabled_by is not None:
+                continue
+            resolved = self._resolve_cast_target(entry.entity_id)
+            if resolved == host:
+                _LOGGER.debug("Found cast entity %s for host %s", entry.entity_id, host)
+                return entry.entity_id
+        _LOGGER.debug("No cast entity found for host %s", host)
+        return None
+
+    async def _async_call_cast_service(self, service: str, **kwargs: Any) -> None:
+        """Call a media_player service on the active cast entity."""
+        if not self._active_cast_entity:
+            _LOGGER.warning("No active cast entity to control")
+            return
+        state = self.hass.states.get(self._active_cast_entity)
+        if not state or state.state == "unavailable":
+            _LOGGER.warning("Cast entity %s is unavailable", self._active_cast_entity)
+            self._active_cast_entity = None
+            self._active_cast_target = None
+            self._attr_state = STATE_IDLE
+            self.async_write_ha_state()
+            return
+        service_data = {ATTR_ENTITY_ID: self._active_cast_entity, **kwargs}
+        _LOGGER.debug("Calling %s on %s with %s", service, self._active_cast_entity, kwargs)
+        await self.hass.services.async_call("media_player", service, service_data)
+
+    async def async_media_play(self) -> None:
+        """Send play command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_PLAY)
+        self._attr_state = STATE_PLAYING
+        self.async_write_ha_state()
+
+    async def async_media_pause(self) -> None:
+        """Send pause command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_PAUSE)
+        self._attr_state = STATE_PAUSED
+        self.async_write_ha_state()
+
+    async def async_media_stop(self) -> None:
+        """Send stop command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_STOP)
+        self._active_cast_entity = None
+        self._active_cast_target = None
+        self._attr_state = STATE_IDLE
+        self.async_write_ha_state()
+
+    async def async_media_next_track(self) -> None:
+        """Send next track command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_NEXT_TRACK)
+
+    async def async_media_previous_track(self) -> None:
+        """Send previous track command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_PREVIOUS_TRACK)
+
+    async def async_media_seek(self, position: float) -> None:
+        """Send seek command to active cast."""
+        await self._async_call_cast_service(SERVICE_MEDIA_SEEK, seek_position=position)
+
+    async def async_set_volume_level(self, volume: float) -> None:
+        """Set volume level on active cast."""
+        await self._async_call_cast_service(SERVICE_VOLUME_SET, volume_level=volume)
+
+    async def async_volume_up(self) -> None:
+        """Turn volume up on active cast."""
+        await self._async_call_cast_service(SERVICE_VOLUME_UP)
+
+    async def async_volume_down(self) -> None:
+        """Turn volume down on active cast."""
+        await self._async_call_cast_service(SERVICE_VOLUME_DOWN)
+
+    async def async_mute_volume(self, mute: bool) -> None:
+        """Mute/unmute active cast."""
+        await self._async_call_cast_service(SERVICE_VOLUME_MUTE, is_volume_muted=mute)
 
     def _build_cast_request(self, media_id: str) -> tuple[str, str | None, bool]:
         now = dt_util.utcnow()
