@@ -29,15 +29,38 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
+# Store active cast connections for control
+_active_casts: dict[str, Any] = {}
+_cast_lock = threading.Lock()
+
 
 class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
+
+
+def get_active_cast(host: str) -> Any | None:
+    """Get an active cast connection for a host."""
+    with _cast_lock:
+        return _active_casts.get(host)
+
+
+def set_active_cast(host: str, cast: Any) -> None:
+    """Store an active cast connection."""
+    with _cast_lock:
+        _active_casts[host] = cast
+
+
+def remove_active_cast(host: str) -> None:
+    """Remove an active cast connection."""
+    with _cast_lock:
+        _active_casts.pop(host, None)
 
 
 async def async_cast_media(
@@ -253,6 +276,12 @@ def _cast_media_blocking(
         cast.media_controller.block_until_active()
         _LOGGER.debug("Cast complete")
 
+        # Store the cast connection for later control
+        set_active_cast(cast_target, cast)
+        _LOGGER.debug("Stored active cast for %s", cast_target)
+        # Don't disconnect - keep connection for controls
+        cast = None  # Prevent finally from disconnecting
+
     except MolotovCastError:
         raise
     except Exception as err:
@@ -287,3 +316,71 @@ def _launch_cast_app(cast: Any, app_id: str) -> None:
         cast.launch_app(app_id)
         return
     raise MolotovCastError("Chromecast does not support launching apps")
+
+
+async def async_cast_pause(hass: HomeAssistant, host: str) -> None:
+    """Pause playback on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "pause")
+
+
+async def async_cast_play(hass: HomeAssistant, host: str) -> None:
+    """Resume playback on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "play")
+
+
+async def async_cast_stop(hass: HomeAssistant, host: str) -> None:
+    """Stop playback on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "stop")
+
+
+async def async_cast_seek(hass: HomeAssistant, host: str, position: float) -> None:
+    """Seek to position on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "seek", position)
+
+
+async def async_cast_volume(hass: HomeAssistant, host: str, level: float) -> None:
+    """Set volume on a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "volume", level)
+
+
+async def async_cast_mute(hass: HomeAssistant, host: str, mute: bool) -> None:
+    """Mute/unmute a Chromecast."""
+    await hass.async_add_executor_job(_cast_control, host, "mute", mute)
+
+
+def _cast_control(host: str, action: str, *args: Any) -> None:
+    """Execute a control action on a Chromecast."""
+    cast = get_active_cast(host)
+    if not cast:
+        _LOGGER.warning("No active cast for %s, cannot %s", host, action)
+        return
+
+    try:
+        mc = cast.media_controller
+        _LOGGER.debug("Executing %s on %s", action, host)
+
+        if action == "pause":
+            mc.pause()
+        elif action == "play":
+            mc.play()
+        elif action == "stop":
+            mc.stop()
+            # Clean up after stop
+            try:
+                cast.disconnect()
+            except Exception:
+                pass
+            remove_active_cast(host)
+        elif action == "seek" and args:
+            mc.seek(args[0])
+        elif action == "volume" and args:
+            cast.set_volume(args[0])
+        elif action == "mute" and args:
+            cast.set_volume_muted(args[0])
+        else:
+            _LOGGER.warning("Unknown cast action: %s", action)
+            return
+
+        _LOGGER.debug("Cast %s completed", action)
+    except Exception as err:
+        _LOGGER.error("Cast %s failed: %s", action, err)

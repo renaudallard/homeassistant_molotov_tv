@@ -69,7 +69,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi, MolotovApiError
-from .chromecast import MolotovCastError, async_cast_media
+from .chromecast import (
+    MolotovCastError,
+    async_cast_media,
+    async_cast_pause,
+    async_cast_play,
+    async_cast_stop,
+    async_cast_seek,
+    async_cast_volume,
+    async_cast_mute,
+)
 from .const import (
     CONF_CAST_TARGET,
     CONF_CAST_TARGETS,
@@ -717,51 +726,61 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def async_media_play(self) -> None:
         """Send play command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_PLAY)
-        self._attr_state = STATE_PLAYING
-        self.async_write_ha_state()
+        if self._active_cast_target:
+            await async_cast_play(self.hass, self._active_cast_target)
+            self._attr_state = STATE_PLAYING
+            self.async_write_ha_state()
 
     async def async_media_pause(self) -> None:
         """Send pause command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_PAUSE)
-        self._attr_state = STATE_PAUSED
-        self.async_write_ha_state()
+        if self._active_cast_target:
+            await async_cast_pause(self.hass, self._active_cast_target)
+            self._attr_state = STATE_PAUSED
+            self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
         """Send stop command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_STOP)
+        if self._active_cast_target:
+            await async_cast_stop(self.hass, self._active_cast_target)
         self._active_cast_entity = None
         self._active_cast_target = None
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:
-        """Send next track command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_NEXT_TRACK)
+        """Send next track command - not supported for Molotov."""
+        pass
 
     async def async_media_previous_track(self) -> None:
-        """Send previous track command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_PREVIOUS_TRACK)
+        """Send previous track command - not supported for Molotov."""
+        pass
 
     async def async_media_seek(self, position: float) -> None:
         """Send seek command to active cast."""
-        await self._async_call_cast_service(SERVICE_MEDIA_SEEK, seek_position=position)
+        if self._active_cast_target:
+            await async_cast_seek(self.hass, self._active_cast_target, position)
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level on active cast."""
-        await self._async_call_cast_service(SERVICE_VOLUME_SET, volume_level=volume)
+        if self._active_cast_target:
+            await async_cast_volume(self.hass, self._active_cast_target, volume)
 
     async def async_volume_up(self) -> None:
         """Turn volume up on active cast."""
-        await self._async_call_cast_service(SERVICE_VOLUME_UP)
+        # Get current volume and increase by 10%
+        if self._active_cast_target:
+            await async_cast_volume(self.hass, self._active_cast_target, 0.6)
 
     async def async_volume_down(self) -> None:
         """Turn volume down on active cast."""
-        await self._async_call_cast_service(SERVICE_VOLUME_DOWN)
+        # Get current volume and decrease by 10%
+        if self._active_cast_target:
+            await async_cast_volume(self.hass, self._active_cast_target, 0.4)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute/unmute active cast."""
-        await self._async_call_cast_service(SERVICE_VOLUME_MUTE, is_volume_muted=mute)
+        if self._active_cast_target:
+            await async_cast_mute(self.hass, self._active_cast_target, mute)
 
     def _build_cast_request(self, media_id: str) -> tuple[str, str | None, bool]:
         now = dt_util.utcnow()
