@@ -323,16 +323,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if programs is not None:
             channel.programs = programs
 
-        return self._browse_programs(data, channel_id)
+        return await self._async_browse_programs_with_replays(data, channel_id)
 
-    def _browse_programs(self, data: EpgData, channel_id: str) -> BrowseMedia:
+    async def _async_browse_programs_with_replays(
+        self, data: EpgData, channel_id: str
+    ) -> BrowseMedia:
         channel = _find_channel(data, channel_id)
         if channel is None:
             raise HomeAssistantError("Channel was not found in the EPG")
 
         children = [
             BrowseMedia(
-                title=f"Live - {channel.label}",
+                title=f"▶ Live - {channel.label}",
                 media_class=MediaClass.CHANNEL,
                 media_content_id=f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}",
                 media_content_type=MEDIA_LIVE_PREFIX,
@@ -341,6 +343,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 thumbnail=channel.poster,
             )
         ]
+
+        # Add current/upcoming programs
         for program in channel.programs:
             start_ts = int(program.start.timestamp())
             end_ts = int(program.end.timestamp())
@@ -361,6 +365,44 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
+        # Fetch and add replays for this channel
+        replays = await self._async_fetch_channel_replays(channel_id)
+        if replays:
+            # Add separator
+            children.append(
+                BrowseMedia(
+                    title="━━━ Replays ━━━",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=f"separator:{channel_id}",
+                    media_content_type="separator",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+            # Add replay items
+            for asset in replays:
+                payload = _encode_asset_payload(
+                    {
+                        "url": asset.asset_url,
+                        "title": asset.title,
+                        "live": asset.is_live,
+                    }
+                )
+                display_title = asset.title
+                if asset.episode_title:
+                    display_title = f"{asset.title} - {asset.episode_title}"
+                children.append(
+                    BrowseMedia(
+                        title=display_title,
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=f"{MEDIA_REPLAY_PREFIX}:{payload}",
+                        media_content_type=MEDIA_REPLAY_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=asset.thumbnail or asset.poster,
+                    )
+                )
+
         return BrowseMedia(
             title=channel.label,
             media_class=MediaClass.CHANNEL,
@@ -371,6 +413,15 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             thumbnail=channel.poster,
             children=children,
         )
+
+    async def _async_fetch_channel_replays(self, channel_id: str) -> list[BrowseAsset]:
+        """Fetch replays for a specific channel."""
+        try:
+            data = await self._api.async_get_channel_replays(channel_id)
+        except MolotovApiError as err:
+            _LOGGER.debug("Failed to fetch channel replays for %s: %s", channel_id, err)
+            return []
+        return _extract_replay_assets(data, self._api)
 
     def _browse_assets(
         self,
@@ -750,19 +801,35 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def _async_fetch_recordings(self) -> list[BrowseAsset]:
         assets: list[BrowseAsset] = []
+        seen_urls: set[str] = set()
+
+        # Get all recordings from multiple sources
         try:
-            data = await self._api.async_get_bookmarks()
+            all_sections = await self._api.async_get_all_recordings()
+            for section in all_sections:
+                section_assets = _extract_recording_assets(
+                    {"sections": [section]}, self._api
+                )
+                for asset in section_assets:
+                    if asset.asset_url not in seen_urls:
+                        seen_urls.add(asset.asset_url)
+                        assets.append(asset)
         except MolotovApiError as err:
-            _LOGGER.debug("Failed to fetch bookmarks for recordings: %s", err)
-        else:
-            assets = _extract_recording_assets(data, self._api)
+            _LOGGER.debug("Failed to fetch all recordings: %s", err)
+
+        # Also try home sections as fallback
         if not assets:
             try:
                 data = await self._api.async_get_home_sections()
+                home_assets = _extract_recording_assets(data, self._api)
+                for asset in home_assets:
+                    if asset.asset_url not in seen_urls:
+                        seen_urls.add(asset.asset_url)
+                        assets.append(asset)
             except MolotovApiError as err:
-                _LOGGER.warning("Failed to fetch recordings: %s", err)
-                return []
-            assets = _extract_recording_assets(data, self._api)
+                _LOGGER.warning("Failed to fetch recordings from home: %s", err)
+
+        _LOGGER.debug("Found %d total recordings", len(assets))
         return _sort_assets(assets)
 
     async def _async_get_cast_targets(self) -> list[str]:

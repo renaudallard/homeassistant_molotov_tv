@@ -318,6 +318,39 @@ class MolotovApi:
             auth=True,
         )
 
+    async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
+        """Fetch replay/catchup content for a channel."""
+
+        await self.async_ensure_logged_in()
+        # Try the channel-specific replay endpoint
+        url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/replay/sections")
+        return await self._request("GET", url, auth=True)
+
+    async def async_get_all_recordings(self) -> list[dict[str, Any]]:
+        """Fetch all recordings with pagination."""
+
+        await self.async_ensure_logged_in()
+        all_sections: list[dict[str, Any]] = []
+
+        # First get bookmarks
+        try:
+            data = await self.async_get_bookmarks()
+            if isinstance(data, dict) and "sections" in data:
+                all_sections.extend(data.get("sections", []))
+        except MolotovApiError as err:
+            _LOGGER.debug("Failed to fetch bookmarks: %s", err)
+
+        # Also try follow sections which may have recordings
+        try:
+            url = urljoin(self._base_api_url, "v3/me/follow/sections")
+            data = await self._request("GET", url, auth=True)
+            if isinstance(data, dict) and "sections" in data:
+                all_sections.extend(data.get("sections", []))
+        except MolotovApiError as err:
+            _LOGGER.debug("Failed to fetch follow sections: %s", err)
+
+        return all_sections
+
     async def async_refresh_token(self) -> None:
         """Refresh access token using the refresh token."""
 
