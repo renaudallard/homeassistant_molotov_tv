@@ -300,6 +300,64 @@ class MolotovApi:
         )
         return await self._request("GET", url, auth=True)
 
+    async def async_search(self, query: str) -> dict[str, Any]:
+        """Search for content.
+
+        Args:
+            query: The search query string.
+
+        Returns:
+            Search results with sections containing matching items.
+        """
+        await self.async_ensure_logged_in()
+
+        # Try different search endpoints
+        endpoints = [
+            ("POST", "v2/me/search/query", {"query": query}),
+            ("POST", "v3/me/search/query", {"query": query}),
+            ("GET", f"v2/me/search?query={query}", None),
+            ("GET", f"v3/search?q={query}", None),
+        ]
+
+        last_error: MolotovApiError | None = None
+        for method, endpoint, body in endpoints:
+            try:
+                url = urljoin(self._base_api_url, endpoint)
+                _LOGGER.debug("Trying search endpoint: %s %s", method, url)
+
+                if method == "POST" and body:
+                    result = await self._request(method, url, auth=True, json=body)
+                else:
+                    result = await self._request(method, url, auth=True)
+
+                _LOGGER.debug(
+                    "Search response keys: %s",
+                    list(result.keys()) if isinstance(result, dict) else type(result),
+                )
+
+                # Check if we got useful results
+                if isinstance(result, dict):
+                    has_sections = bool(result.get("sections"))
+                    has_items = bool(result.get("items"))
+                    has_results = bool(result.get("results"))
+                    if has_sections or has_items or has_results:
+                        return result
+
+            except MolotovApiError as err:
+                _LOGGER.debug("Search endpoint %s failed: %s", endpoint, err)
+                last_error = err
+
+        # Return empty result if all endpoints fail
+        if last_error:
+            _LOGGER.warning("All search endpoints failed: %s", last_error)
+        return {"sections": [], "query": query}
+
+    async def async_get_search_home(self) -> dict[str, Any]:
+        """Get search home page with suggestions and popular content."""
+        await self.async_ensure_logged_in()
+        url = urljoin(self._base_api_url, "v2/me/search/home")
+        return await self._request("GET", url, auth=True)
+
     async def async_get_bookmarks(self) -> dict[str, Any]:
         """Fetch the bookmarks sections feed."""
 

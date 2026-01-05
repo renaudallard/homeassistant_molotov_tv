@@ -66,6 +66,9 @@ MEDIA_LIVE_PREFIX = "live"
 MEDIA_CAST_PREFIX = "cast"
 MEDIA_REPLAY_PREFIX = "replay"
 MEDIA_RECORDING_PREFIX = "recording"
+MEDIA_SEARCH = "search"
+MEDIA_SEARCH_PREFIX = "search"
+MEDIA_SEARCH_RESULT_PREFIX = "search_result"
 
 CONTENT_TYPE_DASH = "application/dash+xml"
 

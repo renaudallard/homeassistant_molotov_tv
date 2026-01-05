@@ -95,6 +95,9 @@ from .const import (
     MEDIA_RECORDINGS,
     MEDIA_REPLAY_PREFIX,
     MEDIA_ROOT,
+    MEDIA_SEARCH,
+    MEDIA_SEARCH_PREFIX,
+    MEDIA_SEARCH_RESULT_PREFIX,
     MOLOTOV_AGENT,
 )
 from .coordinator import EpgChannel, EpgData, EpgProgram, MolotovEpgCoordinator
@@ -207,6 +210,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if media_content_id.startswith(f"{MEDIA_RECORDING_PREFIX}:"):
             return await self._async_browse_cast_targets(data, media_content_id)
 
+        if media_content_id == MEDIA_SEARCH:
+            return await self._async_browse_search_home()
+
+        if media_content_id.startswith(f"{MEDIA_SEARCH_PREFIX}:"):
+            query = media_content_id.split(":", 1)[1]
+            return await self._async_browse_search_results(query)
+
+        if media_content_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:"):
+            return await self._async_browse_cast_targets(data, media_content_id)
+
         return self._browse_root()
 
     async def async_play_media(
@@ -239,6 +252,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             can_play=False,
             can_expand=True,
             children=[
+                BrowseMedia(
+                    title="Search",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_SEARCH,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=True,
+                ),
                 BrowseMedia(
                     title="Channels",
                     media_class=MediaClass.DIRECTORY,
@@ -288,6 +309,132 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._recording_cache = (dt_util.utcnow(), assets)
         return self._browse_assets(
             "Recordings", MEDIA_RECORDINGS, MEDIA_RECORDING_PREFIX, assets
+        )
+
+    async def _async_browse_search_home(self) -> BrowseMedia:
+        """Browse search home with suggestions."""
+        children: list[BrowseMedia] = []
+
+        # Add a hint for users about how to search
+        children.append(
+            BrowseMedia(
+                title="Type in the search box above to find content",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH}:hint",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=False,
+            )
+        )
+
+        # Try to get search home suggestions
+        try:
+            data = await self._api.async_get_search_home()
+            suggestions = _extract_search_suggestions(data, self._api)
+            for suggestion in suggestions[:20]:  # Limit to 20 suggestions
+                payload = _encode_asset_payload(
+                    {
+                        "url": suggestion.asset_url,
+                        "title": suggestion.title,
+                        "thumb": suggestion.thumbnail or suggestion.poster,
+                        "live": suggestion.is_live,
+                    }
+                )
+                display_title = suggestion.title
+                if suggestion.episode_title:
+                    display_title = f"{suggestion.title} - {suggestion.episode_title}"
+                children.append(
+                    BrowseMedia(
+                        title=display_title,
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
+                        media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=suggestion.thumbnail or suggestion.poster,
+                    )
+                )
+        except MolotovApiError as err:
+            _LOGGER.debug("Failed to fetch search home: %s", err)
+
+        return BrowseMedia(
+            title="Search",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=MEDIA_SEARCH,
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
+        )
+
+    async def _async_browse_search_results(self, query: str) -> BrowseMedia:
+        """Browse search results for a query."""
+        children: list[BrowseMedia] = []
+
+        if not query.strip():
+            return await self._async_browse_search_home()
+
+        try:
+            data = await self._api.async_search(query)
+            results = _extract_search_results(data, self._api)
+            _LOGGER.debug("Search for '%s' returned %d results", query, len(results))
+
+            for result in results:
+                payload = _encode_asset_payload(
+                    {
+                        "url": result.asset_url,
+                        "title": result.title,
+                        "thumb": result.thumbnail or result.poster,
+                        "live": result.is_live,
+                    }
+                )
+                display_title = result.title
+                if result.episode_title:
+                    display_title = f"{result.title} - {result.episode_title}"
+                children.append(
+                    BrowseMedia(
+                        title=display_title,
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
+                        media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=result.thumbnail or result.poster,
+                    )
+                )
+        except MolotovApiError as err:
+            _LOGGER.warning("Search failed: %s", err)
+            children.append(
+                BrowseMedia(
+                    title=f"Search failed: {err}",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_SEARCH,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+
+        if not children:
+            children.append(
+                BrowseMedia(
+                    title=f"No results for '{query}'",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_SEARCH,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+
+        return BrowseMedia(
+            title=f"Search: {query}",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_SEARCH_PREFIX}:{query}",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
         )
 
     async def _async_browse_programs(
@@ -620,7 +767,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 title = f"Live - {channel.label}"
                 thumbnail = channel.poster
         elif base_media_id.startswith(
-            (f"{MEDIA_REPLAY_PREFIX}:", f"{MEDIA_RECORDING_PREFIX}:")
+            (f"{MEDIA_REPLAY_PREFIX}:", f"{MEDIA_RECORDING_PREFIX}:", f"{MEDIA_SEARCH_RESULT_PREFIX}:")
         ):
             payload = _decode_asset_payload_from_media_id(base_media_id)
             if payload:
@@ -934,13 +1081,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         if media_id.startswith(f"{MEDIA_REPLAY_PREFIX}:") or media_id.startswith(
             f"{MEDIA_RECORDING_PREFIX}:"
-        ):
+        ) or media_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:"):
             payload = _decode_asset_payload_from_media_id(media_id)
             if not payload:
-                raise HomeAssistantError("Invalid replay or recording identifier")
+                raise HomeAssistantError("Invalid replay, recording, or search result identifier")
             asset_url = payload.get("url")
             if not isinstance(asset_url, str) or not asset_url:
-                raise HomeAssistantError("Replay asset URL is missing")
+                raise HomeAssistantError("Asset URL is missing")
             title = payload.get("title")
             is_live = bool(payload.get("live", False))
             return asset_url, title, is_live
@@ -1620,6 +1767,48 @@ def _extract_replay_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
             asset = _parse_asset_item(item, api)
             if asset:
                 assets.append(asset)
+    return _dedupe_assets(assets)
+
+
+def _extract_search_suggestions(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Extract search suggestions from search home data."""
+    assets: list[BrowseAsset] = []
+    for section in _extract_sections(data):
+        for item in _extract_section_items(section):
+            if not isinstance(item, dict):
+                continue
+            asset = _parse_asset_item(item, api)
+            if asset:
+                assets.append(asset)
+    return _dedupe_assets(assets)
+
+
+def _extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Extract search results from search response."""
+    assets: list[BrowseAsset] = []
+
+    # Handle direct results array
+    if isinstance(data, dict):
+        results = data.get("results") or data.get("items") or data.get("data")
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                asset = _parse_asset_item(item, api)
+                if asset:
+                    assets.append(asset)
+            if assets:
+                return _dedupe_assets(assets)
+
+    # Fall back to section-based extraction
+    for section in _extract_sections(data):
+        for item in _extract_section_items(section):
+            if not isinstance(item, dict):
+                continue
+            asset = _parse_asset_item(item, api)
+            if asset:
+                assets.append(asset)
+
     return _dedupe_assets(assets)
 
 
