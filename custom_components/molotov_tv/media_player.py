@@ -628,7 +628,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         try:
             data = await self._api.async_get_program_details(channel_id, program_id)
-            episodes = _extract_program_episodes(data, self._api)
+            episodes = _extract_program_episodes(data, self._api, program_id)
             _LOGGER.debug(
                 "Found %d episodes for program %s on channel %s",
                 len(episodes),
@@ -2128,7 +2128,9 @@ def _extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     return _dedupe_assets(assets)
 
 
-def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+def _extract_program_episodes(
+    data: Any, api: MolotovApi, filter_program_id: str | None = None
+) -> list[BrowseAsset]:
     """Extract available episodes from program details response."""
     assets: list[BrowseAsset] = []
     seen_titles: set[str] = set()  # Dedupe by title since same ep can have different URLs
@@ -2158,25 +2160,28 @@ def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
                 continue
 
             items = _extract_section_items(section)
-            _LOGGER.debug(
-                "Episode section '%s' (%s): %d items",
-                section_title[:30],
-                section_slug,
-                len(items),
-            )
 
             for item in items:
                 if not isinstance(item, dict):
                     continue
+
+                # Filter by program_id if specified
+                if filter_program_id:
+                    payload = _extract_item_payload(item)
+                    video = payload.get("video", {})
+                    item_program_id = str(video.get("program_id")) if video.get("program_id") else None
+                    if item_program_id != filter_program_id:
+                        continue
+
                 asset = _parse_asset_item(item, api)
                 if asset:
-                    # Dedupe by title + episode_title to avoid duplicates
-                    dedup_key = f"{asset.title}|{asset.episode_title or ''}"
+                    # Dedupe by episode_title to avoid duplicates
+                    dedup_key = asset.episode_title or asset.title
                     if dedup_key not in seen_titles:
                         seen_titles.add(dedup_key)
                         assets.append(asset)
 
-    _LOGGER.debug("Total unique episodes extracted: %d", len(assets))
+    _LOGGER.debug("Total unique episodes for program %s: %d", filter_program_id, len(assets))
     # Sort by start date, newest first, limit to 50
     sorted_assets = _sort_assets(assets)
     return sorted_assets[:50]
