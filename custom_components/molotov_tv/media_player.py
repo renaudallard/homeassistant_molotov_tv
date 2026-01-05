@@ -169,7 +169,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._entry = entry
         self._api = api
         self._attr_unique_id = entry.entry_id
-        self._attr_name = entry.title
+        self._attr_name = None  # Use device name only (no duplication)
         self._attr_has_entity_name = True
         self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
@@ -804,13 +804,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             # Add replay items
             for asset in replays:
-                payload = _encode_asset_payload(
-                    {
-                        "url": asset.asset_url,
-                        "title": asset.title,
-                        "live": asset.is_live,
-                    }
-                )
+                payload_data = {
+                    "url": asset.asset_url,
+                    "title": asset.title,
+                    "live": asset.is_live,
+                }
+                # Include program info for episode browsing
+                if asset.program_id:
+                    payload_data["program_id"] = asset.program_id
+                if asset.channel_id:
+                    payload_data["channel_id"] = asset.channel_id
+
+                payload = _encode_asset_payload(payload_data)
                 display_title = asset.title
                 if asset.episode_title:
                     display_title = f"{asset.title} - {asset.episode_title}"
