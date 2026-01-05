@@ -1251,9 +1251,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         assets: list[BrowseAsset] = []
         seen_urls: set[str] = set()
 
-        # Get all recordings from multiple sources
+        # Get all recordings from bookmarks API
         try:
             all_sections = await self._api.async_get_all_recordings()
+            _LOGGER.debug("Got %d sections from recordings API", len(all_sections))
             for section in all_sections:
                 section_assets = _extract_recording_assets(
                     {"sections": [section]}, self._api
@@ -1262,11 +1263,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     if asset.asset_url not in seen_urls:
                         seen_urls.add(asset.asset_url)
                         assets.append(asset)
+            _LOGGER.debug("Found %d recordings from bookmarks API", len(assets))
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch all recordings: %s", err)
 
         # Also try home sections as fallback
         if not assets:
+            _LOGGER.debug("No recordings from bookmarks, trying home sections")
             try:
                 data = await self._api.async_get_home_sections()
                 home_assets = _extract_recording_assets(data, self._api)
@@ -1274,6 +1277,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     if asset.asset_url not in seen_urls:
                         seen_urls.add(asset.asset_url)
                         assets.append(asset)
+                _LOGGER.debug("Found %d recordings from home sections", len(assets))
             except MolotovApiError as err:
                 _LOGGER.warning("Failed to fetch recordings from home: %s", err)
 
@@ -1611,14 +1615,14 @@ def _extract_asset_reference(item: dict[str, Any]) -> tuple[str, str, bool] | No
         if ref:
             return ref
 
-    # Fall back to video object (for VOD items)
+    # Fall back to video object (for VOD and record items)
     video = payload.get("video")
     if isinstance(video, dict):
         video_type = video.get("type")
         video_id = video.get("id")
         if video_type and video_id:
-            # VOD items support start_over
-            start_over = video_type == "vod"
+            # VOD and record items support start_over
+            start_over = video_type in ("vod", "record")
             return str(video_type), str(video_id), start_over
 
     return None
@@ -1923,17 +1927,42 @@ def _extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
 
 def _extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     assets: list[BrowseAsset] = []
-    for section in _extract_sections(data):
+    sections = _extract_sections(data)
+    _LOGGER.debug("Extracting recordings from %d sections", len(sections))
+
+    for section in sections:
+        section_title = section.get("title") or section.get("slug") or "unknown"
         is_recording_section = _is_recording_section(section)
-        for item in _extract_section_items(section):
+        items = _extract_section_items(section)
+
+        _LOGGER.debug(
+            "Section '%s': is_recording=%s, %d items",
+            section_title[:30],
+            is_recording_section,
+            len(items),
+        )
+
+        for item in items:
             if not isinstance(item, dict):
                 continue
+
+            # Check both item and its payload for recording type
             payload = _extract_item_payload(item)
-            if not is_recording_section and not _is_recording_item(payload):
+            is_recording = _is_recording_item(item) or _is_recording_item(payload)
+
+            if not is_recording_section and not is_recording:
                 continue
+
             asset = _parse_asset_item(item, api)
             if asset:
+                _LOGGER.debug(
+                    "Found recording: %s (url=%s)",
+                    asset.title[:30] if asset.title else "untitled",
+                    asset.asset_url[:50] if asset.asset_url else "no url",
+                )
                 assets.append(asset)
+
+    _LOGGER.debug("Total recordings extracted: %d", len(assets))
     return _dedupe_assets(assets)
 
 
@@ -1977,12 +2006,28 @@ def _is_recording_section(section: dict[str, Any]) -> bool:
 
 
 def _is_recording_item(item: dict[str, Any]) -> bool:
+    # Check video.type = "record"
+    video = item.get("video")
+    if isinstance(video, dict):
+        video_type = video.get("type", "")
+        if video_type == "record":
+            return True
+
+    # Check item type
     item_type = item.get("type") or item.get("item_type")
-    if isinstance(item_type, str) and "recording" in item_type.casefold():
+    if isinstance(item_type, str) and "record" in item_type.casefold():
         return True
+
+    # Check bookmark style
     bookmark_style = item.get("bookmark_style") or item.get("bookmarkStyle")
     if isinstance(bookmark_style, str) and "record" in bookmark_style.casefold():
         return True
+
+    # Check nested data
+    data = item.get("data")
+    if isinstance(data, dict):
+        return _is_recording_item(data)
+
     return False
 
 

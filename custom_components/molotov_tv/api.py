@@ -359,13 +359,36 @@ class MolotovApi:
         return await self._request("GET", url, auth=True)
 
     async def async_get_bookmarks(self) -> dict[str, Any]:
-        """Fetch the bookmarks sections feed."""
+        """Fetch the bookmarks sections feed (recordings)."""
 
         await self.async_ensure_logged_in()
-        url = self._session_state.bookmark_url or urljoin(
-            self._base_api_url, "v2/me/bookmarks/sections"
-        )
-        return await self._request("GET", url, auth=True)
+
+        # Try multiple endpoints - v3 for TV, v4 for mobile, v2 as fallback
+        endpoints = [
+            self._session_state.bookmark_url,
+            urljoin(self._base_api_url, "v3/me/bookmarks/sections"),
+            urljoin(self._base_api_url, "v4/me/bookmarks/sections"),
+            urljoin(self._base_api_url, "v2/me/bookmarks/sections"),
+        ]
+
+        for url in endpoints:
+            if not url:
+                continue
+            try:
+                result = await self._request("GET", url, auth=True)
+                if isinstance(result, dict):
+                    sections = result.get("sections", [])
+                    _LOGGER.debug(
+                        "Bookmarks from %s: %d sections",
+                        url.split("/")[-2] if "/" in url else url,
+                        len(sections) if isinstance(sections, list) else 0,
+                    )
+                    if sections:
+                        return result
+            except MolotovApiError as err:
+                _LOGGER.debug("Bookmarks endpoint %s failed: %s", url, err)
+
+        return {"sections": []}
 
     async def async_get_channel_programs(self, channel_id: str) -> dict[str, Any]:
         """Fetch program data for a single channel."""
