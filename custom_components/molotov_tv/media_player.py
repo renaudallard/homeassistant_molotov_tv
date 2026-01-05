@@ -2135,16 +2135,36 @@ def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     if not isinstance(data, dict):
         return assets
 
-    # Try to extract from channelEpisodeSections and programEpisodeSections
-    for section_key in ("channelEpisodeSections", "programEpisodeSections", "sections"):
+    _LOGGER.debug("Program details keys: %s", list(data.keys()))
+
+    # Try to extract from channel_episode_sections and program_episode_sections
+    # API uses snake_case: channel_episode_sections, program_episode_sections
+    for section_key in (
+        "channel_episode_sections",
+        "program_episode_sections",
+        "channelEpisodeSections",
+        "programEpisodeSections",
+        "sections",
+    ):
         sections = data.get(section_key)
         if not isinstance(sections, list):
             continue
 
+        _LOGGER.debug("Found %d sections in '%s'", len(sections), section_key)
+
         for section in sections:
             if not isinstance(section, dict):
                 continue
-            for item in _extract_section_items(section):
+
+            section_title = section.get("title") or section.get("slug") or "unknown"
+            items = _extract_section_items(section)
+            _LOGGER.debug(
+                "Section '%s' has %d items",
+                section_title[:30],
+                len(items),
+            )
+
+            for item in items:
                 if not isinstance(item, dict):
                     continue
                 asset = _parse_asset_item(item, api)
@@ -2157,6 +2177,7 @@ def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
         # Check for episodes array
         episodes = program.get("episodes")
         if isinstance(episodes, list):
+            _LOGGER.debug("Found %d episodes in program object", len(episodes))
             for item in episodes:
                 if not isinstance(item, dict):
                     continue
@@ -2164,6 +2185,7 @@ def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
                 if asset:
                     assets.append(asset)
 
+    _LOGGER.debug("Total episodes extracted: %d", len(assets))
     # Sort by start date, newest first
     return _sort_assets(_dedupe_assets(assets))
 
