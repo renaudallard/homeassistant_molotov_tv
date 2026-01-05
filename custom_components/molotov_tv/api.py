@@ -358,6 +358,43 @@ class MolotovApi:
         url = urljoin(self._base_api_url, "v2/me/search/home")
         return await self._request("GET", url, auth=True)
 
+    async def async_get_program_details(
+        self, channel_id: str, program_id: str
+    ) -> dict[str, Any]:
+        """Fetch program details including all episodes.
+
+        Args:
+            channel_id: The channel ID.
+            program_id: The program ID.
+
+        Returns:
+            Program details with channelEpisodeSections and programEpisodeSections.
+        """
+        await self.async_ensure_logged_in()
+
+        # Try v2 endpoint first
+        endpoints = [
+            f"v2/channels/{channel_id}/programs/{program_id}/view",
+            f"v3/channels/{channel_id}/programs/{program_id}/view",
+            f"v2/channels/{channel_id}/programs/{program_id}",
+        ]
+
+        for endpoint in endpoints:
+            try:
+                url = urljoin(self._base_api_url, endpoint)
+                result = await self._request("GET", url, auth=True)
+                if isinstance(result, dict):
+                    _LOGGER.debug(
+                        "Program details from %s: keys=%s",
+                        endpoint,
+                        list(result.keys()),
+                    )
+                    return result
+            except MolotovApiError as err:
+                _LOGGER.debug("Program details endpoint %s failed: %s", endpoint, err)
+
+        return {"program": None, "channelEpisodeSections": [], "programEpisodeSections": []}
+
     async def async_get_bookmarks(self) -> dict[str, Any]:
         """Fetch the bookmarks sections feed (recordings)."""
 

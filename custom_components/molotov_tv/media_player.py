@@ -89,7 +89,9 @@ from .const import (
     MEDIA_CAST_PREFIX,
     MEDIA_CHANNEL_PREFIX,
     MEDIA_CHANNELS,
+    MEDIA_EPISODE_PREFIX,
     MEDIA_LIVE_PREFIX,
+    MEDIA_PROGRAM_EPISODES_PREFIX,
     MEDIA_PROGRAM_PREFIX,
     MEDIA_RECORDING_PREFIX,
     MEDIA_RECORDINGS,
@@ -123,6 +125,8 @@ class BrowseAsset:
     poster: str | None = None
     start: datetime | None = None
     end: datetime | None = None
+    program_id: str | None = None
+    channel_id: str | None = None
 
 
 async def async_setup_entry(
@@ -230,6 +234,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_cast_targets(data, media_content_id)
 
         if media_content_id.startswith(f"{MEDIA_REPLAY_PREFIX}:"):
+            # Check if we can show program episodes
+            return await self._async_browse_replay_or_episodes(data, media_content_id)
+
+        if media_content_id.startswith(f"{MEDIA_PROGRAM_EPISODES_PREFIX}:"):
+            return await self._async_browse_program_episodes(media_content_id)
+
+        if media_content_id.startswith(f"{MEDIA_EPISODE_PREFIX}:"):
             return await self._async_browse_cast_targets(data, media_content_id)
 
         if media_content_id.startswith(f"{MEDIA_RECORDING_PREFIX}:"):
@@ -546,6 +557,120 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 ],
             )
 
+    async def _async_browse_replay_or_episodes(
+        self, data: EpgData, media_content_id: str
+    ) -> BrowseMedia:
+        """Browse replay - show episodes if program_id available, else cast targets."""
+        payload = _decode_asset_payload_from_media_id(media_content_id)
+
+        if payload:
+            program_id = payload.get("program_id")
+            channel_id = payload.get("channel_id")
+
+            if program_id and channel_id:
+                # We have program info - show all episodes
+                _LOGGER.debug(
+                    "Replay has program_id=%s, channel_id=%s - fetching episodes",
+                    program_id,
+                    channel_id,
+                )
+                return await self._async_browse_program_episodes_impl(
+                    channel_id, program_id, payload.get("title"), payload.get("thumb")
+                )
+
+        # No program info - fall back to cast targets
+        return await self._async_browse_cast_targets(data, media_content_id)
+
+    async def _async_browse_program_episodes(
+        self, media_content_id: str
+    ) -> BrowseMedia:
+        """Browse episodes for a program from encoded content ID."""
+        # Format: program_episodes:channel_id:program_id:title
+        parts = media_content_id.split(":", 3)
+        if len(parts) < 3:
+            raise HomeAssistantError("Invalid program episodes ID")
+
+        channel_id = parts[1]
+        program_id = parts[2]
+        title = parts[3] if len(parts) > 3 else None
+
+        return await self._async_browse_program_episodes_impl(
+            channel_id, program_id, title, None
+        )
+
+    async def _async_browse_program_episodes_impl(
+        self,
+        channel_id: str,
+        program_id: str,
+        title: str | None,
+        thumbnail: str | None,
+    ) -> BrowseMedia:
+        """Fetch and display all episodes for a program."""
+        children: list[BrowseMedia] = []
+
+        try:
+            data = await self._api.async_get_program_details(channel_id, program_id)
+            episodes = _extract_program_episodes(data, self._api)
+            _LOGGER.debug(
+                "Found %d episodes for program %s on channel %s",
+                len(episodes),
+                program_id,
+                channel_id,
+            )
+
+            for episode in episodes:
+                payload = _encode_asset_payload(
+                    {
+                        "url": episode.asset_url,
+                        "title": episode.title,
+                        "thumb": episode.thumbnail or episode.poster,
+                        "live": episode.is_live,
+                    }
+                )
+                ep_title = episode.title
+                if episode.episode_title:
+                    ep_title = f"{episode.episode_title}"
+                if episode.start:
+                    ep_title = f"{episode.start.strftime('%d/%m %H:%M')} - {ep_title}"
+
+                children.append(
+                    BrowseMedia(
+                        title=ep_title,
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=f"{MEDIA_EPISODE_PREFIX}:{payload}",
+                        media_content_type=MEDIA_EPISODE_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=episode.thumbnail or episode.poster,
+                    )
+                )
+        except MolotovApiError as err:
+            _LOGGER.warning("Failed to fetch program episodes: %s", err)
+
+        if not children:
+            children.append(
+                BrowseMedia(
+                    title="No episodes available",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_ROOT,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+
+        display_title = title or "Episodes"
+        return BrowseMedia(
+            title=display_title,
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{channel_id}:{program_id}",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
+            thumbnail=thumbnail,
+        )
+
     async def _async_browse_programs(
         self, data: EpgData, channel_id: str
     ) -> BrowseMedia:
@@ -808,14 +933,19 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     ) -> BrowseMedia:
         children: list[BrowseMedia] = []
         for asset in assets:
-            payload = _encode_asset_payload(
-                {
-                    "url": asset.asset_url,
-                    "title": asset.title,
-                    "thumb": asset.thumbnail or asset.poster,
-                    "live": asset.is_live,
-                }
-            )
+            payload_data = {
+                "url": asset.asset_url,
+                "title": asset.title,
+                "thumb": asset.thumbnail or asset.poster,
+                "live": asset.is_live,
+            }
+            # Include program info for replays so we can show all episodes
+            if asset.program_id:
+                payload_data["program_id"] = asset.program_id
+            if asset.channel_id:
+                payload_data["channel_id"] = asset.channel_id
+
+            payload = _encode_asset_payload(payload_data)
             item_title = asset.title
             if asset.episode_title:
                 item_title = f"{asset.title} - {asset.episode_title}"
@@ -876,7 +1006,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 title = f"Live - {channel.label}"
                 thumbnail = channel.poster
         elif base_media_id.startswith(
-            (f"{MEDIA_REPLAY_PREFIX}:", f"{MEDIA_RECORDING_PREFIX}:", f"{MEDIA_SEARCH_RESULT_PREFIX}:")
+            (f"{MEDIA_REPLAY_PREFIX}:", f"{MEDIA_RECORDING_PREFIX}:", f"{MEDIA_SEARCH_RESULT_PREFIX}:", f"{MEDIA_EPISODE_PREFIX}:")
         ):
             payload = _decode_asset_payload_from_media_id(base_media_id)
             if payload:
@@ -1190,10 +1320,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         if media_id.startswith(f"{MEDIA_REPLAY_PREFIX}:") or media_id.startswith(
             f"{MEDIA_RECORDING_PREFIX}:"
-        ) or media_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:"):
+        ) or media_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:") or media_id.startswith(
+            f"{MEDIA_EPISODE_PREFIX}:"
+        ):
             payload = _decode_asset_payload_from_media_id(media_id)
             if not payload:
-                raise HomeAssistantError("Invalid replay, recording, or search result identifier")
+                raise HomeAssistantError("Invalid replay, recording, episode, or search result identifier")
             asset_url = payload.get("url")
             if not isinstance(asset_url, str) or not asset_url:
                 raise HomeAssistantError("Asset URL is missing")
@@ -1666,6 +1798,9 @@ def _parse_asset_item(
                 poster = _extract_item_image(channel_payload, prefer_poster=True)
 
     video = payload.get("video")
+    program_id: str | None = None
+    channel_id: str | None = None
+
     if isinstance(video, dict):
         start = _parse_timestamp(
             video.get("start_at")
@@ -1675,9 +1810,30 @@ def _parse_asset_item(
         end = _parse_timestamp(
             video.get("end_at") or video.get("end") or video.get("available_until")
         )
+        # Extract program and channel IDs
+        program_id = str(video.get("program_id")) if video.get("program_id") else None
+        channel_id = str(video.get("channel_id")) if video.get("channel_id") else None
     else:
         start = _parse_timestamp(payload.get("start_at") or payload.get("start"))
         end = _parse_timestamp(payload.get("end_at") or payload.get("end"))
+
+    # Try to get channel_id from other places if not in video
+    if not channel_id:
+        channel_id = (
+            str(payload.get("channel_id"))
+            if payload.get("channel_id")
+            else None
+        )
+    if not channel_id:
+        channel_payload = payload.get("channel")
+        if isinstance(channel_payload, dict) and channel_payload.get("id"):
+            channel_id = str(channel_payload.get("id"))
+
+    # Try to get program_id from metadata
+    if not program_id:
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, dict) and metadata.get("program_id"):
+            program_id = str(metadata.get("program_id"))
 
     return BrowseAsset(
         title=title,
@@ -1689,6 +1845,8 @@ def _parse_asset_item(
         poster=poster,
         start=start,
         end=end,
+        program_id=program_id,
+        channel_id=channel_id,
     )
 
 
@@ -1923,6 +2081,46 @@ def _extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
                 assets.append(asset)
 
     return _dedupe_assets(assets)
+
+
+def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Extract all episodes from program details response."""
+    assets: list[BrowseAsset] = []
+
+    if not isinstance(data, dict):
+        return assets
+
+    # Try to extract from channelEpisodeSections and programEpisodeSections
+    for section_key in ("channelEpisodeSections", "programEpisodeSections", "sections"):
+        sections = data.get(section_key)
+        if not isinstance(sections, list):
+            continue
+
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            for item in _extract_section_items(section):
+                if not isinstance(item, dict):
+                    continue
+                asset = _parse_asset_item(item, api)
+                if asset:
+                    assets.append(asset)
+
+    # Also check for episodes in the program item itself
+    program = data.get("program")
+    if isinstance(program, dict):
+        # Check for episodes array
+        episodes = program.get("episodes")
+        if isinstance(episodes, list):
+            for item in episodes:
+                if not isinstance(item, dict):
+                    continue
+                asset = _parse_asset_item(item, api)
+                if asset:
+                    assets.append(asset)
+
+    # Sort by start date, newest first
+    return _sort_assets(_dedupe_assets(assets))
 
 
 def _extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
