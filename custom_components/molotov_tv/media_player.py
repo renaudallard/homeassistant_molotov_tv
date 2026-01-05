@@ -107,6 +107,7 @@ _LOGGER = logging.getLogger(__name__)
 PROGRAM_CACHE_TTL = timedelta(minutes=15)
 ASSET_CACHE_TTL = timedelta(minutes=15)
 CAST_DISCOVERY_TTL = timedelta(seconds=60)
+SEARCH_CACHE_TTL = timedelta(minutes=10)
 
 
 @dataclass(slots=True)
@@ -165,11 +166,35 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._api = api
         self._attr_unique_id = entry.entry_id
         self._attr_name = entry.title
+        self._attr_has_entity_name = True
         self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         self._active_cast_target: str | None = None
         self._active_cast_entity: str | None = None
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": self._entry.title,
+            "manufacturer": "Molotov",
+            "model": "Molotov TV",
+        }
+
+    def _get_search_cache(self) -> tuple[datetime, str, list[BrowseAsset]] | None:
+        """Get search cache from shared storage."""
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        return data.get("search_cache")
+
+    def _set_search_cache(
+        self, query: str, results: list[BrowseAsset]
+    ) -> None:
+        """Set search cache in shared storage."""
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if data is not None:
+            data["search_cache"] = (dt_util.utcnow(), query, results)
 
     async def async_browse_media(
         self,
@@ -213,9 +238,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if media_content_id == MEDIA_SEARCH:
             return await self._async_browse_search_home()
 
+        # Handle search queries - can come as "search:query" or with URL params
         if media_content_id.startswith(f"{MEDIA_SEARCH_PREFIX}:"):
             query = media_content_id.split(":", 1)[1]
+            # Check if it's a URL-encoded query
+            if "?" in query or "=" in query:
+                query = unquote(query)
             return await self._async_browse_search_results(query)
+
+        # Handle search via query parameter (some HA frontends use this)
+        if "?" in media_content_id:
+            base_id, query_string = media_content_id.split("?", 1)
+            params = parse_qs(query_string)
+            search_query = params.get("search", params.get("query", [None]))[0]
+            if search_query and base_id in (MEDIA_SEARCH, MEDIA_ROOT):
+                return await self._async_browse_search_results(unquote(search_query))
 
         if media_content_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:"):
             return await self._async_browse_cast_targets(data, media_content_id)
@@ -228,6 +265,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         media_id: str,
         **kwargs: Any,
     ) -> None:
+        # Handle search queries - store results for browsing
+        if media_id.startswith(f"{MEDIA_SEARCH_PREFIX}:"):
+            query = media_id.split(":", 1)[1]
+            await self._async_perform_search(query)
+            return
+
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
             _, encoded_target, base_media_id = media_id.split(":", 2)
             target = self._decode_cast_target(encoded_target)
@@ -242,6 +285,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         raise HomeAssistantError(
             "Select a Chromecast from the EPG before starting playback"
         )
+
+    async def _async_perform_search(self, query: str) -> None:
+        """Perform a search and cache results for browsing."""
+        if not query.strip():
+            return
+
+        try:
+            data = await self._api.async_search(query)
+            results = _extract_search_results(data, self._api)
+            self._set_search_cache(query, results)
+            _LOGGER.info(
+                "Search for '%s' completed with %d results. "
+                "Browse to Search folder to see results.",
+                query,
+                len(results),
+            )
+        except MolotovApiError as err:
+            _LOGGER.error("Search failed: %s", err)
+            raise HomeAssistantError(f"Search failed: {err}") from err
 
     def _browse_root(self) -> BrowseMedia:
         return BrowseMedia(
@@ -312,130 +374,177 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         )
 
     async def _async_browse_search_home(self) -> BrowseMedia:
-        """Browse search home with suggestions."""
-        children: list[BrowseMedia] = []
+        """Browse search home with cached results or suggestions."""
+        # Check if we have cached search results
+        search_cache = self._get_search_cache()
+        if search_cache:
+            cached_at, query, results = search_cache
+            if dt_util.utcnow() - cached_at < SEARCH_CACHE_TTL:
+                return self._build_search_results_browse(
+                    f"Search: {query}",
+                    f"{MEDIA_SEARCH_PREFIX}:{query}",
+                    results,
+                    show_search=True,
+                )
 
-        # Add a hint for users about how to search
-        children.append(
-            BrowseMedia(
-                title="Type in the search box above to find content",
-                media_class=MediaClass.DIRECTORY,
-                media_content_id=f"{MEDIA_SEARCH}:hint",
-                media_content_type="directory",
-                can_play=False,
-                can_expand=False,
-            )
-        )
-
-        # Try to get search home suggestions
+        # No cached results - show suggestions or empty state
+        children: list[BrowseAsset] = []
         try:
             data = await self._api.async_get_search_home()
-            suggestions = _extract_search_suggestions(data, self._api)
-            for suggestion in suggestions[:20]:  # Limit to 20 suggestions
-                payload = _encode_asset_payload(
-                    {
-                        "url": suggestion.asset_url,
-                        "title": suggestion.title,
-                        "thumb": suggestion.thumbnail or suggestion.poster,
-                        "live": suggestion.is_live,
-                    }
-                )
-                display_title = suggestion.title
-                if suggestion.episode_title:
-                    display_title = f"{suggestion.title} - {suggestion.episode_title}"
-                children.append(
-                    BrowseMedia(
-                        title=display_title,
-                        media_class=MediaClass.VIDEO,
-                        media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
-                        media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
-                        can_play=False,
-                        can_expand=True,
-                        thumbnail=suggestion.thumbnail or suggestion.poster,
-                    )
-                )
+            children = _extract_search_suggestions(data, self._api)
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch search home: %s", err)
 
-        return BrowseMedia(
-            title="Search",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=MEDIA_SEARCH,
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-            children=children,
+        return self._build_search_results_browse(
+            "Search", MEDIA_SEARCH, children, show_search=True
         )
 
-    async def _async_browse_search_results(self, query: str) -> BrowseMedia:
-        """Browse search results for a query."""
+    def _build_search_results_browse(
+        self,
+        title: str,
+        content_id: str,
+        assets: list[BrowseAsset],
+        show_search: bool = False,
+    ) -> BrowseMedia:
+        """Build a BrowseMedia with search results."""
         children: list[BrowseMedia] = []
 
-        if not query.strip():
-            return await self._async_browse_search_home()
-
-        try:
-            data = await self._api.async_search(query)
-            results = _extract_search_results(data, self._api)
-            _LOGGER.debug("Search for '%s' returned %d results", query, len(results))
-
-            for result in results:
-                payload = _encode_asset_payload(
-                    {
-                        "url": result.asset_url,
-                        "title": result.title,
-                        "thumb": result.thumbnail or result.poster,
-                        "live": result.is_live,
-                    }
-                )
-                display_title = result.title
-                if result.episode_title:
-                    display_title = f"{result.title} - {result.episode_title}"
-                children.append(
-                    BrowseMedia(
-                        title=display_title,
-                        media_class=MediaClass.VIDEO,
-                        media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
-                        media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
-                        can_play=False,
-                        can_expand=True,
-                        thumbnail=result.thumbnail or result.poster,
-                    )
-                )
-        except MolotovApiError as err:
-            _LOGGER.warning("Search failed: %s", err)
+        for asset in assets:
+            payload = _encode_asset_payload(
+                {
+                    "url": asset.asset_url,
+                    "title": asset.title,
+                    "thumb": asset.thumbnail or asset.poster,
+                    "live": asset.is_live,
+                }
+            )
+            display_title = asset.title
+            if asset.episode_title:
+                display_title = f"{asset.title} - {asset.episode_title}"
             children.append(
                 BrowseMedia(
-                    title=f"Search failed: {err}",
-                    media_class=MediaClass.DIRECTORY,
-                    media_content_id=MEDIA_SEARCH,
-                    media_content_type="directory",
+                    title=display_title,
+                    media_class=MediaClass.VIDEO,
+                    media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
+                    media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
                     can_play=False,
-                    can_expand=False,
+                    can_expand=True,
+                    thumbnail=asset.thumbnail or asset.poster,
                 )
             )
 
         if not children:
-            children.append(
-                BrowseMedia(
-                    title=f"No results for '{query}'",
-                    media_class=MediaClass.DIRECTORY,
-                    media_content_id=MEDIA_SEARCH,
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=False,
+            if show_search:
+                # Show usage instructions
+                children.append(
+                    BrowseMedia(
+                        title="Use the 'Molotov TV Search' text entity",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=f"{MEDIA_SEARCH}:hint1",
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=False,
+                    )
                 )
-            )
+                children.append(
+                    BrowseMedia(
+                        title="Add it to your dashboard, type a query",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=f"{MEDIA_SEARCH}:hint2",
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=False,
+                    )
+                )
+                children.append(
+                    BrowseMedia(
+                        title="Then return here to see results",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=f"{MEDIA_SEARCH}:hint3",
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=False,
+                    )
+                )
+            else:
+                children.append(
+                    BrowseMedia(
+                        title="No results found",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=MEDIA_SEARCH,
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=False,
+                    )
+                )
 
-        return BrowseMedia(
-            title=f"Search: {query}",
+        browse = BrowseMedia(
+            title=title,
             media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_PREFIX}:{query}",
+            media_content_id=content_id,
             media_content_type="directory",
             can_play=False,
             can_expand=True,
             children=children,
         )
+        # Enable search box in the UI
+        if show_search:
+            browse.children_media_class = MediaClass.VIDEO
+        return browse
+
+    async def _async_browse_search_results(self, query: str) -> BrowseMedia:
+        """Browse search results for a query."""
+        if not query.strip():
+            return await self._async_browse_search_home()
+
+        # Check cache first
+        search_cache = self._get_search_cache()
+        if search_cache:
+            cached_at, cached_query, cached_results = search_cache
+            if (
+                cached_query == query
+                and dt_util.utcnow() - cached_at < SEARCH_CACHE_TTL
+            ):
+                return self._build_search_results_browse(
+                    f"Search: {query}",
+                    f"{MEDIA_SEARCH_PREFIX}:{query}",
+                    cached_results,
+                    show_search=True,
+                )
+
+        # Perform search
+        try:
+            data = await self._api.async_search(query)
+            results = _extract_search_results(data, self._api)
+            _LOGGER.debug("Search for '%s' returned %d results", query, len(results))
+            # Cache results
+            self._set_search_cache(query, results)
+            return self._build_search_results_browse(
+                f"Search: {query}",
+                f"{MEDIA_SEARCH_PREFIX}:{query}",
+                results,
+                show_search=True,
+            )
+        except MolotovApiError as err:
+            _LOGGER.warning("Search failed: %s", err)
+            return BrowseMedia(
+                title=f"Search: {query}",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_PREFIX}:{query}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+                children=[
+                    BrowseMedia(
+                        title=f"Search failed: {err}",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=MEDIA_SEARCH,
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=False,
+                    )
+                ],
+            )
 
     async def _async_browse_programs(
         self, data: EpgData, channel_id: str

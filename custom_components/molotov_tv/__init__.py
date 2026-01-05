@@ -87,6 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
+        "search_cache": None,  # Shared search cache: (timestamp, query, results)
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

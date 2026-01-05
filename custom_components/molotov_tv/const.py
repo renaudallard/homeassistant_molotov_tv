@@ -34,7 +34,7 @@ import json
 from homeassistant.const import Platform
 
 DOMAIN = "molotov_tv"
-PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
+PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER, Platform.TEXT]
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
