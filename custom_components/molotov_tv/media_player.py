@@ -2129,38 +2129,39 @@ def _extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
 
 
 def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
-    """Extract all episodes from program details response."""
+    """Extract available episodes from program details response."""
     assets: list[BrowseAsset] = []
+    seen_titles: set[str] = set()  # Dedupe by title since same ep can have different URLs
 
     if not isinstance(data, dict):
         return assets
 
-    _LOGGER.debug("Program details keys: %s", list(data.keys()))
-
-    # Try to extract from channel_episode_sections and program_episode_sections
-    # API uses snake_case: channel_episode_sections, program_episode_sections
+    # Only look at sections that contain playable episodes
+    # Priority: program_episode_sections first (program-specific), then channel
     for section_key in (
-        "channel_episode_sections",
         "program_episode_sections",
-        "channelEpisodeSections",
-        "programEpisodeSections",
-        "sections",
+        "channel_episode_sections",
     ):
         sections = data.get(section_key)
         if not isinstance(sections, list):
             continue
 
-        _LOGGER.debug("Found %d sections in '%s'", len(sections), section_key)
-
         for section in sections:
             if not isinstance(section, dict):
                 continue
 
+            section_slug = (section.get("slug") or "").lower()
             section_title = section.get("title") or section.get("slug") or "unknown"
+
+            # Skip sections that aren't playable content
+            if any(skip in section_slug for skip in ("a-venir", "bientot", "upcoming", "soon")):
+                continue
+
             items = _extract_section_items(section)
             _LOGGER.debug(
-                "Section '%s' has %d items",
+                "Episode section '%s' (%s): %d items",
                 section_title[:30],
+                section_slug,
                 len(items),
             )
 
@@ -2169,25 +2170,16 @@ def _extract_program_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
                     continue
                 asset = _parse_asset_item(item, api)
                 if asset:
-                    assets.append(asset)
+                    # Dedupe by title + episode_title to avoid duplicates
+                    dedup_key = f"{asset.title}|{asset.episode_title or ''}"
+                    if dedup_key not in seen_titles:
+                        seen_titles.add(dedup_key)
+                        assets.append(asset)
 
-    # Also check for episodes in the program item itself
-    program = data.get("program")
-    if isinstance(program, dict):
-        # Check for episodes array
-        episodes = program.get("episodes")
-        if isinstance(episodes, list):
-            _LOGGER.debug("Found %d episodes in program object", len(episodes))
-            for item in episodes:
-                if not isinstance(item, dict):
-                    continue
-                asset = _parse_asset_item(item, api)
-                if asset:
-                    assets.append(asset)
-
-    _LOGGER.debug("Total episodes extracted: %d", len(assets))
-    # Sort by start date, newest first
-    return _sort_assets(_dedupe_assets(assets))
+    _LOGGER.debug("Total unique episodes extracted: %d", len(assets))
+    # Sort by start date, newest first, limit to 50
+    sorted_assets = _sort_assets(assets)
+    return sorted_assets[:50]
 
 
 def _extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
