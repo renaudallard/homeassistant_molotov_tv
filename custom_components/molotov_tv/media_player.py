@@ -1043,20 +1043,22 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             len(channel.programs),
         )
 
-        children = [
-            BrowseMedia(
-                title=f"▶ Live - {channel.label}",
-                media_class=MediaClass.CHANNEL,
-                media_content_id=f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}",
-                media_content_type=MEDIA_LIVE_PREFIX,
-                can_play=False,
-                can_expand=True,
-                thumbnail=channel.poster,
+        now = dt_util.utcnow()
+        children: list[BrowseMedia] = []
+        if _find_current_program(channel, now) is None:
+            children.append(
+                BrowseMedia(
+                    title=f"▶ Live - {channel.label}",
+                    media_class=MediaClass.CHANNEL,
+                    media_content_id=f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}",
+                    media_content_type=MEDIA_LIVE_PREFIX,
+                    can_play=False,
+                    can_expand=True,
+                    thumbnail=channel.poster,
+                )
             )
-        ]
 
         # Add current/upcoming programs
-        now = dt_util.utcnow()
         for program in channel.programs:
             start_ts = int(program.start.timestamp())
             end_ts = int(program.end.timestamp())
