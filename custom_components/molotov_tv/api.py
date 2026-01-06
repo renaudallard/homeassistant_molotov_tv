@@ -135,6 +135,8 @@ class MolotovSession:
     remote_subbed_url: str | None = None
     live_home_url: str | None = None
     home_url: str | None = None
+    search_url: str | None = None
+    search_home_url: str | None = None
     bookmark_url: str | None = None
 
 
@@ -235,6 +237,13 @@ class MolotovApi:
         """Fetch dynamic config data."""
 
         data = await self._request("GET", "v2/config", auth=False)
+        
+        api_root = data.get("apiRoot")
+        if api_root and isinstance(api_root, str):
+            _LOGGER.debug("Configured apiRoot: %s", api_root)
+            # Potentially update base_api_url if we want to trust the config
+            # self._base_api_url = api_root 
+            
         cast_app_id = data.get("cast_app_id")
         if cast_app_id:
             self._session_state.cast_app_id = cast_app_id
@@ -252,6 +261,24 @@ class MolotovApi:
         )
         if home_url:
             self._session_state.home_url = home_url
+        
+        search_url = (
+            _extract_config_url(data, "search")
+            or _extract_config_url(data, "search_legacy")
+            or _extract_config_url(data, "search_universal")
+            or _extract_config_url(data, "globalSearchUrl")
+            or _extract_config_url(data, "searchUrl")
+        )
+        if search_url:
+            self._session_state.search_url = search_url
+        search_home_url = (
+            _extract_config_url(data, "v3_search_home")
+            or _extract_config_url(data, "search_home")
+            or _extract_config_url(data, "searchHome")
+        )
+        if search_home_url:
+            self._session_state.search_home_url = search_home_url
+
         bookmark_url = _extract_config_url(data, "bookmark") or _extract_config_url(
             data, "bookmarks"
         )
@@ -310,19 +337,33 @@ class MolotovApi:
             Search results with sections containing matching items.
         """
         await self.async_ensure_logged_in()
+        _LOGGER.debug("Performing search with base_api_url: %s", self._base_api_url)
 
         # Try different search endpoints
-        endpoints = [
+        endpoints = []
+        
+        # Use dynamic search URL if available (preferred)
+        # Note: globalSearchUrl typically returns a list of SearchTile objects
+        if self._session_state.search_url:
+            _LOGGER.debug("Using dynamic search URL: %s", self._session_state.search_url)
+            endpoints.append(("POST", self._session_state.search_url, {"query": query}))
+            
+        endpoints.extend([
+            ("POST", "v2/search", {"query": query}),
+            ("POST", "v2/universal-search", {"query": query}),
+            ("POST", "v2/me/search", {"query": query}), # Try without /query
             ("POST", "v2/me/search/query", {"query": query}),
             ("POST", "v3/me/search/query", {"query": query}),
+            ("POST", "v2/search/query", {"query": query}),  # Try without /me/
+            ("POST", "v3/search/query", {"query": query}),
             ("GET", f"v2/me/search?query={query}", None),
             ("GET", f"v3/search?q={query}", None),
-        ]
+        ])
 
         last_error: MolotovApiError | None = None
         for method, endpoint, body in endpoints:
             try:
-                url = urljoin(self._base_api_url, endpoint)
+                url = endpoint if endpoint.startswith("http") else urljoin(self._base_api_url, endpoint)
                 _LOGGER.debug("Trying search endpoint: %s %s", method, url)
 
                 if method == "POST" and body:
@@ -340,8 +381,24 @@ class MolotovApi:
                     has_sections = bool(result.get("sections"))
                     has_items = bool(result.get("items"))
                     has_results = bool(result.get("results"))
+                    
                     if has_sections or has_items or has_results:
                         return result
+                        
+                elif isinstance(result, list):
+                     # Global search returns a list of items directly
+                     # Wrap it in a section for compatibility
+                     _LOGGER.debug("Got list response with %d items", len(result))
+                     return {
+                         "sections": [
+                             {
+                                 "title": "Results",
+                                 "items": result,
+                                 "type": "search_results" 
+                             }
+                         ], 
+                         "query": query
+                     }
 
             except MolotovApiError as err:
                 _LOGGER.debug("Search endpoint %s failed: %s", endpoint, err)
@@ -355,8 +412,24 @@ class MolotovApi:
     async def async_get_search_home(self) -> dict[str, Any]:
         """Get search home page with suggestions and popular content."""
         await self.async_ensure_logged_in()
-        url = urljoin(self._base_api_url, "v2/me/search/home")
-        return await self._request("GET", url, auth=True)
+        endpoints = []
+        if self._session_state.search_home_url:
+            endpoints.append(self._session_state.search_home_url)
+        endpoints.extend([
+            "v3/search-home",
+            "v2/me/search/home",
+        ])
+        last_error: MolotovApiError | None = None
+        for endpoint in endpoints:
+            url = endpoint if endpoint.startswith("http") else urljoin(self._base_api_url, endpoint)
+            try:
+                return await self._request("GET", url, auth=True)
+            except MolotovApiError as err:
+                _LOGGER.debug("Search home endpoint %s failed: %s", url, err)
+                last_error = err
+        if last_error:
+            raise last_error
+        return {}
 
     async def async_get_program_details(
         self, channel_id: str, program_id: str
