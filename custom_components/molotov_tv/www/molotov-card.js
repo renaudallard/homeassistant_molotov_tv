@@ -1,10 +1,10 @@
 /**
  * Molotov TV Player Card & Automatic Overlay Manager
- * v0.1.29 - Cleaned up debugging
+ * v0.1.30 - Cleaned up debugging
  */
 
 (function() {
-  const VERSION = "0.1.29";
+  const VERSION = "0.1.30";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
 
@@ -124,7 +124,8 @@
       const video = document.createElement('video');
       video.controls = true;
       video.autoplay = true;
-      video.muted = true;
+      video.muted = false;
+      video.volume = 0.3;
       video.setAttribute('playsinline', '');
 
       this.content.insertBefore(video, this.content.firstChild);
