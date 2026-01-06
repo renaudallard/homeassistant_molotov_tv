@@ -1,65 +1,12 @@
 /**
  * Molotov TV Player Card & Automatic Overlay Manager
- * v0.1.28 - Fixed function scope
+ * v0.1.29 - Cleaned up debugging
  */
 
 (function() {
-  const VERSION = "0.1.28";
-
-  // --- Visual Debugger ---
-  let debugDot = null;
-
-  function createIndicator() {
-      if (document.getElementById('molotov-debug-dot')) {
-          return document.getElementById('molotov-debug-dot');
-      }
-      const target = document.body || document.documentElement;
-      if (!target) return null;
-
-      const dot = document.createElement('div');
-      dot.id = 'molotov-debug-dot';
-      dot.style.cssText = "position:fixed; top:0; left:0; width:15px; height:15px; background:gray; z-index:999999; pointer-events:none; border:2px solid white;";
-      target.appendChild(dot);
-      console.log("[Molotov] Debug indicator created");
-      return dot;
-  }
-
-  debugDot = createIndicator();
-  if (!debugDot) {
-      const retryCreate = () => {
-          debugDot = createIndicator();
-          if (!debugDot && document.readyState !== 'complete') {
-              setTimeout(retryCreate, 100);
-          }
-      };
-      if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', retryCreate);
-      } else {
-          setTimeout(retryCreate, 100);
-      }
-  }
-
-  window.addEventListener('error', function(e) {
-      if (debugDot) debugDot.style.background = 'blue';
-      console.error("[Molotov] Global Error:", e.message, e.filename, e.lineno);
-  });
+  const VERSION = "0.1.29";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
-
-  if (debugDot) debugDot.title = `Molotov v${VERSION}`;
-
-  let blinkState = false;
-  setInterval(() => {
-      if (debugDot && debugDot.style.background !== 'blue') {
-          debugDot.style.background = blinkState ? 'lime' : 'purple';
-          if (getHass()) {
-              debugDot.style.border = "2px solid yellow";
-          } else {
-              debugDot.style.border = "2px solid white";
-          }
-          blinkState = !blinkState;
-      }
-  }, 500);
 
   // --- HASS Discovery ---
   function getHass() {
@@ -93,14 +40,6 @@
             }
             video { width: 100%; height: 100%; max-height: 100%; background: black; }
             .message { color: white; padding: 16px; text-align: center; }
-            .info-overlay {
-              position: absolute; top: 0; left: 0; right: 0;
-              background: rgba(0, 0, 0, 0.75); color: #0f0;
-              padding: 6px; font-size: 11px; font-family: monospace;
-              pointer-events: none; z-index: 5;
-              max-height: 120px; overflow-y: auto;
-              white-space: pre-wrap; word-break: break-all;
-            }
             .play-overlay {
               position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
               background: rgba(0, 0, 0, 0.5); border-radius: 50%; width: 64px; height: 64px;
@@ -110,7 +49,6 @@
             .play-icon { width: 32px; height: 32px; fill: white; }
           </style>
           <ha-card>
-            <div class="info-overlay">Initializing...</div>
             <div class="message">Waiting for playback...</div>
             <div class="play-overlay">
               <svg class="play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -118,7 +56,6 @@
           </ha-card>
         `;
         this.content = this.querySelector('ha-card');
-        this.infoOverlay = this.querySelector('.info-overlay');
         this.playOverlay = this.querySelector('.play-overlay');
 
         if (this.playOverlay) {
@@ -147,9 +84,7 @@
 
         this.content.querySelector('.message').textContent = 'Loading player...';
         this._log("v" + VERSION + " - Found stream");
-        this._log("URL: " + (streamUrl ? streamUrl.substring(0, 60) + "..." : "MISSING"));
-        if (drmInfo) this._log("DRM: " + drmInfo.type);
-
+        
         const oldVideo = this.content.querySelector('video');
         if (oldVideo) oldVideo.remove();
 
@@ -180,14 +115,7 @@
     }
 
     _log(msg) {
-      const ts = new Date().toLocaleTimeString();
       console.log("[Molotov]", msg);
-      if (this.infoOverlay) {
-        const lines = this.infoOverlay.textContent.split('\n').slice(-7);
-        lines.push(`${ts}: ${msg}`);
-        this.infoOverlay.textContent = lines.join('\n');
-        this.infoOverlay.scrollTop = this.infoOverlay.scrollHeight;
-      }
     }
 
     _initPlayer(url, drm) {
