@@ -183,7 +183,7 @@ def _parse_channel_entry(entry: dict[str, Any]) -> EpgChannel | None:
         or metadata.get("displayNumber")
     )
 
-    poster = _extract_image_url(channel) or _extract_image_url(entry)
+    poster = _extract_channel_logo(channel, entry)
 
     programs_payload = channel.get("programs")
     if not isinstance(programs_payload, list):
@@ -279,6 +279,49 @@ def _extract_image_url(payload: dict[str, Any], *, prefer_poster: bool = False) 
         url = _extract_image_from_bundle(value)
         if url:
             return url
+    return None
+
+
+def _extract_channel_logo(
+    channel: dict[str, Any], entry: dict[str, Any]
+) -> str | None:
+    for payload in (channel, entry):
+        if not isinstance(payload, dict):
+            continue
+        bundle = payload.get("image_bundle") or payload.get("imageBundle")
+        if isinstance(bundle, dict):
+            for key in (
+                "logo_16_9",
+                "landscape_with_channel",
+                "poster_with_channel",
+                "landscape",
+                "poster",
+                "logo_light",
+                "logo",
+            ):
+                url = _extract_image_from_bundle(bundle.get(key))
+                if url:
+                    return url
+            for value in bundle.values():
+                url = _extract_image_from_bundle(value)
+                if url:
+                    return url
+
+    for payload in (channel, entry):
+        if not isinstance(payload, dict):
+            continue
+        for key in (
+            "poster",
+            "posterUrl",
+            "thumbnail",
+            "thumbnailUrl",
+            "logo",
+            "logoUrl",
+        ):
+            url = payload.get(key)
+            if isinstance(url, str) and url:
+                return url
+
     return None
 
 
