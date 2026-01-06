@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -91,6 +92,7 @@ from .const import (
     MEDIA_CHANNELS,
     MEDIA_EPISODE_PREFIX,
     MEDIA_LIVE_PREFIX,
+    MEDIA_NOW_PLAYING,
     MEDIA_PROGRAM_EPISODES_PREFIX,
     MEDIA_PROGRAM_PREFIX,
     MEDIA_RECORDING_PREFIX,
@@ -103,7 +105,13 @@ from .const import (
     MEDIA_SEARCH_INPUT_PREFIX,
     MOLOTOV_AGENT,
 )
-from .coordinator import EpgChannel, EpgData, EpgProgram, MolotovEpgCoordinator
+from .coordinator import (
+    EpgChannel,
+    EpgData,
+    EpgProgram,
+    MolotovEpgCoordinator,
+    _parse_epg,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -255,6 +263,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         if media_content_id in (None, MEDIA_ROOT):
             return self._browse_root()
+
+        if media_content_id == MEDIA_NOW_PLAYING:
+            # Refresh EPG data for up-to-date listings
+            await self.coordinator.async_request_refresh()
+            data = self.coordinator.data
+            if data is None:
+                raise HomeAssistantError("EPG data is not available yet")
+            return await self._async_browse_now_playing(data)
 
         if media_content_id == MEDIA_CHANNELS:
             # Refresh EPG data when browsing channels
@@ -416,6 +432,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                 ),
                 BrowseMedia(
+                    title="Now Playing",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_NOW_PLAYING,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=True,
+                ),
+                BrowseMedia(
                     title="Channels",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_CHANNELS,
@@ -433,6 +457,124 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 ),
             ],
         )
+
+    async def _async_browse_now_playing(self, data: EpgData) -> BrowseMedia:
+        channels = list(data.channels)
+        if not channels:
+            return BrowseMedia(
+                title="Now Playing",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=MEDIA_NOW_PLAYING,
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+                children=[],
+            )
+
+        probe_now = dt_util.utcnow()
+        channels_by_id = {channel.channel_id: channel for channel in channels}
+        if _count_channels_with_current(channels, probe_now) < len(channels):
+            try:
+                live_home = await self._api.async_get_live_home_channels()
+                live_data = _parse_epg(live_home)
+                _merge_epg_channels(channels_by_id, live_data.channels)
+            except MolotovApiError as err:
+                _LOGGER.debug("Now playing live home refresh failed: %s", err)
+
+        await self._async_populate_now_playing_programs(list(channels_by_id.values()))
+
+        now = dt_util.utcnow()
+        children: list[BrowseMedia] = []
+
+        for channel in channels:
+            current_program = _find_current_program(channel, now)
+
+            if current_program:
+                start_ts = int(current_program.start.timestamp())
+                end_ts = int(current_program.end.timestamp())
+                title = current_program.title
+                if current_program.episode_title:
+                    title = f"{title} - {current_program.episode_title}"
+                display_title = f"{channel.label} - {title}"
+                media_id = (
+                    f"{MEDIA_PROGRAM_PREFIX}:{channel.channel_id}:{start_ts}:{end_ts}"
+                )
+                media_class = MediaClass.TV_SHOW
+                thumb = (
+                    current_program.thumbnail
+                    or current_program.poster
+                    or channel.poster
+                )
+            else:
+                display_title = f"{channel.label} - Live"
+                media_id = f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}"
+                media_class = MediaClass.CHANNEL
+                thumb = channel.poster
+
+            children.append(
+                BrowseMedia(
+                    title=display_title,
+                    media_class=media_class,
+                    media_content_id=media_id,
+                    media_content_type=media_id.split(":", 1)[0],
+                    can_play=False,
+                    can_expand=True,
+                    thumbnail=thumb,
+                )
+            )
+
+        return BrowseMedia(
+            title="Now Playing",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=MEDIA_NOW_PLAYING,
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
+        )
+
+    async def _async_populate_now_playing_programs(
+        self, channels: list[EpgChannel]
+    ) -> None:
+        missing: list[EpgChannel] = []
+        probe_now = dt_util.utcnow()
+        for channel in channels:
+            if _find_current_program(channel, probe_now):
+                continue
+            cached = self._get_cached_programs(channel.channel_id)
+            if cached is not None:
+                channel.programs = cached
+                if _find_current_program(channel, probe_now):
+                    continue
+            missing.append(channel)
+
+        if not missing:
+            return
+
+        semaphore = asyncio.Semaphore(5)
+
+        async def fetch_programs(channel: EpgChannel) -> None:
+            async with semaphore:
+                try:
+                    raw = await self._api.async_get_channel_programs(
+                        channel.channel_id
+                    )
+                except MolotovApiError as err:
+                    _LOGGER.debug(
+                        "Now playing programs fetch failed for %s: %s",
+                        channel.channel_id,
+                        err,
+                    )
+                    return
+                programs = _parse_remote_programs(raw, channel.channel_id)
+                if programs:
+                    self._program_cache[channel.channel_id] = (
+                        dt_util.utcnow(),
+                        programs,
+                    )
+                    channel.programs = programs
+
+        await asyncio.gather(*(fetch_programs(channel) for channel in missing))
 
     def _browse_channels(self, data: EpgData) -> BrowseMedia:
         children = [
@@ -2594,6 +2736,34 @@ def _find_program(
         if int(program.start.timestamp()) == start_ts:
             return program
     return None
+
+
+def _find_current_program(channel: EpgChannel, now: datetime) -> EpgProgram | None:
+    for program in channel.programs:
+        if program.start <= now < program.end:
+            return program
+    return None
+
+
+def _count_channels_with_current(
+    channels: list[EpgChannel], now: datetime
+) -> int:
+    return sum(1 for channel in channels if _find_current_program(channel, now))
+
+
+def _merge_epg_channels(
+    base_channels: dict[str, EpgChannel], incoming: list[EpgChannel]
+) -> None:
+    for channel in incoming:
+        existing = base_channels.get(channel.channel_id)
+        if existing is None:
+            continue
+        if not existing.programs and channel.programs:
+            existing.programs = channel.programs
+        if existing.poster is None and channel.poster is not None:
+            existing.poster = channel.poster
+        if not existing.label and channel.label:
+            existing.label = channel.label
 
 
 def _parse_remote_programs(

@@ -318,6 +318,14 @@ class MolotovApi:
                 )
             raise
 
+    async def async_get_live_home_channels(self) -> dict[str, Any]:
+        """Fetch live home sections (includes per-channel programs when available)."""
+        await self.async_ensure_logged_in()
+        url = self._session_state.live_home_url or urljoin(
+            self._base_api_url, "v2/channels/live/sections"
+        )
+        return await self._request("GET", url, auth=True)
+
     async def async_get_home_sections(self) -> dict[str, Any]:
         """Fetch the home sections feed."""
 
