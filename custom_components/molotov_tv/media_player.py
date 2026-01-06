@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -1157,7 +1158,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # First try the dedicated replay API endpoint
         try:
             data = await self._api.async_get_channel_replays(channel_id)
-            assets = _extract_replay_assets(data, self._api)
+            assets = _extract_replay_assets(data, self._api, channel_id=channel_id)
+            if assets:
+                assets = [
+                    asset
+                    for asset in assets
+                    if asset.channel_id == channel_id
+                ]
             if assets:
                 _LOGGER.debug(
                     "Found %d replays from replay API for channel %s",
@@ -2062,6 +2069,31 @@ def _parse_asset_reference_from_url(url: str | None) -> tuple[str, str, bool] | 
     return asset_type, asset_id, start_over
 
 
+def _parse_channel_id_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    for key in ("channel_id", "channelId"):
+        value = _first_query_value(params.get(key))
+        if value:
+            return value
+    match = re.search(r"/channels/([^/]+)", parsed.path or "")
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_channel_id_from_actions(actions: dict[str, Any]) -> str | None:
+    for action in actions.values():
+        if not isinstance(action, dict):
+            continue
+        channel_id = _parse_channel_id_from_url(action.get("url"))
+        if channel_id:
+            return channel_id
+    return None
+
+
 def _first_query_value(values: list[str] | None) -> str | None:
     if not values:
         return None
@@ -2109,6 +2141,7 @@ def _parse_asset_item(
     item: dict[str, Any], api: MolotovApi
 ) -> BrowseAsset | None:
     payload = _extract_item_payload(item)
+    actions = _extract_item_actions(item, payload)
     ref = _extract_asset_reference(item)
     if not ref:
         return None
@@ -2143,6 +2176,7 @@ def _parse_asset_item(
                 poster = _extract_item_image(channel_payload, prefer_poster=True)
 
     video = payload.get("video")
+    metadata = payload.get("metadata")
     program_id: str | None = None
     channel_id: str | None = None
 
@@ -2175,23 +2209,31 @@ def _parse_asset_item(
         start = _parse_timestamp(payload.get("start_at") or payload.get("start"))
         end = _parse_timestamp(payload.get("end_at") or payload.get("end"))
 
-    # Try to get channel_id from other places if not in video
-    if not channel_id:
+    # Try to get program/channel id from metadata
+    if not program_id and isinstance(metadata, dict) and metadata.get("program_id"):
+        program_id = str(metadata.get("program_id"))
+    if not channel_id and isinstance(metadata, dict):
         channel_id = (
-            str(payload.get("channel_id"))
-            if payload.get("channel_id")
+            str(metadata.get("channel_id") or metadata.get("channelId"))
+            if metadata.get("channel_id") or metadata.get("channelId")
             else None
         )
+
+    # Try explicit channel_id fields before falling back to actions or channel payload
+    if not channel_id:
+        channel_id = (
+            str(payload.get("channel_id") or payload.get("channelId"))
+            if payload.get("channel_id") or payload.get("channelId")
+            else None
+        )
+
+    if not channel_id:
+        channel_id = _extract_channel_id_from_actions(actions)
+
     if not channel_id:
         channel_payload = payload.get("channel")
         if isinstance(channel_payload, dict) and channel_payload.get("id"):
             channel_id = str(channel_payload.get("id"))
-
-    # Try to get program_id from metadata
-    if not program_id:
-        metadata = payload.get("metadata", {})
-        if isinstance(metadata, dict) and metadata.get("program_id"):
-            program_id = str(metadata.get("program_id"))
 
     if program_id or channel_id:
         _LOGGER.debug(
@@ -2291,6 +2333,21 @@ def _parse_past_programs_as_replays(
         video = payload.get("video", {})
         if not isinstance(video, dict):
             video = {}
+
+        metadata = payload.get("metadata")
+        raw_channel_id = (
+            video.get("channel_id")
+            or payload.get("channel_id")
+            or program.get("channel_id")
+        )
+        if raw_channel_id is None and isinstance(metadata, dict):
+            raw_channel_id = metadata.get("channel_id") or metadata.get("channelId")
+        if raw_channel_id is None:
+            channel_payload = payload.get("channel")
+            if isinstance(channel_payload, dict):
+                raw_channel_id = channel_payload.get("id")
+        if raw_channel_id is not None and str(raw_channel_id) != channel_id:
+            continue
 
         # Parse program timestamps
         start = _parse_timestamp(
@@ -2399,7 +2456,9 @@ def _parse_past_programs_as_replays(
     return replays
 
 
-def _extract_replay_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+def _extract_replay_assets(
+    data: Any, api: MolotovApi, *, channel_id: str | None = None
+) -> list[BrowseAsset]:
     assets: list[BrowseAsset] = []
     for section in _extract_sections(data):
         if not _is_replay_section(section):
@@ -2407,10 +2466,40 @@ def _extract_replay_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
         for item in _extract_section_items(section):
             if not isinstance(item, dict):
                 continue
+            # Skip items that do not match the requested channel when possible.
+            if channel_id:
+                item_channel = _extract_item_channel_id_strict(item)
+                if item_channel != str(channel_id):
+                    continue
             asset = _parse_asset_item(item, api)
             if asset:
                 assets.append(asset)
     return _dedupe_assets(assets)
+
+
+def _extract_item_channel_id_strict(item: dict[str, Any]) -> str | None:
+    payload = _extract_item_payload(item)
+    video = payload.get("video")
+    if isinstance(video, dict) and video.get("channel_id"):
+        return str(video.get("channel_id"))
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        if metadata.get("channel_id"):
+            return str(metadata.get("channel_id"))
+        if metadata.get("channelId"):
+            return str(metadata.get("channelId"))
+
+    actions = _extract_item_actions(item, payload)
+    channel_id = _extract_channel_id_from_actions(actions)
+    if channel_id:
+        return channel_id
+
+    channel_payload = payload.get("channel")
+    if isinstance(channel_payload, dict) and channel_payload.get("id"):
+        return str(channel_payload.get("id"))
+
+    return None
 
 
 def _extract_search_suggestions(data: Any, api: MolotovApi) -> list[BrowseAsset]:
@@ -2584,7 +2673,9 @@ def _is_replay_section(section: dict[str, Any]) -> bool:
     slug = section.get("slug")
     title = section.get("title")
     text = f"{slug or ''} {title or ''}".casefold()
-    return "replay" in text or "catchup" in text
+    return any(
+        keyword in text for keyword in ("replay", "catchup", "rattrapage", "revoir")
+    )
 
 
 def _is_recording_section(section: dict[str, Any]) -> bool:

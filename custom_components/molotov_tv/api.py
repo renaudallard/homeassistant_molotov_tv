@@ -572,19 +572,29 @@ class MolotovApi:
         )
 
     async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
-        """Fetch replay/catchup content for a channel from home sections."""
+        """Fetch replay/catchup content for a channel."""
 
         await self.async_ensure_logged_in()
 
-        # Replays in Molotov come from home sections, filtered by channel
-        # The home sections contain VOD items with video.type="vod"
+        # Channel pages in the app use the channel sections endpoint.
+        try:
+            url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/sections")
+            _LOGGER.debug("Fetching channel sections for replays: %s", url)
+            return await self._request("GET", url, auth=True)
+        except MolotovApiError as err:
+            _LOGGER.debug(
+                "Channel sections endpoint failed for %s: %s", channel_id, err
+            )
+
+        # Fall back to home sections filtered by channel.
+        # Home sections contain VOD items with video.type="vod".
         try:
             home_data = await self.async_get_home_sections()
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch home sections for replays: %s", err)
             return {"sections": [], "channel_id": channel_id}
 
-        # Filter sections and items by channel_id
+        # Filter sections and items by channel_id.
         filtered_sections: list[dict[str, Any]] = []
         for section in home_data.get("sections", []):
             if not isinstance(section, dict):
@@ -601,7 +611,7 @@ class MolotovApi:
                 title = section.get("title", "")
                 if not any(
                     kw in (slug + title).lower()
-                    for kw in ["replay", "catchup", "vod", "revoir", "rattrapage"]
+                    for kw in ["replay", "catchup", "revoir", "rattrapage"]
                 ):
                     continue
 
