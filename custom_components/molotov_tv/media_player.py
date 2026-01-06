@@ -100,6 +100,7 @@ from .const import (
     MEDIA_SEARCH,
     MEDIA_SEARCH_PREFIX,
     MEDIA_SEARCH_RESULT_PREFIX,
+    MEDIA_SEARCH_INPUT_PREFIX,
     MOLOTOV_AGENT,
 )
 from .coordinator import EpgChannel, EpgData, EpgProgram, MolotovEpgCoordinator
@@ -290,6 +291,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # Check if we can show program episodes (same as replays)
             return await self._async_browse_replay_or_episodes(data, media_content_id)
 
+        if media_content_id.startswith(f"{MEDIA_SEARCH_INPUT_PREFIX}:"):
+            buffer = media_content_id.split(":", 1)[1]
+            return await self._async_browse_search_input(buffer)
+
         if media_content_id == MEDIA_SEARCH:
             return await self._async_browse_search_home()
 
@@ -468,23 +473,141 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if search_cache:
             cached_at, query, results = search_cache
             if dt_util.utcnow() - cached_at < SEARCH_CACHE_TTL:
-                return self._build_search_results_browse(
+                browse = self._build_search_results_browse(
                     f"Search: {query}",
                     f"{MEDIA_SEARCH_PREFIX}:{query}",
                     results,
                     show_search=True,
                 )
+                # Insert the keyboard entry point
+                browse.children.insert(0, BrowseMedia(
+                    title="⌨️ Type search...",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=True,
+                ))
+                return browse
 
-        # No cached results - show suggestions or empty state
+        # No cached results - show empty state with keyboard
         children: list[BrowseAsset] = []
-        try:
-            data = await self._api.async_get_search_home()
-            children = _extract_search_suggestions(data, self._api)
-        except MolotovApiError as err:
-            _LOGGER.debug("Failed to fetch search home: %s", err)
+        # We don't fetch suggestions anymore to keep it clean
 
-        return self._build_search_results_browse(
+        # Add "Type search" button at the top
+        browse = self._build_search_results_browse(
             "Search", MEDIA_SEARCH, children, show_search=True
+        )
+        
+        # Insert the keyboard entry point
+        browse.children.insert(0, BrowseMedia(
+            title="⌨️ Type search...",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+        ))
+        
+        return browse
+
+    async def _async_browse_search_input(self, buffer: str) -> BrowseMedia:
+        """Browse search input keyboard."""
+        children: list[BrowseMedia] = []
+        
+        # Action buttons - Always present to maintain layout
+        if buffer:
+            children.append(BrowseMedia(
+                title=f"🔎 Search for '{buffer}'",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_PREFIX}:{buffer}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+            children.append(BrowseMedia(
+                title="⌫ Backspace",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer[:-1]}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+            children.append(BrowseMedia(
+                title="🗑 Clear",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+        else:
+            children.append(BrowseMedia(
+                title="🔎 Type to search...",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+            children.append(BrowseMedia(
+                title="⌫ Backspace",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+            children.append(BrowseMedia(
+                title="🗑 Clear",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+
+        # Space is always useful
+        children.append(BrowseMedia(
+            title="␣ Space",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer} ",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+        ))
+
+        # Keys A-Z
+        import string
+        for char in string.ascii_uppercase:
+            children.append(BrowseMedia(
+                title=char,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+            
+        # Keys 0-9
+        for char in string.digits:
+            children.append(BrowseMedia(
+                title=char,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            ))
+
+        return BrowseMedia(
+            title=f"Search: {buffer}█" if buffer else "Search Keyboard",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
         )
 
     def _build_search_results_browse(
@@ -522,49 +645,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
         if not children:
-            if show_search:
-                # Show usage instructions
-                children.append(
-                    BrowseMedia(
-                        title="Use the 'Molotov TV Search' text entity",
-                        media_class=MediaClass.DIRECTORY,
-                        media_content_id=f"{MEDIA_SEARCH}:hint1",
-                        media_content_type="directory",
-                        can_play=False,
-                        can_expand=False,
-                    )
+            children.append(
+                BrowseMedia(
+                    title="No results found",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_SEARCH,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
                 )
-                children.append(
-                    BrowseMedia(
-                        title="Add it to your dashboard, type a query",
-                        media_class=MediaClass.DIRECTORY,
-                        media_content_id=f"{MEDIA_SEARCH}:hint2",
-                        media_content_type="directory",
-                        can_play=False,
-                        can_expand=False,
-                    )
-                )
-                children.append(
-                    BrowseMedia(
-                        title="Then return here to see results",
-                        media_class=MediaClass.DIRECTORY,
-                        media_content_id=f"{MEDIA_SEARCH}:hint3",
-                        media_content_type="directory",
-                        can_play=False,
-                        can_expand=False,
-                    )
-                )
-            else:
-                children.append(
-                    BrowseMedia(
-                        title="No results found",
-                        media_class=MediaClass.DIRECTORY,
-                        media_content_id=MEDIA_SEARCH,
-                        media_content_type="directory",
-                        can_play=False,
-                        can_expand=False,
-                    )
-                )
+            )
 
         browse = BrowseMedia(
             title=title,

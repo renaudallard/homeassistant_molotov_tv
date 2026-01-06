@@ -71,6 +71,7 @@ MEDIA_EPISODE_PREFIX = "episode"
 MEDIA_SEARCH = "search"
 MEDIA_SEARCH_PREFIX = "search"
 MEDIA_SEARCH_RESULT_PREFIX = "search_result"
+MEDIA_SEARCH_INPUT_PREFIX = "search_input"
 
 CONTENT_TYPE_DASH = "application/dash+xml"
 
