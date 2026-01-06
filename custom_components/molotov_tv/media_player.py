@@ -176,6 +176,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         self._active_cast_target: str | None = None
         self._active_cast_entity: str | None = None
+        self._current_stream: dict[str, Any] | None = None
 
     @property
     def device_info(self):
@@ -186,6 +187,48 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             "manufacturer": "Molotov",
             "model": "Molotov TV",
         }
+
+    @property
+    def extra_state_attributes(self):
+        """Return entity specific state attributes."""
+        attrs = {}
+        if self._current_stream:
+            stream = self._current_stream.get("stream", {})
+            url = stream.get("url")
+            _LOGGER.debug(
+                "extra_state_attributes: stream keys=%s, url present=%s",
+                list(stream.keys()) if stream else None,
+                bool(url)
+            )
+            if url:
+                attrs["stream_url"] = url
+            
+            # Extract DRM info
+            drm = self._current_stream.get("drm")
+            up_drm = self._current_stream.get("up_drm")
+            
+            if up_drm:
+                # Normalize up_drm to a simpler structure
+                wv = up_drm.get("key_systems", {}).get("Widevine", {})
+                license_data = wv.get("license", {})
+                if license_data:
+                    license_url = license_data.get("url")
+                    if query_params := license_data.get("query_params"):
+                        from urllib.parse import urlencode
+                        if "?" in license_url:
+                            license_url = f"{license_url}&{urlencode(query_params)}"
+                        else:
+                            license_url = f"{license_url}?{urlencode(query_params)}"
+                            
+                    attrs["stream_drm"] = {
+                        "type": "widevine",
+                        "license_url": license_url,
+                        "headers": license_data.get("http_headers", {})
+                    }
+            elif drm:
+                attrs["stream_drm"] = drm
+                
+        return attrs
 
     def _get_search_cache(self) -> tuple[datetime, str, list[BrowseAsset]] | None:
         """Get search cache from shared storage."""
@@ -283,6 +326,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_perform_search(query)
             return
 
+        if media_id.startswith("play_local:"):
+            await self._async_play_local(media_id.split(":", 1)[1])
+            return
+
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
             _, encoded_target, base_media_id = media_id.split(":", 2)
             target = self._decode_cast_target(encoded_target)
@@ -294,9 +341,38 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_cast_media(media_id, targets[0])
             return
 
-        raise HomeAssistantError(
-            "Select a Chromecast from the EPG before starting playback"
-        )
+        # If no cast target is selected, play locally (expose stream URL)
+        await self._async_play_local(media_id)
+
+    async def _async_play_local(self, media_id: str) -> None:
+        """Play media locally by resolving stream URL."""
+        try:
+            asset_url, title, is_live = self._build_cast_request(media_id)
+            asset_data = await self._api.async_get_asset_stream(asset_url)
+
+            _LOGGER.debug("Local play asset data: %s", json.dumps(asset_data, default=str))
+
+            self._current_stream = asset_data
+            self._attr_state = STATE_PLAYING
+            self._attr_media_title = title
+            
+            stream = asset_data.get("stream", {})
+            self._attr_media_content_id = stream.get("url")
+            video_format = stream.get("video_format")
+            if video_format == "DASH":
+                self._attr_media_content_type = "application/dash+xml"
+            elif video_format == "HLS":
+                self._attr_media_content_type = "application/x-mpegurl"
+            else:
+                self._attr_media_content_type = video_format or "application/dash+xml"
+            
+            self.async_write_ha_state()
+            _LOGGER.info("Molotov playing locally: %s", title)
+
+        except MolotovApiError as err:
+            self._attr_state = STATE_IDLE
+            self._current_stream = None
+            raise HomeAssistantError(f"Failed to play locally: {err}") from err
 
     async def _async_perform_search(self, query: str) -> None:
         """Perform a search and cache results for browsing."""
@@ -1041,6 +1117,19 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             targets = []
 
         children: list[BrowseMedia] = []
+
+        # Add local play option
+        children.append(
+            BrowseMedia(
+                title="Play on this device",
+                media_class=MediaClass.VIDEO,
+                media_content_id=f"play_local:{base_media_id}",
+                media_content_type="video",
+                can_play=True,
+                can_expand=False,
+            )
+        )
+
         for target in targets:
             name = self._cast_target_name(target)
             children.append(
@@ -1057,17 +1146,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
-        if not children:
-            children.append(
-                BrowseMedia(
-                    title="No Chromecast targets configured",
-                    media_class=MediaClass.DIRECTORY,
-                    media_content_id=MEDIA_ROOT,
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=False,
-                )
-            )
+        if len(children) == 1: # Only local play available, no cast targets
+            # We still show the list so user can click "Play on this device"
+            pass
 
         return BrowseMedia(
             title=title,
@@ -1250,11 +1331,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await async_cast_play(self.hass, self._active_cast_target)
             self._attr_state = STATE_PLAYING
             self.async_write_ha_state()
+        elif self._current_stream:
+            self._attr_state = STATE_PLAYING
+            self.async_write_ha_state()
 
     async def async_media_pause(self) -> None:
         """Send pause command to active cast."""
         if self._active_cast_target:
             await async_cast_pause(self.hass, self._active_cast_target)
+            self._attr_state = STATE_PAUSED
+            self.async_write_ha_state()
+        elif self._current_stream:
             self._attr_state = STATE_PAUSED
             self.async_write_ha_state()
 
@@ -1264,6 +1351,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await async_cast_stop(self.hass, self._active_cast_target)
         self._active_cast_entity = None
         self._active_cast_target = None
+        self._current_stream = None
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 

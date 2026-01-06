@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -89,6 +91,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "search_cache": None,  # Shared search cache: (timestamp, query, results)
     }
+
+    # Register static path and load custom card automatically
+    path = hass.config.path("custom_components/molotov_tv/www")
+    _LOGGER.debug("Registering Molotov TV static path: %s", path)
+    await hass.http.async_register_static_paths([
+        StaticPathConfig("/molotov_tv/www", path, cache_headers=True)
+    ])
+    try:
+        # Fixed version string for easier debugging/caching control
+        add_extra_js_url(hass, "/molotov_tv/www/molotov-card.js?v=0.1.28")
+        _LOGGER.info("Molotov TV frontend player registered")
+    except Exception as err:
+        _LOGGER.warning("Failed to register custom card JS: %s", err)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

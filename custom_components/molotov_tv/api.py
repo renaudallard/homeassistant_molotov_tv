@@ -395,6 +395,59 @@ class MolotovApi:
 
         return {"program": None, "channelEpisodeSections": [], "programEpisodeSections": []}
 
+    async def async_get_asset_stream(self, asset_url: str) -> dict[str, Any]:
+        """Resolve asset URL to stream data."""
+        await self.async_ensure_logged_in()
+
+        # 1. Get asset metadata
+        asset_data = await self._request("GET", asset_url, auth=True)
+
+        _LOGGER.debug(
+            "Asset response keys: %s", list(asset_data.keys()) if isinstance(asset_data, dict) else type(asset_data)
+        )
+
+        # 2. Check CDN decision - stream might be at top level or nested
+        stream = asset_data.get("stream", {})
+        if not stream or not stream.get("url"):
+            # Try alternative locations for stream URL
+            _LOGGER.debug("No 'stream.url' key, checking alternatives in: %s", list(asset_data.keys()))
+            for key in ["manifest_url", "url", "playback_url", "dash_url", "mpd_url", "content_url"]:
+                if key in asset_data and asset_data[key]:
+                    stream = {"url": asset_data[key]}
+                    _LOGGER.debug("Found stream URL in '%s'", key)
+                    break
+
+        cdn_url = stream.get("cdn_decision_url")
+        suffix_url = stream.get("suffix_url")
+        final_url = stream.get("url")
+
+        if cdn_url:
+            try:
+                _LOGGER.debug("Resolving CDN decision from %s", cdn_url)
+                providers_data = await self._request("GET", cdn_url, auth=True)
+                
+                # Expecting a list of base URLs
+                if isinstance(providers_data, list) and providers_data:
+                    base_url = providers_data[0]
+                    if isinstance(base_url, str):
+                        if suffix_url:
+                            final_url = f"{base_url.rstrip('/')}/{suffix_url.lstrip('/')}"
+                        else:
+                            final_url = base_url
+                        _LOGGER.debug("Resolved stream URL: %s", final_url)
+            except Exception as err:
+                _LOGGER.warning("Failed to resolve CDN decision: %s", err)
+
+        # Update the stream dict with the resolved URL
+        if final_url:
+            stream["url"] = final_url
+            _LOGGER.debug("Final stream URL: %s", final_url[:100] if final_url else None)
+        else:
+            _LOGGER.warning("No stream URL found in asset response")
+
+        asset_data["stream"] = stream
+        return asset_data
+
     async def async_get_bookmarks(self) -> dict[str, Any]:
         """Fetch the bookmarks sections feed (recordings)."""
 

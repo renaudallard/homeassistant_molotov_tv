@@ -1,0 +1,411 @@
+/**
+ * Molotov TV Player Card & Automatic Overlay Manager
+ * v0.1.28 - Fixed function scope
+ */
+
+(function() {
+  const VERSION = "0.1.28";
+
+  // --- Visual Debugger ---
+  let debugDot = null;
+
+  function createIndicator() {
+      if (document.getElementById('molotov-debug-dot')) {
+          return document.getElementById('molotov-debug-dot');
+      }
+      const target = document.body || document.documentElement;
+      if (!target) return null;
+
+      const dot = document.createElement('div');
+      dot.id = 'molotov-debug-dot';
+      dot.style.cssText = "position:fixed; top:0; left:0; width:15px; height:15px; background:gray; z-index:999999; pointer-events:none; border:2px solid white;";
+      target.appendChild(dot);
+      console.log("[Molotov] Debug indicator created");
+      return dot;
+  }
+
+  debugDot = createIndicator();
+  if (!debugDot) {
+      const retryCreate = () => {
+          debugDot = createIndicator();
+          if (!debugDot && document.readyState !== 'complete') {
+              setTimeout(retryCreate, 100);
+          }
+      };
+      if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', retryCreate);
+      } else {
+          setTimeout(retryCreate, 100);
+      }
+  }
+
+  window.addEventListener('error', function(e) {
+      if (debugDot) debugDot.style.background = 'blue';
+      console.error("[Molotov] Global Error:", e.message, e.filename, e.lineno);
+  });
+
+  console.log(`[Molotov] Script execution started - v${VERSION}`);
+
+  if (debugDot) debugDot.title = `Molotov v${VERSION}`;
+
+  let blinkState = false;
+  setInterval(() => {
+      if (debugDot && debugDot.style.background !== 'blue') {
+          debugDot.style.background = blinkState ? 'lime' : 'purple';
+          if (getHass()) {
+              debugDot.style.border = "2px solid yellow";
+          } else {
+              debugDot.style.border = "2px solid white";
+          }
+          blinkState = !blinkState;
+      }
+  }, 500);
+
+  // --- HASS Discovery ---
+  function getHass() {
+    const main = document.querySelector('home-assistant');
+    return (main && main.hass) ? main.hass : null;
+  }
+
+  // --- Player Card Class Definition ---
+  class MolotovPlayerCard extends HTMLElement {
+    set hass(hass) {
+      this._hass = hass;
+      this._render();
+    }
+
+    setConfig(config) {
+      if (!config.entity) throw new Error('Entity required');
+      this._config = config;
+    }
+
+    getCardSize() { return 4; }
+
+    _render() {
+      if (!this.content) {
+        this.innerHTML = `
+          <style>
+            molotov-player-card { display: block; width: 100%; }
+            ha-card {
+              overflow: hidden; background: black; aspect-ratio: 16/9;
+              display: flex; align-items: center; justify-content: center;
+              position: relative; flex-direction: column;
+            }
+            video { width: 100%; height: 100%; max-height: 100%; background: black; }
+            .message { color: white; padding: 16px; text-align: center; }
+            .info-overlay {
+              position: absolute; top: 0; left: 0; right: 0;
+              background: rgba(0, 0, 0, 0.75); color: #0f0;
+              padding: 6px; font-size: 11px; font-family: monospace;
+              pointer-events: none; z-index: 5;
+              max-height: 120px; overflow-y: auto;
+              white-space: pre-wrap; word-break: break-all;
+            }
+            .play-overlay {
+              position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+              background: rgba(0, 0, 0, 0.5); border-radius: 50%; width: 64px; height: 64px;
+              display: flex; align-items: center; justify-content: center; cursor: pointer;
+              z-index: 6; display: none;
+            }
+            .play-icon { width: 32px; height: 32px; fill: white; }
+          </style>
+          <ha-card>
+            <div class="info-overlay">Initializing...</div>
+            <div class="message">Waiting for playback...</div>
+            <div class="play-overlay">
+              <svg class="play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </ha-card>
+        `;
+        this.content = this.querySelector('ha-card');
+        this.infoOverlay = this.querySelector('.info-overlay');
+        this.playOverlay = this.querySelector('.play-overlay');
+
+        if (this.playOverlay) {
+          this.playOverlay.addEventListener('click', () => {
+            const video = this.querySelector('video');
+            if (video) {
+              video.muted = false;
+              video.play().catch(e => this._log("Manual play error: " + e.message));
+            }
+            this.playOverlay.style.display = 'none';
+          });
+        }
+      }
+
+      if (!this._hass || !this._hass.states) return;
+      const entityId = this._config.entity;
+      const state = this._hass.states[entityId];
+      if (!state) return;
+
+      if (state.state === 'playing' && state.attributes.stream_url) {
+        const streamUrl = state.attributes.stream_url;
+        const drmInfo = state.attributes.stream_drm;
+
+        if (this._currentStream === streamUrl) return;
+        this._currentStream = streamUrl;
+
+        this.content.querySelector('.message').textContent = 'Loading player...';
+        this._log("v" + VERSION + " - Found stream");
+        this._log("URL: " + (streamUrl ? streamUrl.substring(0, 60) + "..." : "MISSING"));
+        if (drmInfo) this._log("DRM: " + drmInfo.type);
+
+        const oldVideo = this.content.querySelector('video');
+        if (oldVideo) oldVideo.remove();
+
+        if (!window.dashjs) {
+          this._log("Loading dash.js...");
+          const script = document.createElement('script');
+          script.src = 'https://cdn.dashjs.org/v4.7.4/dash.all.min.js';
+          script.crossOrigin = "anonymous";
+          script.onload = () => {
+            this._log("dash.js loaded");
+            this._initPlayer(streamUrl, drmInfo);
+          };
+          script.onerror = () => {
+            this._log("FAILED to load dash.js!");
+            this.content.querySelector('.message').textContent = 'Error: Could not load player';
+          };
+          document.head.appendChild(script);
+        } else {
+          this._initPlayer(streamUrl, drmInfo);
+        }
+      } else if (this.player) {
+        this.player.reset();
+        this.player = null;
+        this._currentStream = null;
+        this.content.innerHTML = '<div class="message">Playback stopped</div>';
+        this.content = this.querySelector('ha-card');
+      }
+    }
+
+    _log(msg) {
+      const ts = new Date().toLocaleTimeString();
+      console.log("[Molotov]", msg);
+      if (this.infoOverlay) {
+        const lines = this.infoOverlay.textContent.split('\n').slice(-7);
+        lines.push(`${ts}: ${msg}`);
+        this.infoOverlay.textContent = lines.join('\n');
+        this.infoOverlay.scrollTop = this.infoOverlay.scrollHeight;
+      }
+    }
+
+    _initPlayer(url, drm) {
+      this._log("Init player...");
+
+      const video = document.createElement('video');
+      video.controls = true;
+      video.autoplay = true;
+      video.muted = true;
+      video.setAttribute('playsinline', '');
+
+      this.content.insertBefore(video, this.content.firstChild);
+
+      video.addEventListener('error', () => {
+        const err = video.error;
+        this._log("Video error: " + (err ? err.code + " - " + err.message : "unknown"));
+      });
+
+      this._log("Creating dash.js player...");
+      let player;
+      try {
+          if (typeof dashjs === 'undefined') {
+              throw new Error("dashjs is undefined");
+          }
+          player = dashjs.MediaPlayer().create();
+          this.player = player;
+          this._log("dash.js player created");
+      } catch (e) {
+          this._log("CRITICAL: Failed to create player: " + e.message);
+          console.error("[Molotov] Player creation failed", e);
+          return;
+      }
+
+      // Configure settings (autoPlay is handled by initialize 3rd arg)
+      player.updateSettings({
+        'debug': { 'logLevel': dashjs.Debug.LOG_LEVEL_WARN }
+      });
+
+      // Configure DRM before initialize
+      if (drm && drm.type === 'widevine') {
+        this._log("Configuring Widevine DRM...");
+        player.setProtectionData({
+          'com.widevine.alpha': {
+            serverURL: drm.license_url,
+            httpRequestHeaders: drm.headers || {}
+          }
+        });
+      }
+
+      this._log("Initializing player source...");
+      try {
+          // initialize(view, source, autoPlay)
+          player.initialize(video, url, true);
+          this._log("Player initialized call sent");
+      } catch (e) {
+          this._log("CRITICAL: Initialize failed: " + e.message);
+          console.error("[Molotov] Initialize failed", e);
+          return;
+      }
+
+      // Settings that require initialized player
+      try {
+        player.setInitialMediaSettingsFor('audio', { lang: 'fr' });
+      } catch(e) {
+        this._log("WARN: Failed to set audio lang: " + e.message);
+      }
+
+      player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+        this._log("Player error: " + (e.error?.message || e.error || "unknown"));
+      });
+
+      player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+        this._log("Stream ready");
+        setTimeout(() => {
+          if (video.paused) {
+            this._log("Autoplay blocked - tap play");
+            if (this.playOverlay) this.playOverlay.style.display = 'flex';
+          }
+        }, 1500);
+      });
+
+      player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
+        this._log("Playing");
+        if (this.playOverlay) this.playOverlay.style.display = 'none';
+      });
+
+      // Timeout for DRM issues
+      setTimeout(() => {
+        if (video.paused && !video.currentTime && drm) {
+          this._log("TIMEOUT: DRM may have failed");
+          this._log("Use Cast device instead");
+        }
+      }, 15000);
+    }
+  }
+
+  // --- Register Custom Element ---
+  try {
+    console.log("[Molotov] Registering custom element...");
+    console.log("[Molotov] Class definition:", !!MolotovPlayerCard);
+    
+    const existing = customElements.get('molotov-player-card');
+    console.log("[Molotov] Existing registration:", !!existing);
+
+    if (!existing) {
+      customElements.define('molotov-player-card', MolotovPlayerCard);
+      console.log("[Molotov] Custom element registered successfully");
+    } else {
+      console.log("[Molotov] Custom element already registered");
+    }
+  } catch (err) {
+    console.error("[Molotov] FAILED to register:", err);
+  }
+
+  // --- Overlay Manager ---
+  const OVERLAY_ID = 'molotov-auto-overlay';
+  let _activeEntity = null;
+
+  function createOverlay(entityId) {
+    if (document.getElementById(OVERLAY_ID)) return;
+    console.log("[Molotov] Creating overlay for", entityId);
+
+    const registered = customElements.get('molotov-player-card');
+    console.log("[Molotov] Registry check in overlay:", !!registered);
+
+    if (!registered) {
+      console.error("[Molotov] Card element not registered!");
+      // Attempt late registration
+      try {
+          console.log("[Molotov] Attempting late registration...");
+          customElements.define('molotov-player-card', MolotovPlayerCard);
+          console.log("[Molotov] Late registration successful");
+      } catch(e) {
+          console.error("[Molotov] Late registration failed:", e);
+          return;
+      }
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    overlay.style.cssText = "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.95); z-index:99999; display:flex; align-items:center; justify-content:center;";
+
+    const container = document.createElement('div');
+    container.style.cssText = "width:95%; max-width:1280px; position:relative;";
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕ Close';
+    closeBtn.style.cssText = "position:absolute; top:-45px; right:0; background:#f44336; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; font-size:16px;";
+    closeBtn.onclick = () => {
+      const hass = getHass();
+      if (hass && _activeEntity) {
+        hass.callService('media_player', 'media_stop', { entity_id: _activeEntity });
+      }
+      removeOverlay();
+    };
+
+    const card = document.createElement('molotov-player-card');
+    card.setConfig({ entity: entityId });
+    card.hass = getHass();
+
+    const interval = setInterval(() => {
+      const freshHass = getHass();
+      if (freshHass) card.hass = freshHass;
+    }, 500);
+    overlay._hassInterval = interval;
+
+    container.appendChild(closeBtn);
+    container.appendChild(card);
+    overlay.appendChild(container);
+    document.body.appendChild(overlay);
+    _activeEntity = entityId;
+  }
+
+  function removeOverlay() {
+    const overlay = document.getElementById(OVERLAY_ID);
+    if (overlay) {
+      if (overlay._hassInterval) clearInterval(overlay._hassInterval);
+      overlay.remove();
+      _activeEntity = null;
+    }
+  }
+
+  // --- State Checker ---
+  let _lastTarget = null;
+
+  function checkState() {
+    const hass = getHass();
+    if (!hass) return;
+
+    let target = null;
+    for (const eid in hass.states) {
+      if (eid.startsWith('media_player.molotov')) {
+        const s = hass.states[eid];
+        if (s.state === 'playing' && s.attributes.stream_url) {
+          target = eid;
+          break;
+        }
+      }
+    }
+
+    if (target && target !== _lastTarget) {
+      console.log("[Molotov] Found active target:", target);
+      _lastTarget = target;
+    }
+    if (!target && _lastTarget) {
+      console.log("[Molotov] Target stopped");
+      _lastTarget = null;
+    }
+
+    if (target && !_activeEntity) {
+      createOverlay(target);
+    } else if (!target && _activeEntity) {
+      removeOverlay();
+    }
+  }
+
+  // Start checking state
+  setInterval(checkState, 1000);
+  console.log("[Molotov] State checking started");
+
+})();
