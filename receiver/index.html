@@ -25,13 +25,15 @@
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
                     
-                    // Buffering configuration
+                    // Buffering configuration & Language preferences
                     playbackConfig.shakaConfiguration = {
                         streaming: {
                             bufferingGoal: 30, // 30 seconds
                             rebufferingGoal: 15,
                             bufferBehind: 30
-                        }
+                        },
+                        preferredAudioLanguage: 'fr', // Default to French
+                        preferredTextLanguage: 'fr',
                     };
                     
                     // Logic reverse-engineered from official receiver bundle.js
