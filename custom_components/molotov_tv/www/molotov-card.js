@@ -4,7 +4,7 @@
  */
 
 (function() {
-  const VERSION = "0.1.30";
+  const VERSION = "0.1.31";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
 
@@ -304,15 +304,18 @@
 
   function checkState() {
     const hass = getHass();
-    if (!hass) return;
+    if (!hass || !hass.states || !hass.user) return;
 
     let target = null;
     for (const eid in hass.states) {
       if (eid.startsWith('media_player.molotov')) {
         const s = hass.states[eid];
         if (s.state === 'playing' && s.attributes.stream_url) {
-          target = eid;
-          break;
+          // Verify that this playback was initiated by the current user
+          if (s.context && s.context.user_id === hass.user.id) {
+            target = eid;
+            break;
+          }
         }
       }
     }
