@@ -139,6 +139,7 @@ class BrowseAsset:
     program_id: str | None = None
     channel_id: str | None = None
     asset_type: str | None = None
+    episode_id: str | None = None
 
 
 async def async_setup_entry(
@@ -334,7 +335,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 return await self._async_browse_search_results(unquote(search_query))
 
         if media_content_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:"):
-            return await self._async_browse_cast_targets(data, media_content_id)
+            return await self._async_browse_replay_or_episodes(data, media_content_id)
 
         return self._browse_root()
 
@@ -802,7 +803,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
             # Check if this is a program container (Series/Show) that should be browsed
             if (
-                asset.asset_type in ("program", "serie")
+                (asset.asset_type in ("program", "serie") or (asset.asset_type == "vod" and not asset.episode_id))
                 and asset.program_id
                 and asset.channel_id
                 and not asset.is_live
@@ -820,14 +821,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             else:
                 # Playable item (Movie, Episode, Live)
-                payload = _encode_asset_payload(
-                    {
-                        "url": asset.asset_url,
-                        "title": asset.title,
-                        "thumb": asset.thumbnail or asset.poster,
-                        "live": asset.is_live,
-                    }
-                )
+                payload_data = {
+                    "url": asset.asset_url,
+                    "title": asset.title,
+                    "thumb": asset.thumbnail or asset.poster,
+                    "live": asset.is_live,
+                }
+                if asset.program_id:
+                    payload_data["program_id"] = asset.program_id
+                if asset.channel_id:
+                    payload_data["channel_id"] = asset.channel_id
+
+                payload = _encode_asset_payload(payload_data)
                 children.append(
                     BrowseMedia(
                         title=display_title,
@@ -2360,6 +2365,7 @@ def _parse_asset_item(
     metadata = payload.get("metadata")
     program_id: str | None = None
     channel_id: str | None = None
+    episode_id: str | None = None
 
     _LOGGER.debug(
         "Parsing asset - title=%s, has video=%s, video keys=%s",
@@ -2377,28 +2383,33 @@ def _parse_asset_item(
         end = _parse_timestamp(
             video.get("end_at") or video.get("end") or video.get("available_until")
         )
-        # Extract program and channel IDs
+        # Extract IDs
         program_id = str(video.get("program_id")) if video.get("program_id") else None
+        episode_id = str(video.get("episode_id")) if video.get("episode_id") else None
         channel_id = str(video.get("channel_id")) if video.get("channel_id") else None
         _LOGGER.debug(
-            "Video object: type=%s, program_id=%s, channel_id=%s",
+            "Video object: type=%s, program_id=%s, episode_id=%s, channel_id=%s",
             video.get("type"),
-            video.get("program_id"),
-            video.get("channel_id"),
+            program_id,
+            episode_id,
+            channel_id,
         )
     else:
         start = _parse_timestamp(payload.get("start_at") or payload.get("start"))
         end = _parse_timestamp(payload.get("end_at") or payload.get("end"))
 
-    # Try to get program/channel id from metadata
-    if not program_id and isinstance(metadata, dict) and metadata.get("program_id"):
-        program_id = str(metadata.get("program_id"))
-    if not channel_id and isinstance(metadata, dict):
-        channel_id = (
-            str(metadata.get("channel_id") or metadata.get("channelId"))
-            if metadata.get("channel_id") or metadata.get("channelId")
-            else None
-        )
+    # Try to get program/channel/episode id from metadata
+    if isinstance(metadata, dict):
+        if not program_id and metadata.get("program_id"):
+            program_id = str(metadata.get("program_id"))
+        if not episode_id and metadata.get("episode_id"):
+            episode_id = str(metadata.get("episode_id"))
+        if not channel_id:
+            channel_id = (
+                str(metadata.get("channel_id") or metadata.get("channelId"))
+                if metadata.get("channel_id") or metadata.get("channelId")
+                else None
+            )
 
     # Try explicit channel_id fields before falling back to actions or channel payload
     if not channel_id:
@@ -2422,9 +2433,10 @@ def _parse_asset_item(
 
     if program_id or channel_id:
         _LOGGER.debug(
-            "Parsed asset '%s': program_id=%s, channel_id=%s, type=%s",
+            "Parsed asset '%s': program_id=%s, episode_id=%s, channel_id=%s, type=%s",
             title[:30] if title else "untitled",
             program_id,
+            episode_id,
             channel_id,
             asset_type,
         )
@@ -2442,6 +2454,7 @@ def _parse_asset_item(
         program_id=program_id,
         channel_id=channel_id,
         asset_type=asset_type,
+        episode_id=episode_id,
     )
 
 
