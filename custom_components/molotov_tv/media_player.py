@@ -2505,8 +2505,11 @@ def _parse_past_programs_as_replays(
             channel_payload = payload.get("channel")
             if isinstance(channel_payload, dict):
                 raw_channel_id = channel_payload.get("id")
-        if raw_channel_id is not None and str(raw_channel_id) != channel_id:
-            continue
+        # Relax channel_id check for group channels (e.g. france.tv, M6+)
+        # where items have individual channel IDs different from the group ID.
+        # Since we fetched this data specifically for this channel_id, we trust it.
+        # if raw_channel_id is not None and str(raw_channel_id) != channel_id:
+        #     continue
 
         # Parse program timestamps
         start = _parse_timestamp(

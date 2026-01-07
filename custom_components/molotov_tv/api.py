@@ -580,7 +580,11 @@ class MolotovApi:
         try:
             url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/sections")
             _LOGGER.debug("Fetching channel sections for replays: %s", url)
-            return await self._request("GET", url, auth=True)
+            result = await self._request("GET", url, auth=True)
+            if result and result.get("sections"):
+                _LOGGER.debug("Found %d sections for channel %s via dedicated endpoint", len(result.get("sections")), channel_id)
+                return result
+            _LOGGER.debug("Channel sections endpoint returned no sections for %s", channel_id)
         except MolotovApiError as err:
             _LOGGER.debug(
                 "Channel sections endpoint failed for %s: %s", channel_id, err
@@ -600,6 +604,15 @@ class MolotovApi:
             if not isinstance(section, dict):
                 continue
 
+            # Check if section itself is for this channel
+            context = section.get("context", {})
+            section_channel = (
+                section.get("channel_id")
+                or context.get("channel_id")
+                or section.get("id")
+            )
+            is_channel_section = str(section_channel) == str(channel_id)
+
             # Filter items by channel_id
             items = section.get("items", [])
             channel_items = []
@@ -616,17 +629,26 @@ class MolotovApi:
                     or item.get("channel_id")
                 )
 
-                if str(item_channel) == str(channel_id):
+                # Match if item belongs to channel OR the whole section belongs to channel
+                if is_channel_section or str(item_channel) == str(channel_id):
                     # Only include VOD type items
                     video_type = video.get("type", "")
                     if video_type == "vod":
                         channel_items.append(item)
                         _LOGGER.debug(
-                            "Found VOD item for channel %s: %s (vod_id=%s)",
+                            "Found VOD item for channel %s: %s (vod_id=%s, section=%s)",
                             channel_id,
                             item.get("title", "unknown")[:30],
                             video.get("id"),
+                            section.get("title", "unknown")
                         )
+                elif item_channel:
+                     _LOGGER.debug(
+                         "Skipping item '%s': Item channel_id=%s != Target %s",
+                         item.get("title", "unknown")[:30],
+                         item_channel,
+                         channel_id
+                     )
 
             if channel_items:
                 filtered_section = {**section, "items": channel_items}
