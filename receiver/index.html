@@ -12,6 +12,20 @@
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
 
+        // Enable debug logger
+        const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+        castDebugLogger.setEnabled(true);
+
+        playerManager.addEventListener(
+            cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+                const tracks = playerManager.getTracks();
+                castDebugLogger.info('Tracks', `Detected ${tracks.length} tracks`);
+                tracks.forEach(t => {
+                    castDebugLogger.info('Tracks', ` - ${t.type}: ${t.language} (id: ${t.trackId})`);
+                });
+            }
+        );
+
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             loadRequestData => {
@@ -82,7 +96,13 @@
             }
         );
 
-        context.start();
+        // Options to ensure all features are enabled
+        const options = new cast.framework.CastReceiverOptions();
+        // Ensure track editing is supported
+        options.supportedCommands = cast.framework.messages.Command.ALL_BASIC_COMMANDS | 
+                                    cast.framework.messages.Command.EDIT_TRACKS;
+
+        context.start(options);
     </script>
 </body>
 </html>
