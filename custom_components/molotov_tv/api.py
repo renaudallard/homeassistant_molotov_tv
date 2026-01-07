@@ -984,3 +984,10 @@ class MolotovApi:
             user_id = account.get("id")
             if user_id is not None:
                 self._session_state.user_id = str(user_id)
+            
+            # Check for premium status
+            user_type = account.get("user_type")
+            if user_type not in ("premium", "vip"):
+                raise MolotovAuthError(
+                    f"User type is '{user_type}'. Please subscribe to a paid plan to use this integration."
+                )
