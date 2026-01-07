@@ -100,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ])
     try:
         # Fixed version string for easier debugging/caching control
-        add_extra_js_url(hass, "/molotov_tv/www/molotov-card.js?v=0.1.32")
+        add_extra_js_url(hass, "/molotov_tv/www/molotov-card.js?v=0.1.33")
         _LOGGER.info("Molotov TV frontend player registered")
     except Exception as err:
         _LOGGER.warning("Failed to register custom card JS: %s", err)

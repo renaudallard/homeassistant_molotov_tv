@@ -4,7 +4,7 @@
  */
 
 (function() {
-  const VERSION = "0.1.32";
+  const VERSION = "0.1.33";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
 
@@ -164,7 +164,14 @@
 
       // Configure settings (autoPlay is handled by initialize 3rd arg)
       player.updateSettings({
-        'debug': { 'logLevel': dashjs.Debug.LOG_LEVEL_WARN }
+        'debug': { 'logLevel': dashjs.Debug.LOG_LEVEL_WARN },
+        'streaming': {
+            'buffer': {
+                'stableBufferTime': 20,
+                'bufferTimeAtTopQuality': 30,
+                'bufferTimeAtTopQualityLongForm': 60
+            }
+        }
       });
 
       // Configure DRM before initialize
