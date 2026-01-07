@@ -24,7 +24,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Chromecast casting helpers for Molotov TV."""
+"""Chromecast casting helpers for Molotov TV.
+
+Official Receiver URL: https://chromecast.cloud-01.molotov.tv/
+"""
 
 from __future__ import annotations
 
