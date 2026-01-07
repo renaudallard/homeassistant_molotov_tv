@@ -11,34 +11,35 @@
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
 
-        // Intercept the LOAD request to configure DRM
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             loadRequestData => {
                 const media = loadRequestData.media;
                 const customData = media.customData || {};
 
-                // Check if we have DRM info from Home Assistant
+                // Apply overrides if present
+                if (customData.stream_url) media.contentId = customData.stream_url;
+                if (customData.content_type) media.contentType = customData.content_type;
+
+                // DRM Configuration
                 if (customData.license_url && customData.drm_token) {
-                    console.log("Configuring Widevine DRM...");
-                    
-                    media.contentId = customData.stream_url || media.contentId;
-                    media.contentType = customData.content_type || media.contentType || 'application/dash+xml';
-                    
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
-                    
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
                     playbackConfig.licenseUrl = customData.license_url;
                     
                     playbackConfig.licenseRequestHandler = requestInfo => {
+                        // Pass token in headers - supports DRMtoday variants
                         requestInfo.headers['Authorization'] = 'Bearer ' + customData.drm_token;
-                        // Molotov might require specific Content-Type for license requests
-                        // requestInfo.headers['Content-Type'] = 'application/octet-stream'; 
+                        requestInfo.headers['x-dt-auth-token'] = customData.drm_token;
+                        requestInfo.headers['x-dt-custom-data'] = customData.drm_token;
+                        
+                        if (customData.merchant) {
+                            requestInfo.headers['x-dt-merchant'] = customData.merchant;
+                        }
+                        requestInfo.headers['Content-Type'] = 'application/octet-stream';
                     };
-
                     playerManager.setPlaybackConfig(playbackConfig);
                 }
-                
                 return loadRequestData;
             }
         );

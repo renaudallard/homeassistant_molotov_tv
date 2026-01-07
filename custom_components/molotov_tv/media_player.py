@@ -1564,7 +1564,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     custom_data["license_url"] = license_url
                     custom_data["drm_token"] = token
                     custom_data["stream_url"] = stream_url
-                    _LOGGER.debug("Added DRM info to custom_data")
+                    
+                    # Pass extra DRM fields for headers
+                    custom_data["merchant"] = drm.get("merchant")
+                    custom_data["user_id"] = drm.get("user_id")
+                    custom_data["session_id"] = drm.get("session_id")
+                    custom_data["asset_id"] = drm.get("asset_id")
+                    
+                    _LOGGER.debug("Added DRM info to custom_data: %s", list(custom_data.keys()))
                 
                 # Update content type if available
                 video_format = stream.get("video_format")
