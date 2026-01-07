@@ -349,6 +349,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_perform_search(query)
             return
 
+        if media_id == "refresh_chromecasts":
+            await self._async_get_cast_targets(force_refresh=True)
+            _LOGGER.info("Refreshed Chromecast discovery")
+            return
+
         if media_id.startswith("play_local:"):
             await self._async_play_local(media_id.split(":", 1)[1])
             return
@@ -1397,6 +1402,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
         )
 
+        # Add refresh option
+        children.append(
+            BrowseMedia(
+                title="Refresh Chromecasts",
+                media_class=MediaClass.APP,
+                media_content_id="refresh_chromecasts",
+                media_content_type="app",
+                can_play=True,
+                can_expand=False,
+            )
+        )
+
         native_options = []
         custom_options = []
 
@@ -1903,11 +1920,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         _LOGGER.debug("Found %d total recordings", len(assets))
         return _sort_assets(assets)
 
-    async def _async_get_cast_targets(self) -> list[str]:
+    async def _async_get_cast_targets(self, force_refresh: bool = False) -> list[str]:
         targets: list[str] = []
 
         # First get zeroconf discovered targets - these are actually on the network
-        discovered_targets = await self._async_discover_cast_targets()
+        discovered_targets = await self._async_discover_cast_targets(force_refresh=force_refresh)
         _LOGGER.debug("Cast targets from zeroconf discovery: %s", discovered_targets)
 
         # Build a set of discovered IPs/hosts for validation
@@ -1961,9 +1978,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         raw_hosts = self._entry.options.get(CONF_CAST_HOSTS)
         return _parse_manual_targets(raw_hosts)
 
-    async def _async_discover_cast_targets(self) -> list[str]:
+    async def _async_discover_cast_targets(self, force_refresh: bool = False) -> list[str]:
         cached = self._cast_discovery_cache
-        if cached:
+        if cached and not force_refresh:
             fetched_at, targets = cached
             if dt_util.utcnow() - fetched_at < CAST_DISCOVERY_TTL:
                 return targets
