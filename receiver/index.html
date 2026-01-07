@@ -25,6 +25,15 @@
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
                     
+                    // Buffering configuration
+                    playbackConfig.shakaConfiguration = {
+                        streaming: {
+                            bufferingGoal: 30, // 30 seconds
+                            rebufferingGoal: 15,
+                            bufferBehind: 30
+                        }
+                    };
+                    
                     // Logic reverse-engineered from official receiver bundle.js
                     let licenseUrl = customData.license_url;
                     if (customData.asset_id) {
