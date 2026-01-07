@@ -600,21 +600,6 @@ class MolotovApi:
             if not isinstance(section, dict):
                 continue
 
-            context = section.get("context", {})
-            # Look for catchup/replay sections
-            is_catchup = context.get("is_catchup", False)
-            is_replay = context.get("is_replay", False)
-
-            if not (is_catchup or is_replay):
-                # Also check section slug/title for replay indicators
-                slug = section.get("slug", "")
-                title = section.get("title", "")
-                if not any(
-                    kw in (slug + title).lower()
-                    for kw in ["replay", "catchup", "revoir", "rattrapage"]
-                ):
-                    continue
-
             # Filter items by channel_id
             items = section.get("items", [])
             channel_items = []
