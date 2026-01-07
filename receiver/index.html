@@ -3,10 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Molotov Custom Receiver</title>
-    <!-- Load Cast Framework -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-    <!-- Load Cast Debug Logger -->
-    <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
 <body>
     <cast-media-player></cast-media-player>
@@ -14,61 +11,60 @@
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
 
-        // --- Enable Debug Logger ---
-        const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
-        
-        // Enable debug logger and show a 'DEBUG MODE' overlay on TV
-        castDebugLogger.setEnabled(true);
-        castDebugLogger.showDebugLogs(true);
-
-        // Set verbosity to DEBUG for all tags
-        castDebugLogger.loggerLevelByTags = {
-            'cast.framework.events.EventType.CORE': cast.framework.LoggerLevel.INFO,
-            'cast.framework.events.EventType.MEDIA_STATUS': cast.framework.LoggerLevel.DEBUG,
-            'cast.framework.events.EventType.PLAYER_LOAD_COMPLETE': cast.framework.LoggerLevel.DEBUG,
-            'cast.framework.events.EventType.ERROR': cast.framework.LoggerLevel.DEBUG,
-            'CORE': cast.framework.LoggerLevel.DEBUG,
-            'PLAYER': cast.framework.LoggerLevel.DEBUG,
-            'MEDIA': cast.framework.LoggerLevel.DEBUG
-        };
-
-        console.log("Cast Debug Logger initialized.");
-
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             loadRequestData => {
                 const media = loadRequestData.media;
                 const customData = media.customData || {};
 
-                castDebugLogger.info('MyCustomApp', 'LOAD intercepted');
-                castDebugLogger.info('MyCustomApp', 'Stream URL:', customData.stream_url);
-
                 if (customData.stream_url) media.contentId = customData.stream_url;
                 if (customData.content_type) media.contentType = customData.content_type;
 
                 if (customData.license_url && customData.drm_token) {
-                    castDebugLogger.info('MyCustomApp', 'Configuring Widevine for DRMtoday');
-                    
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
-                    playbackConfig.licenseUrl = customData.license_url;
                     
+                    // Logic reverse-engineered from official receiver bundle.js
+                    let licenseUrl = customData.license_url;
+                    if (customData.asset_id) {
+                        // Append assetId query param if not already present
+                        const separator = licenseUrl.includes('?') ? '&' : '?';
+                        licenseUrl += separator + 'assetId=' + customData.asset_id;
+                    }
+                    playbackConfig.licenseUrl = licenseUrl;
+                    
+                    // Request Handler: Set headers
                     playbackConfig.licenseRequestHandler = requestInfo => {
-                        castDebugLogger.info('MyCustomApp', 'Sending License Request');
-                        
-                        // DRMtoday header strategy
-                        requestInfo.headers['Authorization'] = 'Bearer ' + customData.drm_token;
+                        requestInfo.withCredentials = true; 
                         requestInfo.headers['x-dt-auth-token'] = customData.drm_token;
-                        requestInfo.headers['x-dt-custom-data'] = customData.drm_token;
-                        
-                        if (customData.merchant) {
-                            requestInfo.headers['x-dt-merchant'] = customData.merchant;
-                        }
-                        requestInfo.headers['Content-Type'] = 'application/octet-stream';
+                        // Official receiver doesn't seem to set other headers, but we keep content-type just in case
+                        // requestInfo.headers['Content-Type'] = 'application/octet-stream'; 
                     };
+
+                    // Response Handler: Unwrap DRMtoday JSON response
+                    playbackConfig.licenseHandler = data => {
+                        try {
+                            // Convert Uint8Array to string
+                            const str = new TextDecoder().decode(data);
+                            // Parse JSON
+                            const json = JSON.parse(str);
+                            if (json.license) {
+                                // Decode Base64 license to Uint8Array
+                                const binaryString = atob(json.license);
+                                const bytes = new Uint8Array(binaryString.length);
+                                for (let i = 0; i < binaryString.length; i++) {
+                                    bytes[i] = binaryString.charCodeAt(i);
+                                }
+                                return bytes;
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse license response:", e);
+                        }
+                        // Return original data if parsing failed (maybe it was binary already)
+                        return data;
+                    };
+
                     playerManager.setPlaybackConfig(playbackConfig);
-                } else {
-                    castDebugLogger.warn('MyCustomApp', 'No DRM info provided!');
                 }
                 return loadRequestData;
             }
