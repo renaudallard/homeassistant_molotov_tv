@@ -1599,6 +1599,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     custom_data["asset_id"] = drm.get("asset_id")
                     
                     _LOGGER.debug("Added DRM info to custom_data: %s", list(custom_data.keys()))
+
+                # Extract preferred track info if available (to mimic official app)
+                config = asset_data.get("config", {})
+                selected_track = config.get("selected_track", {})
+                if selected_track:
+                    custom_data["selected_track"] = selected_track
+                    _LOGGER.debug("Added selected_track preference: %s", selected_track)
                 
                 # Update content type if available
                 video_format = stream.get("video_format")

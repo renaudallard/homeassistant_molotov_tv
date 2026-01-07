@@ -5,27 +5,74 @@
     <title>Molotov Custom Receiver</title>
     <!-- Official Receiver: https://chromecast.cloud-01.molotov.tv/ -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    <!-- Cast Debug Logger -->
+    <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
 <body>
     <cast-media-player></cast-media-player>
+    
     <script>
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
-
-        // Enable debug logger
         const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
-        castDebugLogger.setEnabled(true);
 
-        playerManager.addEventListener(
-            cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
-                const tracks = playerManager.getTracks();
-                castDebugLogger.info('Tracks', `Detected ${tracks.length} tracks`);
-                tracks.forEach(t => {
-                    castDebugLogger.info('Tracks', ` - ${t.type}: ${t.language} (id: ${t.trackId})`);
-                });
+        // --- 1. Track Selection Logic ---
+        function forceFrenchAudio() {
+            const tracks = playerManager.getTracks();
+            const stats = playerManager.getStats();
+            const activeIds = stats ? stats.currentTrackIds : [];
+            
+            if (!tracks || tracks.length === 0) return;
+
+            const audioTracks = tracks.filter(t => t.type === 'AUDIO');
+            
+            // 1. Check for explicit preference from Molotov API (passed via customData)
+            const mediaInfo = playerManager.getMediaInformation();
+            const customData = mediaInfo ? mediaInfo.customData : null;
+            
+            if (customData && customData.selected_track && customData.selected_track.track_audio) {
+                const prefLang = customData.selected_track.track_audio;
+                const prefTrack = audioTracks.find(t => t.language === prefLang);
+                if (prefTrack) {
+                    if (!activeIds || !activeIds.includes(prefTrack.trackId)) {
+                        console.log("[Molotov] Switching to API preference:", prefLang);
+                        playerManager.setActiveTrackIds([prefTrack.trackId]);
+                    }
+                    return;
+                }
             }
-        );
 
+            // 2. Fallback: If current track is English/Original, look for French
+            let activeLang = 'unknown';
+            audioTracks.forEach(t => {
+                if (activeIds && activeIds.includes(t.trackId)) activeLang = t.language;
+            });
+
+            if (activeLang === 'en' || activeLang === 'eng' || activeLang === 'qaa' || activeLang === 'unknown') {
+                const target = audioTracks.find(t => 
+                    t.language === 'fr' || 
+                    t.language === 'fra' || 
+                    t.language === 'fre' ||
+                    (t.label && t.label.toLowerCase().includes('franç')) ||
+                    (t.name && t.name.toLowerCase().includes('franç'))
+                ) || audioTracks.find(t => t.language !== 'en' && t.language !== 'eng' && t.language !== 'qaa');
+
+                if (target && (!activeIds || !activeIds.includes(target.trackId))) {
+                    console.log("[Molotov] Fallback switch to:", target.language);
+                    playerManager.setActiveTrackIds([target.trackId]);
+                }
+            }
+        }
+
+        // --- 2. Event Listeners ---
+        playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+            setTimeout(forceFrenchAudio, 1000); 
+        });
+
+        // Periodic check in case tracks appear late
+        setInterval(forceFrenchAudio, 5000);
+
+        // --- 3. Message Interceptors ---
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             loadRequestData => {
@@ -39,43 +86,33 @@
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
                     
-                    // Buffering configuration & Language preferences
                     playbackConfig.shakaConfiguration = {
                         streaming: {
-                            bufferingGoal: 30, // 30 seconds
+                            bufferingGoal: 30,
                             rebufferingGoal: 15,
-                            bufferBehind: 30
+                            bufferBehind: 30,
+                            alwaysStreamText: true
                         },
-                        preferredAudioLanguage: 'fr', // Default to French
-                        preferredTextLanguage: 'fr',
+                        preferredAudioLanguage: 'fra'
                     };
                     
-                    // Logic reverse-engineered from official receiver bundle.js
                     let licenseUrl = customData.license_url;
                     if (customData.asset_id) {
-                        // Append assetId query param if not already present
                         const separator = licenseUrl.includes('?') ? '&' : '?';
                         licenseUrl += separator + 'assetId=' + customData.asset_id;
                     }
                     playbackConfig.licenseUrl = licenseUrl;
                     
-                    // Request Handler: Set headers
                     playbackConfig.licenseRequestHandler = requestInfo => {
                         requestInfo.withCredentials = true; 
                         requestInfo.headers['x-dt-auth-token'] = customData.drm_token;
-                        // Official receiver doesn't seem to set other headers, but we keep content-type just in case
-                        // requestInfo.headers['Content-Type'] = 'application/octet-stream'; 
                     };
 
-                    // Response Handler: Unwrap DRMtoday JSON response
                     playbackConfig.licenseHandler = data => {
                         try {
-                            // Convert Uint8Array to string
                             const str = new TextDecoder().decode(data);
-                            // Parse JSON
                             const json = JSON.parse(str);
                             if (json.license) {
-                                // Decode Base64 license to Uint8Array
                                 const binaryString = atob(json.license);
                                 const bytes = new Uint8Array(binaryString.length);
                                 for (let i = 0; i < binaryString.length; i++) {
@@ -83,10 +120,7 @@
                                 }
                                 return bytes;
                             }
-                        } catch (e) {
-                            console.error("Failed to parse license response:", e);
-                        }
-                        // Return original data if parsing failed (maybe it was binary already)
+                        } catch (e) {}
                         return data;
                     };
 
@@ -96,9 +130,8 @@
             }
         );
 
-        // Options to ensure all features are enabled
+        // --- 4. Start Receiver ---
         const options = new cast.framework.CastReceiverOptions();
-        // Ensure track editing is supported
         options.supportedCommands = cast.framework.messages.Command.ALL_BASIC_COMMANDS | 
                                     cast.framework.messages.Command.EDIT_TRACKS;
 
