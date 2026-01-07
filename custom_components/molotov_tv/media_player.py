@@ -1397,13 +1397,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
         )
 
+        native_options = []
+        custom_options = []
+
         for target in targets:
             name = self._cast_target_name(target)
             encoded_target = self._encode_cast_target(target)
             
             if CUSTOM_RECEIVER_APP_ID:
                 # Add Native (Molotov) option
-                children.append(
+                native_options.append(
                     BrowseMedia(
                         title=f"Cast to {name} (Molotov)",
                         media_class=MediaClass.VIDEO,
@@ -1416,10 +1419,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         can_expand=False,
                     )
                 )
-                # Add Custom Receiver option
-                children.append(
+                # Add Custom Receiver option (Arnor)
+                custom_options.append(
                     BrowseMedia(
-                        title=f"Cast to {name} (Custom)",
+                        title=f"Cast to {name} (Arnor)",
                         media_class=MediaClass.VIDEO,
                         media_content_id=(
                             f"{MEDIA_CAST_PREFIX}:{encoded_target}"
@@ -1432,7 +1435,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             else:
                 # Default behavior (Native only)
-                children.append(
+                native_options.append(
                     BrowseMedia(
                         title=f"Cast to {name}",
                         media_class=MediaClass.VIDEO,
@@ -1445,6 +1448,32 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         can_expand=False,
                     )
                 )
+
+        if native_options:
+            children.append(
+                BrowseMedia(
+                    title="━━━ Official Receiver ━━━",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=f"separator:native",
+                    media_content_type="separator",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+            children.extend(native_options)
+
+        if custom_options:
+            children.append(
+                BrowseMedia(
+                    title="━━━ Custom Receiver ━━━",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=f"separator:custom",
+                    media_content_type="separator",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+            children.extend(custom_options)
 
         if len(children) == 1: # Only local play available, no cast targets
             # We still show the list so user can click "Play on this device"
