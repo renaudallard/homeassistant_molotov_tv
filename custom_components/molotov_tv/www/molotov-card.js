@@ -4,7 +4,7 @@
  */
 
 (function() {
-  const VERSION = "0.1.31";
+  const VERSION = "0.1.32";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
 
@@ -121,6 +121,10 @@
     _initPlayer(url, drm) {
       this._log("Init player...");
 
+      // Hide loading message
+      const msgEl = this.content.querySelector('.message');
+      if (msgEl) msgEl.style.display = 'none';
+
       const video = document.createElement('video');
       video.controls = true;
       video.autoplay = true;
@@ -132,7 +136,12 @@
 
       video.addEventListener('error', () => {
         const err = video.error;
-        this._log("Video error: " + (err ? err.code + " - " + err.message : "unknown"));
+        const errMsg = "Video error: " + (err ? err.code + " - " + err.message : "unknown");
+        this._log(errMsg);
+        if (msgEl) {
+            msgEl.textContent = errMsg;
+            msgEl.style.display = 'block';
+        }
       });
 
       this._log("Creating dash.js player...");
@@ -146,7 +155,10 @@
           this._log("dash.js player created");
       } catch (e) {
           this._log("CRITICAL: Failed to create player: " + e.message);
-          console.error("[Molotov] Player creation failed", e);
+          if (msgEl) {
+            msgEl.textContent = "Player creation failed: " + e.message;
+            msgEl.style.display = 'block';
+          }
           return;
       }
 
@@ -173,7 +185,10 @@
           this._log("Player initialized call sent");
       } catch (e) {
           this._log("CRITICAL: Initialize failed: " + e.message);
-          console.error("[Molotov] Initialize failed", e);
+          if (msgEl) {
+            msgEl.textContent = "Player init failed: " + e.message;
+            msgEl.style.display = 'block';
+          }
           return;
       }
 
@@ -185,7 +200,12 @@
       }
 
       player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-        this._log("Player error: " + (e.error?.message || e.error || "unknown"));
+        const errStr = "Player error: " + (e.error?.message || e.error || "unknown");
+        this._log(errStr);
+        if (msgEl) {
+            msgEl.textContent = errStr;
+            msgEl.style.display = 'block';
+        }
       });
 
       player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
