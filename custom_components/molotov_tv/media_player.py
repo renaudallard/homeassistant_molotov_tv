@@ -2416,6 +2416,10 @@ def _parse_asset_item(
         if isinstance(channel_payload, dict) and channel_payload.get("id"):
             channel_id = str(channel_payload.get("id"))
 
+    # If asset is a program/serie container, the asset_id IS the program_id
+    if not program_id and asset_type in ("program", "serie"):
+        program_id = asset_id
+
     if program_id or channel_id:
         _LOGGER.debug(
             "Parsed asset '%s': program_id=%s, channel_id=%s, type=%s",
