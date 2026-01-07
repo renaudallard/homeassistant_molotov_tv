@@ -1452,7 +1452,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if native_options:
             children.append(
                 BrowseMedia(
-                    title="━━━ Official Receiver ━━━",
+                    title="Official Receiver",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=f"separator:native",
                     media_content_type="separator",
@@ -1465,7 +1465,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if custom_options:
             children.append(
                 BrowseMedia(
-                    title="━━━ Custom Receiver ━━━",
+                    title="Arnor Receiver",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=f"separator:custom",
                     media_content_type="separator",
