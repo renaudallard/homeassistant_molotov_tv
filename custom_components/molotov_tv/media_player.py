@@ -119,7 +119,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PROGRAM_CACHE_TTL = timedelta(minutes=15)
 ASSET_CACHE_TTL = timedelta(minutes=5)  # Reduced for faster refresh of recordings/replays
-CAST_DISCOVERY_TTL = timedelta(seconds=60)
+CAST_DISCOVERY_TTL = timedelta(seconds=30)
 SEARCH_CACHE_TTL = timedelta(minutes=10)
 
 
