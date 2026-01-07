@@ -105,6 +105,7 @@ from .const import (
     MEDIA_SEARCH_RESULT_PREFIX,
     MEDIA_SEARCH_INPUT_PREFIX,
     MOLOTOV_AGENT,
+    CUSTOM_RECEIVER_APP_ID,
 )
 from .coordinator import (
     EpgChannel,
@@ -1424,19 +1425,61 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         asset_url, title, is_live = self._build_cast_request(media_id)
         custom_data = self._build_cast_custom_data(asset_url)
-        app_id = self._api.session_state.cast_app_id
-        if not app_id:
-            raise HomeAssistantError("Molotov cast app id is not available")
+        
+        # Check if we are using a custom receiver
+        if CUSTOM_RECEIVER_APP_ID:
+            _LOGGER.debug("Using custom receiver: %s", CUSTOM_RECEIVER_APP_ID)
+            app_id = CUSTOM_RECEIVER_APP_ID
+            
+            # Resolve stream locally for custom receiver
+            try:
+                _LOGGER.debug("Resolving asset stream locally for custom receiver...")
+                asset_data = await self._api.async_get_asset_stream(asset_url)
+                
+                stream = asset_data.get("stream", {})
+                stream_url = stream.get("url")
+                if not stream_url:
+                    raise MolotovApiError("No stream URL found in asset response")
+                
+                # Update asset_url to be the actual stream for the custom receiver
+                # But wait, async_cast_media passes asset_url as contentId. 
+                # For custom receiver, contentId MUST be the stream URL.
+                asset_url = stream_url
+                
+                # Extract DRM info
+                drm = asset_data.get("drm", {})
+                license_url = drm.get("license_url")
+                token = drm.get("token")
+                
+                if license_url and token:
+                    custom_data["license_url"] = license_url
+                    custom_data["drm_token"] = token
+                    custom_data["stream_url"] = stream_url
+                    _LOGGER.debug("Added DRM info to custom_data")
+                
+                # Update content type if available
+                video_format = stream.get("video_format")
+                if video_format == "DASH":
+                    custom_data["content_type"] = "application/dash+xml"
+                elif video_format == "HLS":
+                    custom_data["content_type"] = "application/x-mpegurl"
+                    
+            except Exception as err:
+                _LOGGER.error("Failed to resolve stream for custom receiver: %s", err)
+                raise HomeAssistantError(f"Failed to resolve stream: {err}") from err
+        else:
+            # Standard official receiver logic
+            app_id = self._api.session_state.cast_app_id
+            if not app_id:
+                raise HomeAssistantError("Molotov cast app id is not available")
 
-        content_type = self._api.stream_content_type()
+        content_type = custom_data.get("content_type") or self._api.stream_content_type()
+        
         _LOGGER.debug(
             "Casting to %s: app_id=%s, asset_url=%s, content_type=%s, title=%s, is_live=%s",
-            resolved_target, app_id, asset_url, content_type, title, is_live,
+            resolved_target, app_id, asset_url[:100], content_type, title, is_live,
         )
-        _LOGGER.debug("Cast custom_data: %s", {
-            k: (v[:50] + "..." if isinstance(v, str) and len(v) > 50 else v)
-            for k, v in custom_data.items()
-        })
+        _LOGGER.debug("Cast custom_data keys: %s", list(custom_data.keys()))
 
         try:
             await async_cast_media(

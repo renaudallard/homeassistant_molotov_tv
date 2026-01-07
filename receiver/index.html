@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Molotov Custom Receiver</title>
+    <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+</head>
+<body>
+    <cast-media-player></cast-media-player>
+    <script>
+        const context = cast.framework.CastReceiverContext.getInstance();
+        const playerManager = context.getPlayerManager();
+
+        // Intercept the LOAD request to configure DRM
+        playerManager.setMessageInterceptor(
+            cast.framework.messages.MessageType.LOAD,
+            loadRequestData => {
+                const media = loadRequestData.media;
+                const customData = media.customData || {};
+
+                // Check if we have DRM info from Home Assistant
+                if (customData.license_url && customData.drm_token) {
+                    console.log("Configuring Widevine DRM...");
+                    
+                    media.contentId = customData.stream_url || media.contentId;
+                    media.contentType = customData.content_type || media.contentType || 'application/dash+xml';
+                    
+                    const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
+                    
+                    playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
+                    playbackConfig.licenseUrl = customData.license_url;
+                    
+                    playbackConfig.licenseRequestHandler = requestInfo => {
+                        requestInfo.headers['Authorization'] = 'Bearer ' + customData.drm_token;
+                        // Molotov might require specific Content-Type for license requests
+                        // requestInfo.headers['Content-Type'] = 'application/octet-stream'; 
+                    };
+
+                    playerManager.setPlaybackConfig(playbackConfig);
+                }
+                
+                return loadRequestData;
+            }
+        );
+
+        context.start();
+    </script>
+</body>
+</html>

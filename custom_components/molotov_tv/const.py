@@ -56,6 +56,12 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
     }
 }
 
+# To use a custom receiver:
+# 1. Host the file in receiver/index.html on an HTTPS server (e.g. GitHub Pages)
+# 2. Register a new Custom Receiver in Google Cast SDK Console pointing to that URL
+# 3. Replace the ID below with your new App ID
+CUSTOM_RECEIVER_APP_ID = None  # Set to "1234ABCD" to enable custom receiver logic
+
 MEDIA_ROOT = "root"
 MEDIA_CHANNELS = "channels"
 MEDIA_REPLAYS = "replays"
