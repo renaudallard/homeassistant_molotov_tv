@@ -2670,6 +2670,8 @@ def _extract_replay_assets(
     data: Any, api: MolotovApi, *, channel_id: str | None = None
 ) -> list[BrowseAsset]:
     assets: list[BrowseAsset] = []
+    now = dt_util.utcnow()
+    
     for section in _extract_sections(data):
         if not _is_replay_section(section):
             continue
@@ -2679,11 +2681,16 @@ def _extract_replay_assets(
             # Skip items that do not match the requested channel when possible.
             if channel_id:
                 item_channel = _extract_item_channel_id_strict(item)
-                if item_channel != str(channel_id):
+                if item_channel and item_channel != channel_id:
                     continue
+
             asset = _parse_asset_item(item, api)
             if asset:
+                # Filter out future broadcasts (only allow VOD or past/live items)
+                if asset.start and asset.start > now and asset.asset_type != "vod":
+                    continue
                 assets.append(asset)
+
     return _dedupe_assets(assets)
 
 
