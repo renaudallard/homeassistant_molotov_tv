@@ -354,14 +354,39 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return
 
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
-            _, encoded_target, base_media_id = media_id.split(":", 2)
-            target = self._decode_cast_target(encoded_target)
-            await self._async_cast_media(base_media_id, target)
-            return
+            # Check for new format: cast:encoded_target:receiver_type:base_media_id
+            parts = media_id.split(":", 3)
+            
+            if len(parts) == 4:
+                _, encoded_target, receiver_type, base_media_id = parts
+                target = self._decode_cast_target(encoded_target)
+                await self._async_cast_media(base_media_id, target, receiver_type=receiver_type)
+                return
+            
+            # Fallback to old format: cast:encoded_target:base_media_id
+            if len(parts) == 3:
+                _, encoded_target, base_media_id = parts
+                target = self._decode_cast_target(encoded_target)
+                # Default to native if not specified, but let _async_cast_media handle defaults if needed.
+                # However, if we are in this block, it means we are using the browser which now generates explicit types.
+                # For backward compatibility, we can assume "native" unless forced otherwise.
+                # Actually, if CUSTOM_RECEIVER_APP_ID is set, the previous code defaulted to custom.
+                # But now we want explicit control. 
+                # Let's assume legacy format means "default/native" unless user specifically chose custom in the past.
+                # To be safe and consistent with previous behavior (where CUSTOM_RECEIVER_APP_ID forced custom),
+                # we can pass "custom" if CUSTOM_RECEIVER_APP_ID is set, or just "native".
+                # But wait, the user wants options. The browser now generates explicit options.
+                # So legacy calls might come from scripts?
+                # Let's default to "custom" if CUSTOM_RECEIVER_APP_ID is set, to maintain behavior for existing scripts using 'cast:...'
+                receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
+                await self._async_cast_media(base_media_id, target, receiver_type=receiver_type)
+                return
 
         targets = await self._async_get_cast_targets()
         if len(targets) == 1:
-            await self._async_cast_media(media_id, targets[0])
+            # Auto-cast if only one target
+            receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
+            await self._async_cast_media(media_id, targets[0], receiver_type=receiver_type)
             return
 
         # If no cast target is selected, play locally (expose stream URL)
@@ -1374,19 +1399,52 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         for target in targets:
             name = self._cast_target_name(target)
-            children.append(
-                BrowseMedia(
-                    title=f"Cast to {name}",
-                    media_class=MediaClass.VIDEO,
-                    media_content_id=(
-                        f"{MEDIA_CAST_PREFIX}:{self._encode_cast_target(target)}"
-                        f":{base_media_id}"
-                    ),
-                    media_content_type=MEDIA_CAST_PREFIX,
-                    can_play=True,
-                    can_expand=False,
+            encoded_target = self._encode_cast_target(target)
+            
+            if CUSTOM_RECEIVER_APP_ID:
+                # Add Native (Molotov) option
+                children.append(
+                    BrowseMedia(
+                        title=f"Cast to {name} (Molotov)",
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=(
+                            f"{MEDIA_CAST_PREFIX}:{encoded_target}"
+                            f":native:{base_media_id}"
+                        ),
+                        media_content_type=MEDIA_CAST_PREFIX,
+                        can_play=True,
+                        can_expand=False,
+                    )
                 )
-            )
+                # Add Custom Receiver option
+                children.append(
+                    BrowseMedia(
+                        title=f"Cast to {name} (Custom)",
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=(
+                            f"{MEDIA_CAST_PREFIX}:{encoded_target}"
+                            f":custom:{base_media_id}"
+                        ),
+                        media_content_type=MEDIA_CAST_PREFIX,
+                        can_play=True,
+                        can_expand=False,
+                    )
+                )
+            else:
+                # Default behavior (Native only)
+                children.append(
+                    BrowseMedia(
+                        title=f"Cast to {name}",
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=(
+                            f"{MEDIA_CAST_PREFIX}:{encoded_target}"
+                            f":{base_media_id}"
+                        ),
+                        media_content_type=MEDIA_CAST_PREFIX,
+                        can_play=True,
+                        can_expand=False,
+                    )
+                )
 
         if len(children) == 1: # Only local play available, no cast targets
             # We still show the list so user can click "Play on this device"
@@ -1404,7 +1462,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         )
 
     async def _async_cast_media(
-        self, media_id: str, cast_target_override: str | None
+        self, 
+        media_id: str, 
+        cast_target_override: str | None,
+        receiver_type: str = "native"
     ) -> None:
         await self._api.async_ensure_logged_in()
 
@@ -1426,8 +1487,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         asset_url, title, is_live = self._build_cast_request(media_id)
         custom_data = self._build_cast_custom_data(asset_url)
         
-        # Check if we are using a custom receiver
-        if CUSTOM_RECEIVER_APP_ID:
+        # Determine App ID and logic based on receiver_type
+        use_custom = (receiver_type == "custom") and (CUSTOM_RECEIVER_APP_ID is not None)
+        
+        if use_custom:
             _LOGGER.debug("Using custom receiver: %s", CUSTOM_RECEIVER_APP_ID)
             app_id = CUSTOM_RECEIVER_APP_ID
             
