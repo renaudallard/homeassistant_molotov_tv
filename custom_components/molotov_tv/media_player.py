@@ -138,6 +138,7 @@ class BrowseAsset:
     end: datetime | None = None
     program_id: str | None = None
     channel_id: str | None = None
+    asset_type: str | None = None
 
 
 async def async_setup_entry(
@@ -795,28 +796,49 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         children: list[BrowseMedia] = []
 
         for asset in assets:
-            payload = _encode_asset_payload(
-                {
-                    "url": asset.asset_url,
-                    "title": asset.title,
-                    "thumb": asset.thumbnail or asset.poster,
-                    "live": asset.is_live,
-                }
-            )
             display_title = asset.title
             if asset.episode_title:
                 display_title = f"{asset.title} - {asset.episode_title}"
-            children.append(
-                BrowseMedia(
-                    title=display_title,
-                    media_class=MediaClass.VIDEO,
-                    media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
-                    media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=asset.thumbnail or asset.poster,
+
+            # Check if this is a program container (Series/Show) that should be browsed
+            if (
+                asset.asset_type in ("program", "serie")
+                and asset.program_id
+                and asset.channel_id
+                and not asset.is_live
+            ):
+                children.append(
+                    BrowseMedia(
+                        title=display_title,
+                        media_class=MediaClass.TV_SHOW,
+                        media_content_id=f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{asset.channel_id}:{asset.program_id}:{asset.title}",
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=asset.thumbnail or asset.poster,
+                    )
                 )
-            )
+            else:
+                # Playable item (Movie, Episode, Live)
+                payload = _encode_asset_payload(
+                    {
+                        "url": asset.asset_url,
+                        "title": asset.title,
+                        "thumb": asset.thumbnail or asset.poster,
+                        "live": asset.is_live,
+                    }
+                )
+                children.append(
+                    BrowseMedia(
+                        title=display_title,
+                        media_class=MediaClass.VIDEO,
+                        media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
+                        media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=asset.thumbnail or asset.poster,
+                    )
+                )
 
         if not children:
             children.append(
@@ -2396,16 +2418,17 @@ def _parse_asset_item(
 
     if program_id or channel_id:
         _LOGGER.debug(
-            "Parsed asset '%s': program_id=%s, channel_id=%s",
+            "Parsed asset '%s': program_id=%s, channel_id=%s, type=%s",
             title[:30] if title else "untitled",
             program_id,
             channel_id,
+            asset_type,
         )
 
     return BrowseAsset(
         title=title,
         asset_url=asset_url,
-        is_live=False,
+        is_live=start is not None and end is not None and start <= dt_util.utcnow() < end,
         description=description,
         episode_title=episode_title,
         thumbnail=thumbnail,
@@ -2414,6 +2437,7 @@ def _parse_asset_item(
         end=end,
         program_id=program_id,
         channel_id=channel_id,
+        asset_type=asset_type,
     )
 
 
