@@ -361,6 +361,41 @@ async def async_cast_skip_back(hass: HomeAssistant, host: str, seconds: float = 
     await hass.async_add_executor_job(_cast_control, host, "skip_back", seconds)
 
 
+async def async_cast_register_listener(hass: HomeAssistant, host: str, callback: Any) -> None:
+    """Register a status listener for the active cast."""
+    await hass.async_add_executor_job(_cast_register_listener, host, callback)
+
+
+async def async_cast_select_track(hass: HomeAssistant, host: str, track_id: int) -> None:
+    """Select a specific track (audio/subtitle) on the Chromecast."""
+    await hass.async_add_executor_job(_cast_select_track, host, track_id)
+
+
+def _cast_register_listener(host: str, callback: Any) -> None:
+    cast = get_active_cast(host)
+    if not cast:
+        return
+    try:
+        cast.media_controller.register_status_listener(callback)
+        _LOGGER.debug("Registered status listener for %s", host)
+    except Exception as err:
+        _LOGGER.warning("Failed to register listener: %s", err)
+
+
+def _cast_select_track(host: str, track_id: int) -> None:
+    cast = get_active_cast(host)
+    if not cast:
+        return
+    try:
+        # Enable the track (activates it)
+        cast.media_controller.enable_subtitle(track_id) # enable_subtitle works for audio too in some versions, or update_active_track_ids
+        # Explicitly update active tracks
+        cast.media_controller.update_active_track_ids([track_id])
+        _LOGGER.debug("Selected track %s on %s", track_id, host)
+    except Exception as err:
+        _LOGGER.error("Failed to select track: %s", err)
+
+
 def _cast_control(host: str, action: str, *args: Any) -> None:
     """Execute a control action on a Chromecast."""
     cast = get_active_cast(host)
