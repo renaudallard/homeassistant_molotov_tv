@@ -240,6 +240,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     }
             elif drm:
                 attrs["stream_drm"] = drm
+            
+            # Extract preferred track info
+            config = self._current_stream.get("config", {})
+            selected_track = config.get("selected_track", {})
+            if selected_track:
+                attrs["stream_selected_track"] = selected_track
                 
         return attrs
 

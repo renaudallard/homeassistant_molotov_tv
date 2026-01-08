@@ -78,6 +78,7 @@
       if (state.state === 'playing' && state.attributes.stream_url) {
         const streamUrl = state.attributes.stream_url;
         const drmInfo = state.attributes.stream_drm;
+        const selectedTrack = state.attributes.stream_selected_track;
 
         if (this._currentStream === streamUrl) return;
         this._currentStream = streamUrl;
@@ -95,7 +96,7 @@
           script.crossOrigin = "anonymous";
           script.onload = () => {
             this._log("dash.js loaded");
-            this._initPlayer(streamUrl, drmInfo);
+            this._initPlayer(streamUrl, drmInfo, selectedTrack);
           };
           script.onerror = () => {
             this._log("FAILED to load dash.js!");
@@ -103,7 +104,7 @@
           };
           document.head.appendChild(script);
         } else {
-          this._initPlayer(streamUrl, drmInfo);
+          this._initPlayer(streamUrl, drmInfo, selectedTrack);
         }
       } else if (this.player) {
         this.player.reset();
@@ -118,7 +119,7 @@
       console.log("[Molotov]", msg);
     }
 
-    _initPlayer(url, drm) {
+    _initPlayer(url, drm, selectedTrack) {
       this._log("Init player...");
 
       // Hide loading message
@@ -201,7 +202,18 @@
 
       // Settings that require initialized player
       try {
-        player.setInitialMediaSettingsFor('audio', { lang: 'fr' });
+        let audioLang = 'fr';
+        if (selectedTrack && selectedTrack.track_audio) {
+            audioLang = selectedTrack.track_audio;
+            this._log("Using API preferred audio: " + audioLang);
+        }
+        player.setInitialMediaSettingsFor('audio', { lang: audioLang });
+        
+        if (selectedTrack && selectedTrack.track_text) {
+             const textLang = selectedTrack.track_text;
+             this._log("Using API preferred text: " + textLang);
+             player.setInitialMediaSettingsFor('text', { lang: textLang });
+        }
       } catch(e) {
         this._log("WARN: Failed to set audio lang: " + e.message);
       }
