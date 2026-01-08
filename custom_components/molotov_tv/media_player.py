@@ -2334,6 +2334,12 @@ def _parse_asset_item(
     item: dict[str, Any], api: MolotovApi
 ) -> BrowseAsset | None:
     payload = _extract_item_payload(item)
+    
+    # Check API availability flag
+    if payload.get("is_available") is False:
+        _LOGGER.debug("Skipping unavailable asset (is_available=False): %s", payload.get("title"))
+        return None
+
     actions = _extract_item_actions(item, payload)
     ref = _extract_asset_reference(item)
     if not ref:
@@ -2687,8 +2693,17 @@ def _extract_replay_assets(
             asset = _parse_asset_item(item, api)
             if asset:
                 # Filter out future broadcasts (only allow VOD or past/live items)
-                if asset.start and asset.start > now and asset.asset_type != "vod":
-                    continue
+                if asset.start:
+                    is_future = asset.start > now
+                    if is_future:
+                        _LOGGER.debug("Filtering future asset '%s': start=%s > now=%s", asset.title, asset.start, now)
+                        continue
+                
+                # If broadcast and no start time, suspicious
+                if asset.asset_type == "broadcast" and not asset.start:
+                     _LOGGER.debug("Filtering broadcast without start time: %s", asset.title)
+                     continue
+
                 assets.append(asset)
 
     return _dedupe_assets(assets)
