@@ -4,7 +4,7 @@
  */
 
 (function() {
-  const VERSION = "0.1.33";
+  const VERSION = "0.1.34";
 
   console.log(`[Molotov] Script execution started - v${VERSION}`);
 
@@ -229,6 +229,37 @@
 
       player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
         this._log("Stream ready");
+        
+        // Robust language enforcement
+        const audioTracks = player.getTracksFor('audio');
+        if (audioTracks && audioTracks.length > 0) {
+            const currentTrack = player.getCurrentTrackFor('audio');
+            const currentLang = currentTrack ? currentTrack.lang : '';
+            this._log("Current audio: " + currentLang);
+
+            // Determine target language
+            let targetLang = 'fr';
+            if (selectedTrack && selectedTrack.track_audio) {
+                targetLang = selectedTrack.track_audio;
+            }
+
+            // Check if we need to switch
+            if (currentLang !== targetLang && currentLang !== 'fra' && currentLang !== 'fre') {
+                // Try to find exact match
+                let newTrack = audioTracks.find(t => t.lang === targetLang || t.lang === 'fra' || t.lang === 'fre');
+                
+                // Fallback: Find any non-English/Original
+                if (!newTrack && (currentLang === 'en' || currentLang === 'eng' || currentLang === 'qaa')) {
+                     newTrack = audioTracks.find(t => t.lang !== 'en' && t.lang !== 'eng' && t.lang !== 'qaa');
+                }
+
+                if (newTrack) {
+                    this._log("Switching audio to: " + newTrack.lang);
+                    player.setCurrentTrack(newTrack);
+                }
+            }
+        }
+
         setTimeout(() => {
           if (video.paused) {
             this._log("Autoplay blocked - tap play");
