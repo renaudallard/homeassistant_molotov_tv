@@ -82,6 +82,8 @@ from .chromecast import (
     async_cast_mute,
     async_cast_skip_forward,
     async_cast_skip_back,
+    async_cast_register_listener,
+    async_cast_select_track,
 )
 from .const import (
     CONF_CAST_TARGET,
@@ -169,6 +171,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         | MediaPlayerEntityFeature.NEXT_TRACK
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
         | MediaPlayerEntityFeature.TURN_OFF
+        | MediaPlayerEntityFeature.SELECT_SOUND_MODE
     )
     _attr_state = STATE_IDLE
 
@@ -190,6 +193,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._active_cast_target: str | None = None
         self._active_cast_entity: str | None = None
         self._current_stream: dict[str, Any] | None = None
+        self._tracks: dict[str, dict[str, Any]] = {}  # Name -> {id, lang, type}
+        self._current_track_id: int | None = None
 
     @property
     def device_info(self):
@@ -1540,6 +1545,70 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             children=children,
         )
 
+    @property
+    def sound_mode(self) -> str | None:
+        """Return the current sound mode (track)."""
+        if self._current_track_id is None:
+            return None
+        for name, info in self._tracks.items():
+            if info["id"] == self._current_track_id:
+                return name
+        return None
+
+    @property
+    def sound_mode_list(self) -> list[str] | None:
+        """Return available sound modes."""
+        return list(self._tracks.keys()) if self._tracks else None
+
+    async def async_select_sound_mode(self, sound_mode: str) -> None:
+        """Select sound mode."""
+        info = self._tracks.get(sound_mode)
+        if info is not None and self._active_cast_target:
+            await async_cast_select_track(self.hass, self._active_cast_target, info["id"])
+
+    def _on_cast_status(self, status: Any) -> None:
+        """Handle cast status updates."""
+        if not status:
+            return
+        
+        # Parse tracks if available in status
+        raw_tracks = getattr(status, "tracks", [])
+        active_ids = getattr(status, "active_track_ids", [])
+        
+        if raw_tracks:
+            new_tracks = {}
+            for track in raw_tracks:
+                # track is usually a dict or object
+                t_id = getattr(track, "trackId", track.get("trackId"))
+                t_type = getattr(track, "type", track.get("type"))
+                t_lang = getattr(track, "language", track.get("language"))
+                t_label = getattr(track, "name", track.get("name")) or t_lang
+                
+                info = {"id": t_id, "lang": t_lang, "type": t_type}
+                
+                if t_type == "AUDIO":
+                    name = f"Audio: {t_label}"
+                    if name in new_tracks:
+                        name = f"{name} ({t_id})"
+                    new_tracks[name] = info
+                elif t_type == "TEXT":
+                    name = f"Sub: {t_label}"
+                    if name in new_tracks:
+                        name = f"{name} ({t_id})"
+                    new_tracks[name] = info
+            
+            self._tracks = new_tracks
+            
+            # Update current track
+            if active_ids:
+                # Prioritize audio
+                for t_name, info in new_tracks.items():
+                    if info["id"] in active_ids and "Audio" in t_name:
+                        self._current_track_id = info["id"]
+                        break
+                
+            self.schedule_update_ha_state()
+
     async def _async_cast_media(
         self, 
         media_id: str, 
@@ -1652,6 +1721,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._active_cast_target = resolved_target
             self._active_cast_entity = self._find_cast_entity(resolved_target)
             self._attr_state = STATE_PLAYING
+            
+            # Register status listener for tracks
+            await async_cast_register_listener(self.hass, resolved_target, self._on_cast_status)
+            
             self.async_write_ha_state()
             _LOGGER.debug(
                 "Cast started, tracking entity: %s (target: %s)",
