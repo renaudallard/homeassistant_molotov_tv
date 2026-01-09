@@ -2422,15 +2422,18 @@ def _parse_asset_item(
     item: dict[str, Any], api: MolotovApi
 ) -> BrowseAsset | None:
     payload = _extract_item_payload(item)
-    
-    # Check API availability flag
-    if payload.get("is_available") is False:
-        _LOGGER.debug("Skipping unavailable asset (is_available=False): %s", payload.get("title"))
-        return None
-
     actions = _extract_item_actions(item, payload)
     ref = _extract_asset_reference(item)
+
+    # Only skip if there's no playback reference at all
+    # Don't filter on is_available=False alone since items may still be playable
+    # via start-over or other mechanisms
     if not ref:
+        if payload.get("is_available") is False:
+            _LOGGER.debug(
+                "Skipping asset without playback ref (is_available=False): %s",
+                payload.get("title")
+            )
         return None
     asset_type, asset_id, start_over = ref
     asset_url = api.build_asset_url(asset_type, asset_id, start_over=start_over)
