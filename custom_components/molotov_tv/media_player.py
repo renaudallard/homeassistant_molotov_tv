@@ -2789,11 +2789,27 @@ def _extract_replay_assets(
                     if is_future:
                         _LOGGER.debug("Filtering future asset '%s': start=%s > now=%s", asset.title, asset.start, now)
                         continue
-                
+
                 # If broadcast and no start time, suspicious
                 if asset.asset_type == "broadcast" and not asset.start:
-                     _LOGGER.debug("Filtering broadcast without start time: %s", asset.title)
-                     continue
+                    _LOGGER.debug("Filtering broadcast without start time: %s", asset.title)
+                    continue
+
+                # Check if replay is within availability window
+                if asset.available_from and asset.available_until:
+                    if not (asset.available_from <= now <= asset.available_until):
+                        _LOGGER.debug(
+                            "Filtering unavailable asset '%s': now=%s not in [%s, %s]",
+                            asset.title, now, asset.available_from, asset.available_until
+                        )
+                        continue
+                elif asset.available_until and asset.available_until < now:
+                    # Replay has expired
+                    _LOGGER.debug(
+                        "Filtering expired asset '%s': available_until=%s < now=%s",
+                        asset.title, asset.available_until, now
+                    )
+                    continue
 
                 assets.append(asset)
 
