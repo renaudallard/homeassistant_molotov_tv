@@ -2408,6 +2408,13 @@ def _extract_asset_reference(item: dict[str, Any]) -> tuple[str, str, bool] | No
             start_over = video_type in ("vod", "record")
             return str(video_type), str(video_id), start_over
 
+    # Log why we couldn't extract a reference
+    _LOGGER.debug(
+        "No asset reference found: title=%s, actions_keys=%s, video=%s",
+        payload.get("title", "unknown"),
+        list(actions.keys()) if actions else None,
+        video if isinstance(video, dict) else type(video),
+    )
     return None
 
 
@@ -2900,9 +2907,14 @@ def _extract_program_episodes(
 
     # Only look at sections that contain playable episodes
     # Priority: program_episode_sections first (program-specific), then channel
+    # Check both snake_case and camelCase variants
     for section_key in (
         "program_episode_sections",
+        "programEpisodeSections",
         "channel_episode_sections",
+        "channelEpisodeSections",
+        "sections",
+        "episodes",
     ):
         sections = data.get(section_key)
         if not isinstance(sections, list):
