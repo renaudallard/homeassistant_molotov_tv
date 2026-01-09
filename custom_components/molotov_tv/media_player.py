@@ -2468,15 +2468,19 @@ def _parse_asset_item(
         list(video.keys()) if isinstance(video, dict) else None,
     )
 
+    # Parse availability window separately from broadcast times
+    available_from: datetime | None = None
+    available_until: datetime | None = None
+
     if isinstance(video, dict):
         start = _parse_timestamp(
-            video.get("start_at")
-            or video.get("start")
-            or video.get("available_from")
+            video.get("start_at") or video.get("start")
         )
         end = _parse_timestamp(
-            video.get("end_at") or video.get("end") or video.get("available_until")
+            video.get("end_at") or video.get("end")
         )
+        available_from = _parse_timestamp(video.get("available_from"))
+        available_until = _parse_timestamp(video.get("available_until"))
         # Extract IDs
         program_id = str(video.get("program_id")) if video.get("program_id") else None
         episode_id = str(video.get("episode_id")) if video.get("episode_id") else None
@@ -2491,6 +2495,8 @@ def _parse_asset_item(
     else:
         start = _parse_timestamp(payload.get("start_at") or payload.get("start"))
         end = _parse_timestamp(payload.get("end_at") or payload.get("end"))
+        available_from = _parse_timestamp(payload.get("available_from"))
+        available_until = _parse_timestamp(payload.get("available_until"))
 
     # Try to get program/channel/episode id from metadata
     if isinstance(metadata, dict):
@@ -2549,6 +2555,8 @@ def _parse_asset_item(
         channel_id=channel_id,
         asset_type=asset_type,
         episode_id=episode_id,
+        available_from=available_from,
+        available_until=available_until,
     )
 
 
@@ -2738,6 +2746,8 @@ def _parse_past_programs_as_replays(
                 end=end,
                 program_id=program_id,
                 channel_id=item_channel_id,
+                available_from=available_from,
+                available_until=available_until,
             )
         )
 
