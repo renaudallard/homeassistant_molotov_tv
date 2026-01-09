@@ -2961,6 +2961,15 @@ def _extract_program_episodes(
 
                 asset = _parse_asset_item(item, api)
                 if asset:
+                    # Filter out future broadcasts that can't be played yet
+                    now = dt_util.utcnow()
+                    if asset.start and asset.start > now:
+                        _LOGGER.debug(
+                            "Skipping future episode '%s': start=%s > now=%s",
+                            asset.title, asset.start, now
+                        )
+                        continue
+
                     # Dedupe by episode_title to avoid duplicates
                     dedup_key = asset.episode_title or asset.title
                     if dedup_key not in seen_titles:
