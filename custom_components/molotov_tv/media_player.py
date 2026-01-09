@@ -142,6 +142,8 @@ class BrowseAsset:
     channel_id: str | None = None
     asset_type: str | None = None
     episode_id: str | None = None
+    available_from: datetime | None = None
+    available_until: datetime | None = None
 
 
 async def async_setup_entry(
