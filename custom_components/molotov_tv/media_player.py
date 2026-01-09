@@ -2893,6 +2893,11 @@ def _extract_program_episodes(
     if not isinstance(data, dict):
         return assets
 
+    _LOGGER.debug(
+        "Extracting episodes from data with keys: %s",
+        list(data.keys()) if data else "empty"
+    )
+
     # Only look at sections that contain playable episodes
     # Priority: program_episode_sections first (program-specific), then channel
     for section_key in (
@@ -2916,16 +2921,27 @@ def _extract_program_episodes(
 
             items = _extract_section_items(section)
 
+            _LOGGER.debug(
+                "Processing section '%s' (slug=%s) with %d items",
+                section_title, section_slug, len(items)
+            )
+
             for item in items:
                 if not isinstance(item, dict):
                     continue
 
-                # Filter by program_id if specified
+                # Filter by program_id if specified - but allow items without program_id
+                # since they came from the program's endpoint anyway
                 if filter_program_id:
                     payload = _extract_item_payload(item)
                     video = payload.get("video", {})
                     item_program_id = str(video.get("program_id")) if video.get("program_id") else None
-                    if item_program_id != filter_program_id:
+                    # Only skip if item has a different program_id, not if it's missing
+                    if item_program_id is not None and item_program_id != filter_program_id:
+                        _LOGGER.debug(
+                            "Skipping item with different program_id: %s != %s",
+                            item_program_id, filter_program_id
+                        )
                         continue
 
                 asset = _parse_asset_item(item, api)
@@ -2935,6 +2951,16 @@ def _extract_program_episodes(
                     if dedup_key not in seen_titles:
                         seen_titles.add(dedup_key)
                         assets.append(asset)
+                    else:
+                        _LOGGER.debug("Skipping duplicate episode: %s", dedup_key)
+                else:
+                    # Log why asset was not parsed
+                    payload = _extract_item_payload(item)
+                    _LOGGER.debug(
+                        "Failed to parse item: title=%s, is_available=%s",
+                        payload.get("title", "unknown"),
+                        payload.get("is_available"),
+                    )
 
     _LOGGER.debug("Total unique episodes for program %s: %d", filter_program_id, len(assets))
     # Sort by start date, newest first, limit to 50
