@@ -43,8 +43,12 @@ _LOGGER = logging.getLogger(__name__)
 CAST_CONNECT_TIMEOUT = 30
 CAST_MEDIA_TIMEOUT = 15
 
-# Store active cast connections for control
-_active_casts: dict[str, Any] = {}
+# Connection management
+MAX_ACTIVE_CASTS = 5  # Maximum number of cached cast connections
+CAST_CONNECTION_TTL = 3600  # Seconds before a connection is considered stale (1 hour)
+
+# Store active cast connections for control: host -> (cast, timestamp)
+_active_casts: dict[str, tuple[Any, float]] = {}
 _cast_lock = threading.Lock()
 
 
@@ -52,22 +56,61 @@ class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
 
 
+def _cleanup_stale_casts() -> None:
+    """Remove stale cast connections. Must be called with _cast_lock held."""
+    import time
+    now = time.time()
+    stale = [
+        host for host, (cast, ts) in _active_casts.items()
+        if now - ts > CAST_CONNECTION_TTL
+    ]
+    for host in stale:
+        cast, _ = _active_casts.pop(host)
+        try:
+            cast.disconnect()
+        except Exception:
+            pass
+        _LOGGER.debug("Cleaned up stale cast connection for %s", host)
+
+
 def get_active_cast(host: str) -> Any | None:
     """Get an active cast connection for a host."""
     with _cast_lock:
-        return _active_casts.get(host)
+        entry = _active_casts.get(host)
+        if entry is None:
+            return None
+        cast, _ = entry
+        return cast
 
 
 def set_active_cast(host: str, cast: Any) -> None:
     """Store an active cast connection."""
+    import time
     with _cast_lock:
-        _active_casts[host] = cast
+        # Cleanup stale connections first
+        _cleanup_stale_casts()
+        # If at capacity, remove oldest connection
+        while len(_active_casts) >= MAX_ACTIVE_CASTS and host not in _active_casts:
+            oldest_host = min(_active_casts, key=lambda h: _active_casts[h][1])
+            old_cast, _ = _active_casts.pop(oldest_host)
+            try:
+                old_cast.disconnect()
+            except Exception:
+                pass
+            _LOGGER.debug("Evicted oldest cast connection for %s", oldest_host)
+        _active_casts[host] = (cast, time.time())
 
 
 def remove_active_cast(host: str) -> None:
     """Remove an active cast connection."""
     with _cast_lock:
-        _active_casts.pop(host, None)
+        entry = _active_casts.pop(host, None)
+        if entry:
+            cast, _ = entry
+            try:
+                cast.disconnect()
+            except Exception:
+                pass
 
 
 async def async_cast_media(
