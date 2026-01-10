@@ -39,7 +39,7 @@ from typing import Any
 from urllib.parse import urlencode, urljoin
 import zipfile
 
-from aiohttp import BasicAuth, ClientResponseError, ClientSession
+from aiohttp import BasicAuth, ClientResponseError, ClientSession, ClientTimeout
 from homeassistant.util import dt as dt_util
 
 from .const import CONTENT_TYPE_DASH, DEFAULT_ENVIRONMENT, ENVIRONMENTS, MOLOTOV_AGENT
@@ -112,6 +112,11 @@ def _extract_config_url(data: dict[str, Any], key: str) -> str | None:
     if isinstance(url, str) and url:
         return url
     return None
+
+
+# HTTP request timeouts (seconds)
+DEFAULT_TIMEOUT = ClientTimeout(total=30, connect=10)
+LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=60, connect=10)  # For EPG downloads
 
 
 class MolotovApiError(Exception):
@@ -811,6 +816,7 @@ class MolotovApi:
             link,
             auth=False,
             basic_auth=self._live_channel_auth if use_basic_auth else None,
+            timeout=LARGE_RESPONSE_TIMEOUT,
         )
         return _decode_epg_payload(epg_raw)
 
@@ -840,6 +846,7 @@ class MolotovApi:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         basic_auth: BasicAuth | None = None,
+        timeout: ClientTimeout | None = None,
         _retry: bool = True,
     ) -> dict[str, Any]:
         url = (
@@ -859,6 +866,7 @@ class MolotovApi:
                 params=params,
                 json=json,
                 auth=basic_auth,
+                timeout=timeout or DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status == 401 and auth and _retry:
                     await self.async_refresh_token()
@@ -870,6 +878,7 @@ class MolotovApi:
                         params=params,
                         headers=headers,
                         basic_auth=basic_auth,
+                        timeout=timeout,
                         _retry=False,
                     )
                 if resp.status == 401:
@@ -926,6 +935,7 @@ class MolotovApi:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         basic_auth: BasicAuth | None = None,
+        timeout: ClientTimeout | None = None,
         _retry: bool = True,
     ) -> bytes:
         url = (
@@ -945,6 +955,7 @@ class MolotovApi:
                 params=params,
                 json=json,
                 auth=basic_auth,
+                timeout=timeout or DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status == 401 and auth and _retry:
                     await self.async_refresh_token()
@@ -956,6 +967,7 @@ class MolotovApi:
                         params=params,
                         headers=headers,
                         basic_auth=basic_auth,
+                        timeout=timeout,
                         _retry=False,
                     )
                 if resp.status == 401:
