@@ -118,6 +118,11 @@ def _extract_config_url(data: dict[str, Any], key: str) -> str | None:
 DEFAULT_TIMEOUT = ClientTimeout(total=30, connect=10)
 LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=60, connect=10)  # For EPG downloads
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_STATUS_CODES = {502, 503, 504, 429}  # Gateway errors and rate limiting
+RETRY_DELAY_SECONDS = 1.0
+
 
 class MolotovApiError(Exception):
     """Generic Molotov API error."""
@@ -848,6 +853,7 @@ class MolotovApi:
         basic_auth: BasicAuth | None = None,
         timeout: ClientTimeout | None = None,
         _retry: bool = True,
+        _retries: int = 0,
     ) -> dict[str, Any]:
         url = (
             url_or_path
@@ -880,9 +886,29 @@ class MolotovApi:
                         basic_auth=basic_auth,
                         timeout=timeout,
                         _retry=False,
+                        _retries=_retries,
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
+                # Retry on transient failures
+                if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
+                    _LOGGER.warning(
+                        "Retryable error %s for %s %s, attempt %d/%d",
+                        resp.status, method, url, _retries + 1, MAX_RETRIES
+                    )
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2 ** _retries))
+                    return await self._request(
+                        method,
+                        url_or_path,
+                        auth=auth,
+                        json=json,
+                        params=params,
+                        headers=headers,
+                        basic_auth=basic_auth,
+                        timeout=timeout,
+                        _retry=_retry,
+                        _retries=_retries + 1,
+                    )
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
@@ -937,6 +963,7 @@ class MolotovApi:
         basic_auth: BasicAuth | None = None,
         timeout: ClientTimeout | None = None,
         _retry: bool = True,
+        _retries: int = 0,
     ) -> bytes:
         url = (
             url_or_path
@@ -969,9 +996,29 @@ class MolotovApi:
                         basic_auth=basic_auth,
                         timeout=timeout,
                         _retry=False,
+                        _retries=_retries,
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
+                # Retry on transient failures
+                if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
+                    _LOGGER.warning(
+                        "Retryable error %s for %s %s, attempt %d/%d",
+                        resp.status, method, url, _retries + 1, MAX_RETRIES
+                    )
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2 ** _retries))
+                    return await self._request_raw_bytes(
+                        method,
+                        url_or_path,
+                        auth=auth,
+                        json=json,
+                        params=params,
+                        headers=headers,
+                        basic_auth=basic_auth,
+                        timeout=timeout,
+                        _retry=_retry,
+                        _retries=_retries + 1,
+                    )
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
