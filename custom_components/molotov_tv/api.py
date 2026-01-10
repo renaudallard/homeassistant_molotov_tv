@@ -422,9 +422,11 @@ class MolotovApi:
                 _LOGGER.debug("Search endpoint %s failed: %s", endpoint, err)
                 last_error = err
 
-        # Return empty result if all endpoints fail
+        # Raise error if all endpoints failed
         if last_error:
             _LOGGER.warning("All search endpoints failed: %s", last_error)
+            raise MolotovApiError(f"Search failed: {last_error}") from last_error
+        # No error but no results found
         return {"sections": [], "query": query}
 
     async def async_get_search_home(self) -> dict[str, Any]:
