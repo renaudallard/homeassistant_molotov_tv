@@ -43,22 +43,11 @@ from homeassistant.components.media_player import (
     MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
-    MediaPlayerState,
 )
 from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import (
-    SERVICE_MEDIA_PAUSE,
-    SERVICE_MEDIA_PLAY,
-    SERVICE_MEDIA_STOP,
-    SERVICE_MEDIA_NEXT_TRACK,
-    SERVICE_MEDIA_PREVIOUS_TRACK,
-    SERVICE_MEDIA_SEEK,
-    SERVICE_VOLUME_SET,
-    SERVICE_VOLUME_UP,
-    SERVICE_VOLUME_DOWN,
-    SERVICE_VOLUME_MUTE,
     STATE_IDLE,
     STATE_PLAYING,
     STATE_PAUSED,
@@ -1511,7 +1500,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 BrowseMedia(
                     title="Official Receiver",
                     media_class=MediaClass.CHANNEL,
-                    media_content_id=f"separator:native",
+                    media_content_id="separator:native",
                     media_content_type="separator",
                     can_play=False,
                     can_expand=False,
@@ -1524,7 +1513,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 BrowseMedia(
                     title="Arnor Receiver",
                     media_class=MediaClass.CHANNEL,
-                    media_content_id=f"separator:custom",
+                    media_content_id="separator:custom",
                     media_content_type="separator",
                     can_play=False,
                     can_expand=False,
