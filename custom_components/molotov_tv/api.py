@@ -754,16 +754,24 @@ class MolotovApi:
     async def async_refresh_token(self) -> None:
         """Refresh access token using the refresh token."""
 
-        refresh_token = self._session_state.refresh_token
-        if not refresh_token:
-            raise MolotovAuthError("Missing refresh token")
+        async with self._lock:
+            # Re-check expiration inside lock to avoid redundant refreshes
+            expires_at = self._session_state.access_token_expires_at
+            if expires_at:
+                now = int(dt_util.utcnow().timestamp())
+                if now < expires_at - 60:
+                    return  # Token was already refreshed by another call
 
-        data = await self._request(
-            "GET",
-            f"v3/auth/refresh/{refresh_token}",
-            auth=False,
-        )
-        self._update_session_from_auth(data)
+            refresh_token = self._session_state.refresh_token
+            if not refresh_token:
+                raise MolotovAuthError("Missing refresh token")
+
+            data = await self._request(
+                "GET",
+                f"v3/auth/refresh/{refresh_token}",
+                auth=False,
+            )
+            self._update_session_from_auth(data)
 
     async def async_ensure_logged_in(self) -> None:
         """Ensure a valid access token is present."""
