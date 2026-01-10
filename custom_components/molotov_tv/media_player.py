@@ -79,6 +79,8 @@ from .chromecast import (
     async_cast_stop,
     async_cast_seek,
     async_cast_volume,
+    async_cast_volume_up,
+    async_cast_volume_down,
     async_cast_mute,
     async_cast_skip_forward,
     async_cast_skip_back,
@@ -1892,15 +1894,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def async_volume_up(self) -> None:
         """Turn volume up on active cast."""
-        # Get current volume and increase by 10%
         if self._active_cast_target:
-            await async_cast_volume(self.hass, self._active_cast_target, 0.6)
+            await async_cast_volume_up(self.hass, self._active_cast_target)
 
     async def async_volume_down(self) -> None:
         """Turn volume down on active cast."""
-        # Get current volume and decrease by 10%
         if self._active_cast_target:
-            await async_cast_volume(self.hass, self._active_cast_target, 0.4)
+            await async_cast_volume_down(self.hass, self._active_cast_target)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute/unmute active cast."""

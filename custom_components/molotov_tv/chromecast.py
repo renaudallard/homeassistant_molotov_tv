@@ -351,6 +351,16 @@ async def async_cast_mute(hass: HomeAssistant, host: str, mute: bool) -> None:
     await hass.async_add_executor_job(_cast_control, host, "mute", mute)
 
 
+async def async_cast_volume_up(hass: HomeAssistant, host: str, step: float = 0.1) -> None:
+    """Increase volume on a Chromecast by step (default 10%)."""
+    await hass.async_add_executor_job(_cast_control, host, "volume_up", step)
+
+
+async def async_cast_volume_down(hass: HomeAssistant, host: str, step: float = 0.1) -> None:
+    """Decrease volume on a Chromecast by step (default 10%)."""
+    await hass.async_add_executor_job(_cast_control, host, "volume_down", step)
+
+
 async def async_cast_skip_forward(hass: HomeAssistant, host: str, seconds: float = 30) -> None:
     """Skip forward on a Chromecast."""
     await hass.async_add_executor_job(_cast_control, host, "skip_forward", seconds)
@@ -439,6 +449,14 @@ def _cast_control(host: str, action: str, *args: Any) -> None:
                 mc.seek(new_pos)
             else:
                 _LOGGER.warning("Cannot skip back: no current position")
+        elif action == "volume_up" and args:
+            current = cast.status.volume_level if cast.status else 0.5
+            new_level = min(1.0, current + args[0])
+            cast.set_volume(new_level)
+        elif action == "volume_down" and args:
+            current = cast.status.volume_level if cast.status else 0.5
+            new_level = max(0.0, current - args[0])
+            cast.set_volume(new_level)
         else:
             _LOGGER.warning("Unknown cast action: %s", action)
             return
