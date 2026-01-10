@@ -125,6 +125,7 @@ PROGRAM_CACHE_TTL = timedelta(minutes=15)
 ASSET_CACHE_TTL = timedelta(minutes=5)  # Reduced for faster refresh of recordings/replays
 CAST_DISCOVERY_TTL = timedelta(seconds=30)
 SEARCH_CACHE_TTL = timedelta(minutes=10)
+MAX_PROGRAM_CACHE_SIZE = 50  # Maximum number of channels to cache programs for
 
 
 @dataclass(slots=True)
@@ -617,10 +618,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     return
                 programs = _parse_remote_programs(raw, channel.channel_id)
                 if programs:
-                    self._program_cache[channel.channel_id] = (
-                        dt_util.utcnow(),
-                        programs,
-                    )
+                    self._set_cached_programs(channel.channel_id, programs)
                     channel.programs = programs
 
         await asyncio.gather(*(fetch_programs(channel) for channel in missing))
@@ -1096,7 +1094,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     ) from err
             else:
                 programs = _parse_remote_programs(raw, channel_id)
-                self._program_cache[channel_id] = (dt_util.utcnow(), programs)
+                self._set_cached_programs(channel_id, programs)
 
         if programs is not None:
             channel.programs = programs
@@ -1994,6 +1992,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._program_cache.pop(channel_id, None)
             return None
         return programs
+
+    def _set_cached_programs(self, channel_id: str, programs: list[EpgProgram]) -> None:
+        """Cache programs for a channel, enforcing size limit."""
+        now = dt_util.utcnow()
+        # Evict expired entries first
+        expired = [
+            cid for cid, (fetched_at, _) in self._program_cache.items()
+            if now - fetched_at > PROGRAM_CACHE_TTL
+        ]
+        for cid in expired:
+            self._program_cache.pop(cid, None)
+        # If still over limit, remove oldest entries
+        while len(self._program_cache) >= MAX_PROGRAM_CACHE_SIZE:
+            oldest_id = min(
+                self._program_cache,
+                key=lambda k: self._program_cache[k][0]
+            )
+            self._program_cache.pop(oldest_id, None)
+        self._program_cache[channel_id] = (now, programs)
 
     def _get_cached_assets(
         self, cached: tuple[datetime, list[BrowseAsset]] | None
