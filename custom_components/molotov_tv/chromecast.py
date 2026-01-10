@@ -39,6 +39,10 @@ from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
+# Timeout for blocking Chromecast operations (seconds)
+CAST_CONNECT_TIMEOUT = 30
+CAST_MEDIA_TIMEOUT = 15
+
 # Store active cast connections for control
 _active_casts: dict[str, Any] = {}
 _cast_lock = threading.Lock()
@@ -228,7 +232,11 @@ def _cast_media_blocking(
 
         _LOGGER.debug("Using chromecast: %s", cast)
         _LOGGER.debug("Waiting for chromecast connection...")
-        cast.wait()
+        cast.wait(timeout=CAST_CONNECT_TIMEOUT)
+        if not cast.socket_client or not cast.socket_client.is_connected:
+            raise MolotovCastError(
+                f"Chromecast '{cast_target}' connection timed out after {CAST_CONNECT_TIMEOUT}s"
+            )
         _LOGGER.debug("Chromecast connected, device=%s", getattr(cast, "device", None))
 
         if "cast_agent" not in custom_data and getattr(cast, "device", None):
@@ -276,7 +284,7 @@ def _cast_media_blocking(
             )
 
         _LOGGER.debug("Waiting for media controller to become active...")
-        cast.media_controller.block_until_active()
+        cast.media_controller.block_until_active(timeout=CAST_MEDIA_TIMEOUT)
         _LOGGER.debug("Cast complete")
 
         # Store the cast connection for later control
