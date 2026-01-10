@@ -506,7 +506,7 @@ class MolotovApi:
             try:
                 _LOGGER.debug("Resolving CDN decision from %s", cdn_url)
                 providers_data = await self._request("GET", cdn_url, auth=True)
-                
+
                 # Expecting a list of base URLs
                 if isinstance(providers_data, list) and providers_data:
                     base_url = providers_data[0]
@@ -516,7 +516,9 @@ class MolotovApi:
                         else:
                             final_url = base_url
                         _LOGGER.debug("Resolved stream URL: %s", final_url)
-            except Exception as err:
+            except MolotovAuthError:
+                raise
+            except (MolotovApiError, KeyError, TypeError, IndexError, ValueError) as err:
                 _LOGGER.warning("Failed to resolve CDN decision: %s", err)
 
         # Update the stream dict with the resolved URL
