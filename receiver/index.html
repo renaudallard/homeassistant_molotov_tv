@@ -66,11 +66,11 @@
 
         // --- 2. Event Listeners ---
         playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
-            setTimeout(forceFrenchAudio, 1000); 
+            setTimeout(forceFrenchAudio, 1000);
         });
 
-        // Periodic check in case tracks appear late
-        setInterval(forceFrenchAudio, 5000);
+        // Handle tracks appearing late
+        playerManager.addEventListener(cast.framework.events.EventType.TRACKS_CHANGED, forceFrenchAudio);
 
         // --- 3. Message Interceptors ---
         playerManager.setMessageInterceptor(
