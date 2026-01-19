@@ -69,8 +69,6 @@ When you select a program, you will see a list of targets:
 *   **📺 Official Receiver:** Casts using the official Molotov application. **Use this for Live TV and encrypted content.**
 *   **🏰 Arnor Receiver:** Casts using the custom integration receiver. Useful for unencrypted content or debugging.
 
-> **Tip:** Use the **Refresh Chromecasts** button in the root folder if your device doesn't appear immediately.
-
 ### Dashboard Card
 The integration automatically registers a custom frontend card. When playing locally, the card provides:
 *   Standard video controls.
