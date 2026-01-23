@@ -11,9 +11,12 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 ## ✨ Fonctionnalités
 
 *   **📺 TV en direct & EPG :** Parcourez toutes vos chaînes avec des guides de programmes en temps réel.
+*   **▶️ En direct :** Accédez rapidement à ce qui est diffusé en ce moment.
 *   **⏪ Replay & VOD :** Accédez à la télévision de rattrapage (Catch-up TV) et au contenu de vidéo à la demande associés à vos chaînes.
 *   **📼 Enregistrements :** Visualisez et lisez vos enregistrements dans le cloud (Bookmarks).
-*   **🔍 Recherche :** Recherche intégrée pour les programmes, les personnalités et les chaînes.
+*   **🔍 Recherche avancée :**
+    *   **Entité Texte :** Tapez votre recherche directement depuis le tableau de bord.
+    *   **Clavier virtuel :** Naviguez et recherchez directement dans le navigateur de médias.
 *   **📲 Casting :** Castez en toute fluidité vers les appareils Chromecast avec prise en charge de :
     *   **Récepteur officiel :** Utilise le récepteur natif de Molotov pour une prise en charge complète des DRM (TV en direct).
     *   **Récepteur Arnor :** Une option de récepteur personnalisé et léger (expérimental).
@@ -60,8 +63,18 @@ Cliquez sur **Configurer** sur l'entrée de l'intégration pour accéder aux par
 ### Navigateur de médias
 1.  Ouvrez l'onglet **Médias** dans Home Assistant.
 2.  Sélectionnez **Molotov TV**.
-3.  Naviguez par **Chaînes**, **Enregistrements**, ou utilisez la **Recherche**.
+3.  Naviguez parmi les dossiers principaux :
+    *   **Recherche :** Utilisez le clavier virtuel pour trouver du contenu.
+    *   **En direct :** Voir les programmes en cours de diffusion.
+    *   **Chaînes :** Parcourir la liste de toutes les chaînes.
+    *   **Enregistrements :** Accéder à vos bookmarks.
 4.  Cliquez sur un programme pour voir les détails et les options de lecture.
+
+### Recherche via Entité
+Une entité `text.molotov_tv_recherche` (ou similaire selon le nom de votre configuration) est créée.
+1.  Ajoutez cette entité à votre tableau de bord.
+2.  Entrez votre recherche (ex: "Arte").
+3.  Les résultats seront mis à jour dans le dossier **Recherche** du navigateur de médias.
 
 ### Casting
 Lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
