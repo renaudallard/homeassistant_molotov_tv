@@ -57,7 +57,7 @@ class MolotovSearchText(TextEntity):
     """Text entity for searching Molotov TV content."""
 
     _attr_has_entity_name = True
-    _attr_name = "Search"
+    _attr_name = "Recherche"
     _attr_icon = "mdi:magnify"
     _attr_mode = TextMode.TEXT
     _attr_native_max = 100

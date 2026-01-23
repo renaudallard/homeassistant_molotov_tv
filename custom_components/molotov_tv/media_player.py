@@ -447,7 +447,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
         except MolotovApiError as err:
             _LOGGER.error("Search failed: %s", err)
-            raise HomeAssistantError(f"Search failed: {err}") from err
+            raise HomeAssistantError(f"La recherche a échoué: {err}") from err
 
     def _browse_root(self) -> BrowseMedia:
         return BrowseMedia(
@@ -459,7 +459,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             can_expand=True,
             children=[
                 BrowseMedia(
-                    title="Search",
+                    title="Recherche",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_SEARCH,
                     media_content_type="directory",
@@ -467,7 +467,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                 ),
                 BrowseMedia(
-                    title="Now Playing",
+                    title="En direct",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_NOW_PLAYING,
                     media_content_type="directory",
@@ -475,7 +475,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                 ),
                 BrowseMedia(
-                    title="Channels",
+                    title="Chaînes",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_CHANNELS,
                     media_content_type="directory",
@@ -483,7 +483,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                 ),
                 BrowseMedia(
-                    title="Recordings",
+                    title="Enregistrements",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_RECORDINGS,
                     media_content_type="directory",
@@ -496,16 +496,15 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def _async_browse_now_playing(self, data: EpgData) -> BrowseMedia:
         channels = list(data.channels)
         if not channels:
-            return BrowseMedia(
-                title="Now Playing",
-                media_class=MediaClass.DIRECTORY,
-                media_content_id=MEDIA_NOW_PLAYING,
-                media_content_type="directory",
-                can_play=False,
-                can_expand=True,
-                children=[],
-            )
-
+                    return BrowseMedia(
+                        title="En direct",
+                        media_class=MediaClass.DIRECTORY,
+                        media_content_id=MEDIA_NOW_PLAYING,
+                        media_content_type="directory",
+                        can_play=False,
+                        can_expand=True,
+                        children=[],
+                    )
         probe_now = dt_util.utcnow()
         channels_by_id = {channel.channel_id: channel for channel in channels}
         if _count_channels_with_current(channels, probe_now) < len(channels):
@@ -552,7 +551,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     or channel.poster
                 )
             else:
-                display_title = f"{channel.label} - Live"
+                display_title = f"{channel.label} - Direct"
                 media_id = f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}"
                 media_class = MediaClass.CHANNEL
                 thumb = channel.poster
@@ -570,7 +569,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
         return BrowseMedia(
-            title="Now Playing",
+            title="En direct",
             media_class=MediaClass.DIRECTORY,
             media_content_id=MEDIA_NOW_PLAYING,
             media_content_type="directory",
@@ -633,7 +632,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             for channel in data.channels
         ]
         return BrowseMedia(
-            title="Channels",
+            title="Chaînes",
             media_class=MediaClass.DIRECTORY,
             media_content_id=MEDIA_CHANNELS,
             media_content_type="directory",
@@ -648,7 +647,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             assets = await self._async_fetch_recordings()
             self._recording_cache = (dt_util.utcnow(), assets)
         return self._browse_assets(
-            "Recordings", MEDIA_RECORDINGS, MEDIA_RECORDING_PREFIX, assets
+            "Enregistrements", MEDIA_RECORDINGS, MEDIA_RECORDING_PREFIX, assets
         )
 
     async def _async_browse_search_home(self) -> BrowseMedia:
@@ -659,14 +658,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             cached_at, query, results = search_cache
             if dt_util.utcnow() - cached_at < SEARCH_CACHE_TTL:
                 browse = self._build_search_results_browse(
-                    f"Search: {query}",
+                    f"Recherche: {query}",
                     f"{MEDIA_SEARCH_PREFIX}:{query}",
                     results,
                     show_search=True,
                 )
                 # Insert the keyboard entry point
                 browse.children.insert(0, BrowseMedia(
-                    title="⌨️ Type search...",
+                    title="⌨️ Taper votre recherche...",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
                     media_content_type="directory",
@@ -681,12 +680,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         # Add "Type search" button at the top
         browse = self._build_search_results_browse(
-            "Search", MEDIA_SEARCH, children, show_search=True
+            "Recherche", MEDIA_SEARCH, children, show_search=True
         )
         
         # Insert the keyboard entry point
         browse.children.insert(0, BrowseMedia(
-            title="⌨️ Type search...",
+            title="⌨️ Taper votre recherche...",
             media_class=MediaClass.DIRECTORY,
             media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
             media_content_type="directory",
@@ -703,7 +702,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Action buttons - Always present to maintain layout
         if buffer:
             children.append(BrowseMedia(
-                title=f"🔎 Search for '{buffer}'",
+                title=f"🔎 Recherche pour '{buffer}'",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_PREFIX}:{buffer}",
                 media_content_type="directory",
@@ -711,7 +710,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
             ))
             children.append(BrowseMedia(
-                title="⌫ Backspace",
+                title="⌫ Retour arrière",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer[:-1]}",
                 media_content_type="directory",
@@ -719,7 +718,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
             ))
             children.append(BrowseMedia(
-                title="🗑 Clear",
+                title="🗑 Effacer",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
                 media_content_type="directory",
@@ -728,7 +727,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             ))
         else:
             children.append(BrowseMedia(
-                title="🔎 Type to search...",
+                title="🔎 Taper pour rechercher...",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
                 media_content_type="directory",
@@ -736,7 +735,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
             ))
             children.append(BrowseMedia(
-                title="⌫ Backspace",
+                title="⌫ Retour arrière",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
                 media_content_type="directory",
@@ -744,7 +743,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
             ))
             children.append(BrowseMedia(
-                title="🗑 Clear",
+                title="🗑 Effacer",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
                 media_content_type="directory",
@@ -754,7 +753,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         # Space is always useful
         children.append(BrowseMedia(
-            title="␣ Space",
+            title="␣ Espace",
             media_class=MediaClass.DIRECTORY,
             media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer} ",
             media_content_type="directory",
@@ -786,7 +785,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             ))
 
         return BrowseMedia(
-            title=f"Search: {buffer}█" if buffer else "Search Keyboard",
+            title=f"Recherche: {buffer}█" if buffer else "Clavier de recherche",
             media_class=MediaClass.DIRECTORY,
             media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}",
             media_content_type="directory",
@@ -851,21 +850,20 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         can_play=False,
                         can_expand=True,
                         thumbnail=asset.thumbnail or asset.poster,
-                    )
-                )
-
-        if not children:
-            children.append(
-                BrowseMedia(
-                    title="No results found",
-                    media_class=MediaClass.DIRECTORY,
-                    media_content_id=MEDIA_SEARCH,
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=False,
-                )
-            )
-
+                                    )
+                                )
+                    
+                            if not children:
+                                children.append(
+                                    BrowseMedia(
+                                        title="Aucun résultat trouvé",
+                                        media_class=MediaClass.DIRECTORY,
+                                        media_content_id=MEDIA_SEARCH,
+                                        media_content_type="directory",
+                                        can_play=False,
+                                        can_expand=False,
+                                    )
+                                )
         browse = BrowseMedia(
             title=title,
             media_class=MediaClass.DIRECTORY,
@@ -894,7 +892,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 and dt_util.utcnow() - cached_at < SEARCH_CACHE_TTL
             ):
                 return self._build_search_results_browse(
-                    f"Search: {query}",
+                    f"Recherche: {query}",
                     f"{MEDIA_SEARCH_PREFIX}:{query}",
                     cached_results,
                     show_search=True,
@@ -908,7 +906,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # Cache results
             self._set_search_cache(query, results)
             return self._build_search_results_browse(
-                f"Search: {query}",
+                f"Recherche: {query}",
                 f"{MEDIA_SEARCH_PREFIX}:{query}",
                 results,
                 show_search=True,
@@ -916,7 +914,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             _LOGGER.warning("Search failed: %s", err)
             return BrowseMedia(
-                title=f"Search: {query}",
+                title=f"Recherche: {query}",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=f"{MEDIA_SEARCH_PREFIX}:{query}",
                 media_content_type="directory",
@@ -924,7 +922,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
                 children=[
                     BrowseMedia(
-                        title=f"Search failed: {err}",
+                        title=f"Échec de la recherche: {err}",
                         media_class=MediaClass.DIRECTORY,
                         media_content_id=MEDIA_SEARCH,
                         media_content_type="directory",
@@ -1044,7 +1042,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if not children:
             children.append(
                 BrowseMedia(
-                    title="No episodes available",
+                    title="Aucun épisode disponible",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_ROOT,
                     media_content_type="directory",
@@ -1053,7 +1051,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
-        display_title = title or "Episodes"
+        display_title = title or "Épisodes"
         return BrowseMedia(
             title=display_title,
             media_class=MediaClass.DIRECTORY,
@@ -1116,7 +1114,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if _find_current_program(channel, now) is None:
             children.append(
                 BrowseMedia(
-                    title=f"▶ Live - {channel.label}",
+                    title=f"▶ Direct - {channel.label}",
                     media_class=MediaClass.CHANNEL,
                     media_content_id=f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}",
                     media_content_type=MEDIA_LIVE_PREFIX,
@@ -1371,7 +1369,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if not children:
             children.append(
                 BrowseMedia(
-                    title=f"No {title.lower()} available",
+                    title=f"Aucun {title.lower()} disponible",
                     media_class=MediaClass.DIRECTORY,
                     media_content_id=MEDIA_ROOT,
                     media_content_type="directory",
@@ -1393,7 +1391,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def _async_browse_cast_targets(
         self, data: EpgData, base_media_id: str
     ) -> BrowseMedia:
-        title = "Select Chromecast"
+        title = "Sélectionner un Chromecast"
         thumbnail = None
         if base_media_id.startswith(f"{MEDIA_PROGRAM_PREFIX}:"):
             parts = base_media_id.split(":")
@@ -1410,7 +1408,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             channel_id = base_media_id.split(":", 1)[1]
             channel = _find_channel(data, channel_id)
             if channel:
-                title = f"Live - {channel.label}"
+                title = f"Direct - {channel.label}"
                 thumbnail = channel.poster
         elif base_media_id.startswith(
             (f"{MEDIA_REPLAY_PREFIX}:", f"{MEDIA_RECORDING_PREFIX}:", f"{MEDIA_SEARCH_RESULT_PREFIX}:", f"{MEDIA_EPISODE_PREFIX}:")
@@ -1429,7 +1427,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Add local play option
         children.append(
             BrowseMedia(
-                title="Play on this device",
+                title="Lire sur cet appareil",
                 media_class=MediaClass.VIDEO,
                 media_content_id=f"play_local:{base_media_id}",
                 media_content_type="video",
@@ -1449,7 +1447,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 # Add Native (Molotov) option
                 native_options.append(
                     BrowseMedia(
-                        title=f"Cast to {name} (Molotov)",
+                        title=f"Caster sur {name} (Molotov)",
                         media_class=MediaClass.VIDEO,
                         media_content_id=(
                             f"{MEDIA_CAST_PREFIX}:{encoded_target}"
@@ -1463,7 +1461,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 # Add Custom Receiver option (Arnor)
                 custom_options.append(
                     BrowseMedia(
-                        title=f"Cast to {name} (Arnor)",
+                        title=f"Caster sur {name} (Arnor)",
                         media_class=MediaClass.VIDEO,
                         media_content_id=(
                             f"{MEDIA_CAST_PREFIX}:{encoded_target}"
@@ -1478,7 +1476,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 # Default behavior (Native only)
                 native_options.append(
                     BrowseMedia(
-                        title=f"Cast to {name}",
+                        title=f"Caster sur {name}",
                         media_class=MediaClass.VIDEO,
                         media_content_id=(
                             f"{MEDIA_CAST_PREFIX}:{encoded_target}"
@@ -1493,7 +1491,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if native_options:
             children.append(
                 BrowseMedia(
-                    title="Official Receiver",
+                    title="Récepteur officiel",
                     media_class=MediaClass.CHANNEL,
                     media_content_id="separator:native",
                     media_content_type="separator",
@@ -1506,7 +1504,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if custom_options:
             children.append(
                 BrowseMedia(
-                    title="Arnor Receiver",
+                    title="Récepteur Arnor",
                     media_class=MediaClass.CHANNEL,
                     media_content_id="separator:custom",
                     media_content_type="separator",

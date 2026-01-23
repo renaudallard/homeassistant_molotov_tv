@@ -1,0 +1,31 @@
+{
+  "title": "Molotov TV",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connexion à Molotov",
+        "description": "Connectez-vous avec votre compte Molotov.",
+        "data": {
+          "email": "Email",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Échec de la connexion à Molotov.",
+      "invalid_auth": "Email ou mot de passe invalide."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Sélectionnez les lecteurs média Chromecast ou ajoutez des noms d'hôtes pour le casting par lecture.",
+        "data": {
+          "cast_targets": "Lecteurs média Chromecast",
+          "cast_hosts": "Hôtes Chromecast (un par ligne, optionnel nom=hôte)"
+        }
+      }
+    }
+  }
+}
