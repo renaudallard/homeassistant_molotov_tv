@@ -73,9 +73,12 @@ def _extract_user_message(error_body: str | None) -> str | None:
         if isinstance(data, dict):
             error = data.get("error", data)
             if isinstance(error, dict):
-                return error.get("user_message")
-    except (json.JSONDecodeError, TypeError):
-        pass
+                user_msg = error.get("user_message")
+                if user_msg:
+                    _LOGGER.debug("Extracted user_message: %s", user_msg[:100] if user_msg else None)
+                return user_msg
+    except (json.JSONDecodeError, TypeError) as err:
+        _LOGGER.debug("Failed to extract user_message from error body: %s", err)
     return None
 
 

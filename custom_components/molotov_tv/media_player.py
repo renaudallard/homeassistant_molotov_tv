@@ -404,8 +404,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             self._attr_state = STATE_IDLE
             self._current_stream = None
+            _LOGGER.debug(
+                "MolotovApiError caught: user_message=%r, str=%s",
+                err.user_message,
+                str(err)[:200],
+            )
             message = err.user_message or str(err)
-            raise HomeAssistantError(f"Failed to play: {message}") from err
+            raise HomeAssistantError(f"Échec de lecture: {message}") from err
 
     async def _async_perform_search(self, query: str) -> None:
         """Perform a search and cache results for browsing."""
@@ -1116,9 +1121,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 elif video_format == "HLS":
                     custom_data["content_type"] = "application/x-mpegurl"
 
+            except MolotovApiError as err:
+                _LOGGER.error("Failed to resolve stream for custom receiver: %s", err)
+                message = err.user_message or str(err)
+                raise HomeAssistantError(f"Échec de lecture: {message}") from err
             except Exception as err:
                 _LOGGER.error("Failed to resolve stream for custom receiver: %s", err)
-                raise HomeAssistantError(f"Failed to resolve stream: {err}") from err
+                raise HomeAssistantError(f"Échec de lecture: {err}") from err
         else:
             app_id = self._api.session_state.cast_app_id
             if not app_id:
