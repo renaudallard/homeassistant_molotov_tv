@@ -427,7 +427,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             self._attr_state = STATE_IDLE
             self._current_stream = None
-            raise HomeAssistantError(f"Failed to play locally: {err}") from err
+            message = err.user_message or str(err)
+            raise HomeAssistantError(f"Failed to play: {message}") from err
 
     async def _async_perform_search(self, query: str) -> None:
         """Perform a search and cache results for browsing."""

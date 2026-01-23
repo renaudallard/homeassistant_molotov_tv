@@ -64,6 +64,21 @@ async def _read_error_body(resp) -> str | None:
     return _truncate_text(body)
 
 
+def _extract_user_message(error_body: str | None) -> str | None:
+    """Extract user_message from JSON error body if present."""
+    if not error_body:
+        return None
+    try:
+        data = json.loads(error_body)
+        if isinstance(data, dict):
+            error = data.get("error", data)
+            if isinstance(error, dict):
+                return error.get("user_message")
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
+
+
 def _extract_json_from_zip(raw: bytes) -> bytes:
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         json_entries = [
@@ -126,6 +141,10 @@ RETRY_DELAY_SECONDS = 1.0
 
 class MolotovApiError(Exception):
     """Generic Molotov API error."""
+
+    def __init__(self, message: str, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.user_message = user_message
 
 
 class MolotovAuthError(MolotovApiError):
@@ -914,6 +933,7 @@ class MolotovApi:
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
+                    user_message = _extract_user_message(error_body)
                     if error_body:
                         _LOGGER.error(
                             "Molotov API error: %s %s (%s %s): %s",
@@ -933,7 +953,8 @@ class MolotovApi:
                         )
                     raise MolotovApiError(
                         f"Molotov API request failed: {method} {url} ({resp.status} {reason})"
-                        + (f": {error_body}" if error_body else "")
+                        + (f": {error_body}" if error_body else ""),
+                        user_message=user_message,
                     )
                 content_type = resp.headers.get("content-type", "")
                 if "json" not in content_type:
@@ -1024,6 +1045,7 @@ class MolotovApi:
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
+                    user_message = _extract_user_message(error_body)
                     if error_body:
                         _LOGGER.error(
                             "Molotov API error: %s %s (%s %s): %s",
@@ -1043,7 +1065,8 @@ class MolotovApi:
                         )
                     raise MolotovApiError(
                         f"Molotov API request failed: {method} {url} ({resp.status} {reason})"
-                        + (f": {error_body}" if error_body else "")
+                        + (f": {error_body}" if error_body else ""),
+                        user_message=user_message,
                     )
                 return await resp.read()
         except ClientResponseError as err:
