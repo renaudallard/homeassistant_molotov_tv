@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 from homeassistant.components.frontend import add_extra_js_url
@@ -104,6 +105,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Molotov TV frontend player registered")
     except Exception as err:
         _LOGGER.warning("Failed to register custom card JS: %s", err)
+
+    # Pre-import platform modules in executor to avoid blocking the event loop
+    for platform in PLATFORMS:
+        await hass.async_add_import_executor_job(
+            importlib.import_module, f".{platform}", __name__
+        )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

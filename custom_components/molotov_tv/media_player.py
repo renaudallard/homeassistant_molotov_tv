@@ -850,20 +850,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         can_play=False,
                         can_expand=True,
                         thumbnail=asset.thumbnail or asset.poster,
-                                    )
-                                )
-                    
-                            if not children:
-                                children.append(
-                                    BrowseMedia(
-                                        title="Aucun résultat trouvé",
-                                        media_class=MediaClass.DIRECTORY,
-                                        media_content_id=MEDIA_SEARCH,
-                                        media_content_type="directory",
-                                        can_play=False,
-                                        can_expand=False,
-                                    )
-                                )
+                    )
+                )
+
+        if not children:
+            children.append(
+                BrowseMedia(
+                    title="Aucun résultat trouvé",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_SEARCH,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+
         browse = BrowseMedia(
             title=title,
             media_class=MediaClass.DIRECTORY,
