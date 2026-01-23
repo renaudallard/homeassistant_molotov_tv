@@ -33,11 +33,16 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 
 ### Option 1 : HACS (Recommandé)
 
+Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez l'ajouter manuellement comme dépôt personnalisé.
+
 1.  Ouvrez **HACS** dans Home Assistant.
-2.  Cliquez sur l'icône de menu (en haut à droite) > **Custom repositories**.
-3.  Ajoutez `https://github.com/renaudallard/homeassistant_molotov.tv` en tant qu'**Integration**.
-4.  Cliquez sur **Download** sur la carte "Molotov TV".
-5.  Redémarrez Home Assistant.
+2.  Cliquez sur les trois petits points (menu) en haut à droite.
+3.  Sélectionnez **Dépôts personnalisés** (Custom repositories).
+4.  Dans le champ "Dépôt", collez l'URL : `https://github.com/renaudallard/homeassistant_molotov.tv`
+5.  Sélectionnez **Intégration** dans la liste déroulante "Catégorie".
+6.  Cliquez sur **Ajouter**.
+7.  Une fois ajouté, recherchez "Molotov TV" dans HACS et cliquez sur **Télécharger**.
+8.  Redémarrez Home Assistant.
 
 ### Option 2 : Installation manuelle
 
