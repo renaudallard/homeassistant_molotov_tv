@@ -508,14 +508,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         probe_now = dt_util.utcnow()
         channels_by_id = {channel.channel_id: channel for channel in channels}
         if _count_channels_with_current(channels, probe_now) < len(channels):
-            try:
-                live_home = await self._api.async_get_live_home_channels()
-                live_data = _parse_epg(live_home)
-                _merge_epg_channels(channels_by_id, live_data.channels)
-            except MolotovApiError as err:
-                _LOGGER.debug("Now playing live home refresh failed: %s", err)
+            # Fetch live_home and individual channel programs in parallel
+            async def fetch_live_home() -> None:
+                try:
+                    live_home = await self._api.async_get_live_home_channels()
+                    live_data = _parse_epg(live_home)
+                    _merge_epg_channels(channels_by_id, live_data.channels)
+                except MolotovApiError as err:
+                    _LOGGER.debug("Now playing live home refresh failed: %s", err)
 
-        await self._async_populate_now_playing_programs(list(channels_by_id.values()))
+            await asyncio.gather(
+                fetch_live_home(),
+                self._async_populate_now_playing_programs(
+                    list(channels_by_id.values())
+                ),
+            )
+        else:
+            await self._async_populate_now_playing_programs(
+                list(channels_by_id.values())
+            )
 
         now = dt_util.utcnow()
         children: list[BrowseMedia] = []
