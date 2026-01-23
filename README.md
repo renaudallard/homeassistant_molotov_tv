@@ -1,89 +1,89 @@
-# Molotov TV for Home Assistant
+# Molotov TV pour Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![License](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/renaudallard/homeassistant_molotov.tv)
+[![Maintenance](https://img.shields.io/badge/Maintenu%3F-oui-green.svg)](https://github.com/renaudallard/homeassistant_molotov.tv)
 
-Unofficial custom integration that brings **Molotov TV** to your Home Assistant media browser. Browse channels, watch live TV, access replays, and cast content directly to your Chromecast devices.
+Intégration personnalisée non officielle qui apporte **Molotov TV** dans le navigateur de médias de votre Home Assistant. Parcourez les chaînes, regardez la télévision en direct, accédez aux replays et castez du contenu directement sur vos appareils Chromecast.
 
 ---
 
-## ✨ Features
+## ✨ Fonctionnalités
 
-*   **📺 Live TV & EPG:** Browse all your channels with real-time program guides.
-*   **⏪ Replay & VOD:** Access catch-up TV and Video on Demand content associated with your channels.
-*   **📼 Recordings:** View and play your cloud recordings (Bookmarks).
-*   **🔍 Search:** Integrated search for programs, personalities, and channels.
-*   **📲 Casting:** Seamlessly cast to Chromecast devices with support for:
-    *   **Official Receiver:** Uses Molotov's native receiver for full DRM support (Live TV).
-    *   **Arnor Receiver:** A custom, lightweight receiver option (experimental).
-*   **💻 Local Playback:** Watch directly in your Home Assistant dashboard browser with a custom video card.
-*   **🔄 Auto-Discovery:** Automatically finds Chromecast devices on your network.
+*   **📺 TV en direct & EPG :** Parcourez toutes vos chaînes avec des guides de programmes en temps réel.
+*   **⏪ Replay & VOD :** Accédez à la télévision de rattrapage (Catch-up TV) et au contenu de vidéo à la demande associés à vos chaînes.
+*   **📼 Enregistrements :** Visualisez et lisez vos enregistrements dans le cloud (Bookmarks).
+*   **🔍 Recherche :** Recherche intégrée pour les programmes, les personnalités et les chaînes.
+*   **📲 Casting :** Castez en toute fluidité vers les appareils Chromecast avec prise en charge de :
+    *   **Récepteur officiel :** Utilise le récepteur natif de Molotov pour une prise en charge complète des DRM (TV en direct).
+    *   **Récepteur Arnor :** Une option de récepteur personnalisé et léger (expérimental).
+*   **💻 Lecture locale :** Regardez directement dans le navigateur de votre tableau de bord Home Assistant grâce à une carte vidéo personnalisée.
+*   **🔄 Auto-découverte :** Trouve automatiquement les appareils Chromecast sur votre réseau.
 
-## 📋 Requirements
+## 📋 Prérequis
 
-*   **Home Assistant** (version 2025.10.0 or later).
-*   **Molotov Premium or VIP Account:** This integration requires a paid subscription. Free accounts are not supported.
-*   **Chromecast Device:** Required for casting content to your TV.
+*   **Home Assistant** (version 2025.10.0 ou ultérieure).
+*   **Compte Molotov Premium ou VIP :** Cette intégration nécessite un abonnement payant. Les comptes gratuits ne sont pas pris en charge.
+*   **Appareil Chromecast :** Requis pour caster du contenu sur votre téléviseur.
 
 ## 🚀 Installation
 
-### Option 1: HACS (Recommended)
+### Option 1 : HACS (Recommandé)
 
-1.  Open **HACS** in Home Assistant.
-2.  Click the menu icon (top right) > **Custom repositories**.
-3.  Add `https://github.com/renaudallard/homeassistant_molotov.tv` as an **Integration**.
-4.  Click **Download** on the "Molotov TV" card.
-5.  Restart Home Assistant.
+1.  Ouvrez **HACS** dans Home Assistant.
+2.  Cliquez sur l'icône de menu (en haut à droite) > **Custom repositories**.
+3.  Ajoutez `https://github.com/renaudallard/homeassistant_molotov.tv` en tant qu'**Integration**.
+4.  Cliquez sur **Download** sur la carte "Molotov TV".
+5.  Redémarrez Home Assistant.
 
-### Option 2: Manual Installation
+### Option 2 : Installation manuelle
 
-1.  Download the latest release.
-2.  Copy the `custom_components/molotov_tv` folder into your Home Assistant's `config/custom_components/` directory.
-3.  Restart Home Assistant.
+1.  Téléchargez la dernière version.
+2.  Copiez le dossier `custom_components/molotov_tv` dans le répertoire `config/custom_components/` de votre Home Assistant.
+3.  Redémarrez Home Assistant.
 
 ## ⚙️ Configuration
 
-1.  Navigate to **Settings** > **Devices & Services**.
-2.  Click **+ Add Integration** and search for **Molotov TV**.
-3.  Enter your **Molotov Email** and **Password**.
-    *   *Note: If your account is not Premium/VIP, setup will fail with an error message.*
+1.  Allez dans **Paramètres** > **Appareils et services**.
+2.  Cliquez sur **+ Ajouter une intégration** et recherchez **Molotov TV**.
+3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
+    *   *Note : Si votre compte n'est pas Premium/VIP, la configuration échouera avec un message d'erreur.*
 
-### Options & Tuning
+### Options & Ajustements
 
-Click **Configure** on the integration entry to access settings:
-*   **Cast Targets:** Manually select specific `media_player` entities if auto-discovery misses them.
-*   **Cast Hosts:** Manually add IP addresses of Chromecast devices (one per line) if they are on a different subnet.
+Cliquez sur **Configurer** sur l'entrée de l'intégration pour accéder aux paramètres :
+*   **Cibles de cast :** Sélectionnez manuellement des entités `media_player` spécifiques si l'auto-découverte les manque.
+*   **Hôtes de cast :** Ajoutez manuellement les adresses IP des appareils Chromecast (une par ligne) s'ils se trouvent sur un sous-réseau différent.
 
-## 🎮 Usage
+## 🎮 Utilisation
 
-### Media Browser
-1.  Open the **Media** tab in Home Assistant.
-2.  Select **Molotov TV**.
-3.  Browse by **Channels**, **Recordings**, or use **Search**.
-4.  Click on a program to see details and playback options.
+### Navigateur de médias
+1.  Ouvrez l'onglet **Médias** dans Home Assistant.
+2.  Sélectionnez **Molotov TV**.
+3.  Naviguez par **Chaînes**, **Enregistrements**, ou utilisez la **Recherche**.
+4.  Cliquez sur un programme pour voir les détails et les options de lecture.
 
 ### Casting
-When you select a program, you will see a list of targets:
-*   **Play on this device:** Plays locally in your browser.
-*   **📺 Official Receiver:** Casts using the official Molotov application. **Use this for Live TV and encrypted content.**
-*   **🏰 Arnor Receiver:** Casts using the custom integration receiver. Useful for unencrypted content or debugging.
+Lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
+*   **Lire sur cet appareil :** Lit localement dans votre navigateur.
+*   **📺 Récepteur Officiel :** Caste en utilisant l'application officielle Molotov. **À utiliser pour la TV en direct et le contenu crypté.**
+*   **🏰 Récepteur Arnor :** Caste en utilisant le récepteur personnalisé de l'intégration. Utile pour le contenu non crypté ou le débogage.
 
-### Dashboard Card
-The integration automatically registers a custom frontend card. When playing locally, the card provides:
-*   Standard video controls.
-*   Improved buffering settings for stability.
-*   Error messages directly on the video overlay if playback fails.
+### Carte de tableau de bord
+L'intégration enregistre automatiquement une carte frontend personnalisée. Lors d'une lecture locale, la carte fournit :
+*   Des contrôles vidéo standards.
+*   Des paramètres de mise en mémoire tampon améliorés pour la stabilité.
+*   Des messages d'erreur directement sur la vidéo si la lecture échoue.
 
-## 🛠️ Advanced
+## 🛠️ Avancé
 
-### Custom Receiver Hosting
-The "Arnor Receiver" uses a hosted web receiver. The source code is available in the `receiver/` directory of this repository. Advanced users can host their own version by modifying `const.py` and registering a new App ID with Google.
+### Hébergement du récepteur personnalisé
+Le "Récepteur Arnor" utilise un récepteur web hébergé. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
 
-## ⚠️ Disclaimer
+## ⚠️ Clause de non-responsabilité
 
-This project is an unofficial integration and is **not affiliated with, endorsed by, or associated with Molotov TV**. All product names, logos, and brands are property of their respective owners.
+Ce projet est une intégration non officielle et n'est **pas affilié à, approuvé par, ou associé à Molotov TV**. Tous les noms de produits, logos et marques sont la propriété de leurs détenteurs respectifs.
 
-## 📄 License
+## 📄 Licence
 
-This project is licensed under the BSD 2-Clause License. See the [LICENSE](LICENSE) file for details.
+Ce projet est sous licence BSD 2-Clause. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
