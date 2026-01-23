@@ -965,6 +965,10 @@ class MolotovApi:
                         f"Unexpected response type from Molotov: {content_type or 'unknown'}"
                     )
                 return await resp.json()
+        except MolotovApiError:
+            raise
+        except MolotovAuthError:
+            raise
         except ClientResponseError as err:
             if err.status == 401:
                 raise MolotovAuthError("Invalid credentials") from err
@@ -1072,6 +1076,10 @@ class MolotovApi:
                         user_message=user_message,
                     )
                 return await resp.read()
+        except MolotovApiError:
+            raise
+        except MolotovAuthError:
+            raise
         except ClientResponseError as err:
             if err.status == 401:
                 raise MolotovAuthError("Invalid credentials") from err
