@@ -3131,7 +3131,9 @@ def _discover_cast_targets_blocking(zconf: Any) -> list[str]:
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_chromecasts params: %s", params)
 
-                result = pychromecast.get_chromecasts(timeout=10)
+                result = pychromecast.get_chromecasts(
+                    timeout=10, zeroconf_instance=zconf
+                )
                 if isinstance(result, tuple) and len(result) >= 2:
                     chromecasts, browser = result[0], result[1]
                 else:
@@ -3149,8 +3151,9 @@ def _discover_cast_targets_blocking(zconf: Any) -> list[str]:
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_listed_chromecasts params: %s", params)
 
-                # Try without zconf first
-                result = pychromecast.get_listed_chromecasts()
+                result = pychromecast.get_listed_chromecasts(
+                    zeroconf_instance=zconf
+                )
                 if isinstance(result, tuple) and len(result) >= 2:
                     chromecasts, browser = result[0], result[1]
                 else:
