@@ -73,7 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         email=email,
         password=password,
         environment=environment,
-        language=hass.config.language,
+        language="fr",
     )
 
     try:

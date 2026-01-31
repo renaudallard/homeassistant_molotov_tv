@@ -157,6 +157,6 @@ async def _async_validate_input(hass: HomeAssistant, data: dict) -> None:
         email=data[CONF_EMAIL],
         password=data[CONF_PASSWORD],
         environment=DEFAULT_ENVIRONMENT,
-        language=hass.config.language,
+        language="fr",
     )
     await api.async_login()

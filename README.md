@@ -22,6 +22,7 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
     *   **Récepteur Arnor :** Une option de récepteur personnalisé et léger (expérimental).
 *   **💻 Lecture locale :** Regardez directement dans le navigateur de votre tableau de bord Home Assistant grâce à une carte vidéo personnalisée.
 *   **🔄 Auto-découverte :** Trouve automatiquement les appareils Chromecast sur votre réseau.
+*   **🇫🇷 Audio en français :** La piste audio française (VF) est sélectionnée par défaut lorsqu'elle est disponible.
 
 ## 📋 Prérequis
 
