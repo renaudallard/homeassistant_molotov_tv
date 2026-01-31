@@ -93,10 +93,10 @@ class MolotovSearchText(TextEntity):
 
         # Perform search and store results in shared cache
         try:
-            from .media_player import _extract_search_results
+            from .helpers import extract_search_results
 
             data = await self._api.async_search(value)
-            results = _extract_search_results(data, self._api)
+            results = extract_search_results(data, self._api)
 
             # Store in shared cache
             self._hass.data[DOMAIN][self._entry.entry_id]["search_cache"] = (
