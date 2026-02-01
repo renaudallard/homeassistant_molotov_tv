@@ -1,0 +1,25 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create zip archive
+        run: |
+          cd custom_components
+          zip -r ../molotov_tv.zip molotov_tv
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: molotov_tv
+          path: molotov_tv.zip
+          retention-days: 30
