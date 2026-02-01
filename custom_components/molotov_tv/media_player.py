@@ -87,8 +87,11 @@ from .chromecast import (
     async_attempt_reconnect,
     async_cast_switch_media,
     async_get_cast_position,
+    async_is_our_app_running,
     register_connection_callback,
     unregister_connection_callback,
+    register_app_takeover_callback,
+    unregister_app_takeover_callback,
 )
 from .const import (
     CAST_HEALTH_CHECK_INTERVAL,
@@ -231,12 +234,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         await super().async_added_to_hass()
         # Register for cast connection status updates
         register_connection_callback(self._on_cast_connection_change)
+        register_app_takeover_callback(self._on_app_takeover)
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from hass."""
         await super().async_will_remove_from_hass()
-        # Unregister callback
+        # Unregister callbacks
         unregister_connection_callback(self._on_cast_connection_change)
+        unregister_app_takeover_callback(self._on_app_takeover)
         # Stop health monitor
         await self._async_stop_health_monitor()
 
@@ -256,6 +261,55 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         # Schedule state update (callback may be called from executor thread)
         self.hass.loop.call_soon_threadsafe(self.async_schedule_update_ha_state)
+
+    def _on_app_takeover(self, host: str, new_app_id: str | None) -> None:
+        """Handle app takeover events from chromecast module."""
+        if host != self._active_cast_target:
+            return
+
+        _LOGGER.info(
+            "Another app took over Chromecast %s (new app: %s), ending session",
+            host,
+            new_app_id,
+        )
+
+        # Schedule async cleanup on the event loop
+        self.hass.loop.call_soon_threadsafe(
+            lambda: self.hass.async_create_task(self._async_end_session_takeover())
+        )
+
+    async def _async_end_session_takeover(self) -> None:
+        """End session gracefully when another app takes over."""
+        _LOGGER.debug("Cleaning up session after app takeover")
+        await self._async_stop_health_monitor()
+
+        # Save resume position if applicable
+        if (
+            self._current_content_id
+            and not self._current_is_live
+            and self._media_position is not None
+            and self._media_duration is not None
+        ):
+            await self._resume_store.async_save_position(
+                self._current_content_id,
+                self._media_position,
+                self._media_duration,
+                self._attr_media_title,
+            )
+
+        # Clear cast state
+        self._active_cast_entity = None
+        self._active_cast_target = None
+        self._current_stream = None
+        self._cast_connected = False
+        self._cast_connection_error = "Session ended: another app took over"
+        self._current_content_id = None
+        self._current_is_live = False
+        self._media_position = None
+        self._media_duration = None
+        self._media_position_updated_at = None
+        self._attr_state = STATE_IDLE
+        self.async_write_ha_state()
 
     async def _async_start_health_monitor(self) -> None:
         """Start periodic cast health monitoring."""
@@ -282,9 +336,27 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_stop_health_monitor()
             return
 
-        connected = await async_check_cast_health(self.hass, self._active_cast_target)
+        # First check if our app is still running (detects app takeover)
+        our_app_running = await async_is_our_app_running(
+            self.hass, self._active_cast_target
+        )
 
-        if not connected and self._cast_connected:
+        if not our_app_running and self._cast_connected:
+            # Check if it's a connection issue or app takeover
+            connected = await async_check_cast_health(
+                self.hass, self._active_cast_target
+            )
+
+            if connected:
+                # Connection OK but different app - another app took over
+                _LOGGER.info(
+                    "Another app took over Chromecast %s, ending session",
+                    self._active_cast_target,
+                )
+                await self._async_end_session_takeover()
+                return
+
+            # Connection lost - try to reconnect
             _LOGGER.warning(
                 "Cast connection lost to %s, attempting reconnect",
                 self._active_cast_target,
@@ -301,20 +373,51 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._attr_state = STATE_PLAYING
                 self.async_write_ha_state()
             else:
-                _LOGGER.error("Failed to reconnect to %s", self._active_cast_target)
-                self._cast_connection_error = "Reconnection failed"
-                self._attr_state = STATE_IDLE
-                self._active_cast_target = None
-                self._active_cast_entity = None
-                await self._async_stop_health_monitor()
-                self.async_write_ha_state()
+                _LOGGER.warning(
+                    "Failed to reconnect to %s - device may be powered off",
+                    self._active_cast_target,
+                )
+                await self._async_end_session_unreachable()
 
-        elif connected and not self._cast_connected:
+        elif our_app_running and not self._cast_connected:
             # Connection restored (possibly from external reconnect)
             _LOGGER.info("Cast connection restored to %s", self._active_cast_target)
             self._cast_connected = True
             self._cast_connection_error = None
             self.async_write_ha_state()
+
+    async def _async_end_session_unreachable(self) -> None:
+        """End session when Chromecast becomes unreachable."""
+        _LOGGER.debug("Cleaning up session - Chromecast unreachable")
+        await self._async_stop_health_monitor()
+
+        # Save resume position if applicable
+        if (
+            self._current_content_id
+            and not self._current_is_live
+            and self._media_position is not None
+            and self._media_duration is not None
+        ):
+            await self._resume_store.async_save_position(
+                self._current_content_id,
+                self._media_position,
+                self._media_duration,
+                self._attr_media_title,
+            )
+
+        # Clear cast state
+        self._active_cast_entity = None
+        self._active_cast_target = None
+        self._current_stream = None
+        self._cast_connected = False
+        self._cast_connection_error = "Session ended: Chromecast unreachable"
+        self._current_content_id = None
+        self._current_is_live = False
+        self._media_position = None
+        self._media_duration = None
+        self._media_position_updated_at = None
+        self._attr_state = STATE_IDLE
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):

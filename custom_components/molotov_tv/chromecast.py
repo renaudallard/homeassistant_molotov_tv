@@ -76,6 +76,11 @@ ConnectionStatusCallback = Callable[[str, bool], None]
 _connection_callbacks: list[ConnectionStatusCallback] = []
 _callbacks_lock = threading.Lock()
 
+# App takeover callbacks: list of (host, new_app_id) -> None
+AppTakeoverCallback = Callable[[str, str | None], None]
+_app_takeover_callbacks: list[AppTakeoverCallback] = []
+_app_callbacks_lock = threading.Lock()
+
 
 class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
@@ -188,6 +193,87 @@ def _notify_connection_status(host: str, connected: bool) -> None:
             callback(host, connected)
         except Exception as err:
             _LOGGER.warning("Connection callback failed: %s", err)
+
+
+def register_app_takeover_callback(callback: AppTakeoverCallback) -> None:
+    """Register a callback for app takeover events."""
+    with _app_callbacks_lock:
+        if callback not in _app_takeover_callbacks:
+            _app_takeover_callbacks.append(callback)
+
+
+def unregister_app_takeover_callback(callback: AppTakeoverCallback) -> None:
+    """Unregister an app takeover callback."""
+    with _app_callbacks_lock:
+        if callback in _app_takeover_callbacks:
+            _app_takeover_callbacks.remove(callback)
+
+
+def _notify_app_takeover(host: str, new_app_id: str | None) -> None:
+    """Notify all registered callbacks of app takeover."""
+    with _app_callbacks_lock:
+        callbacks = list(_app_takeover_callbacks)
+    for callback in callbacks:
+        try:
+            callback(host, new_app_id)
+        except Exception as err:
+            _LOGGER.warning("App takeover callback failed: %s", err)
+
+
+def get_current_app_id(host: str) -> str | None:
+    """Get the app ID currently running on the Chromecast."""
+    conn = get_cast_connection(host)
+    if not conn or not conn.cast:
+        return None
+    try:
+        cast = conn.cast
+        # Check receiver status for current app
+        if hasattr(cast, "status") and cast.status:
+            app_id = getattr(cast.status, "app_id", None)
+            return app_id
+        return None
+    except Exception as err:
+        _LOGGER.debug("Failed to get current app ID for %s: %s", host, err)
+        return None
+
+
+def is_our_app_running(host: str) -> bool:
+    """Check if our expected app is still running on the Chromecast.
+
+    Returns True if:
+    - We have an active connection with an expected app_id
+    - The current running app matches our expected app
+    Returns False if another app has taken over or connection lost.
+    """
+    conn = get_cast_connection(host)
+    if not conn:
+        return False
+
+    expected_app = conn.app_id
+    if not expected_app:
+        # No expected app set, assume OK if connected
+        return is_cast_connected(host)
+
+    current_app = get_current_app_id(host)
+    if current_app is None:
+        # Can't determine, check connection instead
+        return is_cast_connected(host)
+
+    if current_app != expected_app:
+        _LOGGER.debug(
+            "App takeover detected on %s: expected %s, got %s",
+            host,
+            expected_app,
+            current_app,
+        )
+        return False
+
+    return True
+
+
+async def async_is_our_app_running(hass: HomeAssistant, host: str) -> bool:
+    """Check if our app is still running asynchronously."""
+    return await hass.async_add_executor_job(is_our_app_running, host)
 
 
 def is_cast_connected(host: str) -> bool:

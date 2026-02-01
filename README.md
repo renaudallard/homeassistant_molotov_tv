@@ -98,6 +98,8 @@ L'intégration enregistre automatiquement une carte frontend personnalisée. Lor
 L'intégration surveille automatiquement la connexion avec votre Chromecast pendant la lecture :
 *   **Vérification périodique :** La connexion est vérifiée toutes les 30 secondes.
 *   **Reconnexion automatique :** En cas de perte de connexion, l'intégration tente de se reconnecter automatiquement (jusqu'à 3 tentatives).
+*   **Détection de prise de contrôle :** Si une autre application (YouTube, Netflix, etc.) prend le contrôle du Chromecast, la session Molotov se termine proprement sans tentative de reconnexion inutile.
+*   **Arrêt intelligent :** Si le Chromecast est éteint ou inaccessible, l'intégration arrête automatiquement les tentatives de connexion après les échecs de reconnexion.
 *   **Attributs d'état :** Les attributs suivants sont exposés pendant le casting :
     *   `cast_target` : L'adresse IP du Chromecast actif.
     *   `cast_connected` : `true` si la connexion est active, `false` sinon.
