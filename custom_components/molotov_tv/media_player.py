@@ -211,6 +211,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Content tracking for quick switch and resume
         self._current_content_id: str | None = None
         self._current_is_live: bool = False
+        # Media position tracking
+        self._media_position: float | None = None
+        self._media_duration: float | None = None
+        self._media_position_updated_at: datetime | None = None
 
     @property
     def device_info(self):
@@ -577,6 +581,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._attr_state = STATE_PLAYING
                 self._current_content_id = media_id
                 self._current_is_live = is_live
+                # Reset position tracking for new content
+                self._media_position = 0.0
+                self._media_duration = None
+                self._media_position_updated_at = dt_util.utcnow()
                 self.async_write_ha_state()
                 _LOGGER.info("Quick switched to: %s", title)
                 return True
@@ -1230,6 +1238,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Return available sound modes."""
         return list(self._tracks.keys()) if self._tracks else None
 
+    @property
+    def media_position(self) -> float | None:
+        """Return current playback position in seconds."""
+        return self._media_position
+
+    @property
+    def media_duration(self) -> float | None:
+        """Return total media duration in seconds."""
+        return self._media_duration
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        """Return when position was last updated."""
+        return self._media_position_updated_at
+
     async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Select sound mode."""
         info = self._tracks.get(sound_mode)
@@ -1243,6 +1266,31 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if not status:
             return
 
+        # Update media position and duration
+        current_time = getattr(status, "current_time", None)
+        duration = getattr(status, "duration", None)
+
+        if current_time is not None:
+            self._media_position = float(current_time)
+            self._media_position_updated_at = dt_util.utcnow()
+
+        if duration is not None and duration > 0:
+            self._media_duration = float(duration)
+
+        # Update player state from cast status
+        player_state = getattr(status, "player_state", None)
+        if player_state == "PLAYING":
+            self._attr_state = STATE_PLAYING
+        elif player_state == "PAUSED":
+            self._attr_state = STATE_PAUSED
+        elif player_state == "IDLE" and self._active_cast_target:
+            # Media finished or stopped
+            self._attr_state = STATE_IDLE
+            self._media_position = None
+            self._media_duration = None
+            self._media_position_updated_at = None
+
+        # Handle track information
         raw_tracks = getattr(status, "tracks", [])
         active_ids = getattr(status, "active_track_ids", [])
 
@@ -1275,7 +1323,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         self._current_track_id = info["id"]
                         break
 
-            self.schedule_update_ha_state()
+        self.schedule_update_ha_state()
 
     async def _async_cast_media(
         self,
@@ -1398,6 +1446,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._cast_connection_error = None
             self._current_content_id = media_id
             self._current_is_live = is_live
+            # Initialize position (will be updated by status callback)
+            self._media_position = 0.0
+            self._media_position_updated_at = dt_util.utcnow()
+            self._media_duration = None  # Will be set by status callback
 
             await async_cast_register_listener(
                 self.hass, resolved_target, self._on_cast_status
@@ -1590,6 +1642,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._cast_connection_error = None
         self._current_content_id = None
         self._current_is_live = False
+        self._media_position = None
+        self._media_duration = None
+        self._media_position_updated_at = None
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
@@ -1607,6 +1662,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Send seek command to active cast."""
         if self._active_cast_target:
             await async_cast_seek(self.hass, self._active_cast_target, position)
+            # Update local position immediately for responsive UI
+            self._media_position = position
+            self._media_position_updated_at = dt_util.utcnow()
+            self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level on active cast."""
