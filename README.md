@@ -94,6 +94,15 @@ L'intégration enregistre automatiquement une carte frontend personnalisée. Lor
 *   Des paramètres de mise en mémoire tampon améliorés pour la stabilité.
 *   Des messages d'erreur directement sur la vidéo si la lecture échoue.
 
+### Fiabilité de connexion Chromecast
+L'intégration surveille automatiquement la connexion avec votre Chromecast pendant la lecture :
+*   **Vérification périodique :** La connexion est vérifiée toutes les 30 secondes.
+*   **Reconnexion automatique :** En cas de perte de connexion, l'intégration tente de se reconnecter automatiquement (jusqu'à 3 tentatives).
+*   **Attributs d'état :** Les attributs suivants sont exposés pendant le casting :
+    *   `cast_target` : L'adresse IP du Chromecast actif.
+    *   `cast_connected` : `true` si la connexion est active, `false` sinon.
+    *   `cast_error` : Message d'erreur en cas de problème de connexion.
+
 ## 🛠️ Avancé
 
 ### Hébergement du récepteur personnalisé

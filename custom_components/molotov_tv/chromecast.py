@@ -31,11 +31,15 @@ Official Receiver URL: https://chromecast.cloud-01.molotov.tv/
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import threading
-from typing import Any
+import time
+from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant
+
+from .const import CAST_RECONNECT_ATTEMPTS, CAST_RECONNECT_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,9 +51,30 @@ CAST_MEDIA_TIMEOUT = 15
 MAX_ACTIVE_CASTS = 5  # Maximum number of cached cast connections
 CAST_CONNECTION_TTL = 3600  # Seconds before a connection is considered stale (1 hour)
 
-# Store active cast connections for control: host -> (cast, timestamp)
-_active_casts: dict[str, tuple[Any, float]] = {}
+
+@dataclass
+class CastConnection:
+    """Stores cast connection with metadata for reconnection."""
+
+    cast: Any
+    timestamp: float
+    app_id: str | None = None
+    last_asset_url: str | None = None
+    last_content_type: str | None = None
+    last_custom_data: dict[str, Any] | None = None
+    last_title: str | None = None
+    is_live: bool = False
+    listeners: list[Any] = field(default_factory=list)
+
+
+# Store active cast connections for control: host -> CastConnection
+_active_casts: dict[str, CastConnection] = {}
 _cast_lock = threading.Lock()
+
+# Connection status callbacks: list of (host, connected) -> None
+ConnectionStatusCallback = Callable[[str, bool], None]
+_connection_callbacks: list[ConnectionStatusCallback] = []
+_callbacks_lock = threading.Lock()
 
 
 class MolotovCastError(Exception):
@@ -58,16 +83,16 @@ class MolotovCastError(Exception):
 
 def _cleanup_stale_casts() -> None:
     """Remove stale cast connections. Must be called with _cast_lock held."""
-    import time
     now = time.time()
     stale = [
-        host for host, (cast, ts) in _active_casts.items()
-        if now - ts > CAST_CONNECTION_TTL
+        host
+        for host, conn in _active_casts.items()
+        if now - conn.timestamp > CAST_CONNECTION_TTL
     ]
     for host in stale:
-        cast, _ = _active_casts.pop(host)
+        conn = _active_casts.pop(host)
         try:
-            cast.disconnect()
+            conn.cast.disconnect()
         except Exception:
             pass
         _LOGGER.debug("Cleaned up stale cast connection for %s", host)
@@ -76,39 +101,235 @@ def _cleanup_stale_casts() -> None:
 def get_active_cast(host: str) -> Any | None:
     """Get an active cast connection for a host."""
     with _cast_lock:
-        entry = _active_casts.get(host)
-        if entry is None:
+        conn = _active_casts.get(host)
+        if conn is None:
             return None
-        cast, _ = entry
-        return cast
+        return conn.cast
 
 
-def set_active_cast(host: str, cast: Any) -> None:
-    """Store an active cast connection."""
-    import time
+def get_cast_connection(host: str) -> CastConnection | None:
+    """Get the full CastConnection for a host."""
+    with _cast_lock:
+        return _active_casts.get(host)
+
+
+def set_active_cast(
+    host: str,
+    cast: Any,
+    app_id: str | None = None,
+    asset_url: str | None = None,
+    content_type: str | None = None,
+    custom_data: dict[str, Any] | None = None,
+    title: str | None = None,
+    is_live: bool = False,
+) -> None:
+    """Store an active cast connection with metadata."""
     with _cast_lock:
         # Cleanup stale connections first
         _cleanup_stale_casts()
         # If at capacity, remove oldest connection
         while len(_active_casts) >= MAX_ACTIVE_CASTS and host not in _active_casts:
-            oldest_host = min(_active_casts, key=lambda h: _active_casts[h][1])
-            old_cast, _ = _active_casts.pop(oldest_host)
+            oldest_host = min(_active_casts, key=lambda h: _active_casts[h].timestamp)
+            old_conn = _active_casts.pop(oldest_host)
             try:
-                old_cast.disconnect()
+                old_conn.cast.disconnect()
             except Exception:
                 pass
             _LOGGER.debug("Evicted oldest cast connection for %s", oldest_host)
-        _active_casts[host] = (cast, time.time())
+
+        # Preserve existing listeners if updating
+        existing = _active_casts.get(host)
+        listeners = existing.listeners if existing else []
+
+        _active_casts[host] = CastConnection(
+            cast=cast,
+            timestamp=time.time(),
+            app_id=app_id,
+            last_asset_url=asset_url,
+            last_content_type=content_type,
+            last_custom_data=custom_data,
+            last_title=title,
+            is_live=is_live,
+            listeners=listeners,
+        )
 
 
 def remove_active_cast(host: str) -> None:
     """Remove an active cast connection."""
     with _cast_lock:
-        entry = _active_casts.pop(host, None)
-        if entry:
-            cast, _ = entry
+        conn = _active_casts.pop(host, None)
+        if conn:
             try:
-                cast.disconnect()
+                conn.cast.disconnect()
+            except Exception:
+                pass
+
+
+def register_connection_callback(callback: ConnectionStatusCallback) -> None:
+    """Register a callback for connection status changes."""
+    with _callbacks_lock:
+        if callback not in _connection_callbacks:
+            _connection_callbacks.append(callback)
+
+
+def unregister_connection_callback(callback: ConnectionStatusCallback) -> None:
+    """Unregister a connection status callback."""
+    with _callbacks_lock:
+        if callback in _connection_callbacks:
+            _connection_callbacks.remove(callback)
+
+
+def _notify_connection_status(host: str, connected: bool) -> None:
+    """Notify all registered callbacks of connection status change."""
+    with _callbacks_lock:
+        callbacks = list(_connection_callbacks)
+    for callback in callbacks:
+        try:
+            callback(host, connected)
+        except Exception as err:
+            _LOGGER.warning("Connection callback failed: %s", err)
+
+
+def is_cast_connected(host: str) -> bool:
+    """Check if cast connection is still alive."""
+    conn = get_cast_connection(host)
+    if not conn:
+        return False
+    try:
+        cast = conn.cast
+        return (
+            cast is not None
+            and cast.socket_client is not None
+            and cast.socket_client.is_connected
+        )
+    except Exception:
+        return False
+
+
+async def async_check_cast_health(hass: HomeAssistant, host: str) -> bool:
+    """Check cast connection health asynchronously."""
+    return await hass.async_add_executor_job(is_cast_connected, host)
+
+
+def _attempt_reconnect(host: str) -> bool:
+    """Attempt to reconnect a cast connection. Returns True if successful."""
+    conn = get_cast_connection(host)
+    if not conn:
+        return False
+
+    _LOGGER.info("Attempting to reconnect to %s", host)
+
+    for attempt in range(CAST_RECONNECT_ATTEMPTS):
+        try:
+            cast = _connect_to_chromecast(host)
+            if cast is None:
+                raise MolotovCastError(f"Could not connect to {host}")
+
+            # Re-launch app if we had one
+            if conn.app_id:
+                _launch_cast_app(cast, conn.app_id)
+
+            # Re-register listeners
+            for listener in conn.listeners:
+                try:
+                    cast.media_controller.register_status_listener(listener)
+                except Exception as err:
+                    _LOGGER.debug("Failed to re-register listener: %s", err)
+
+            # Update connection
+            with _cast_lock:
+                conn.cast = cast
+                conn.timestamp = time.time()
+
+            _LOGGER.info("Successfully reconnected to %s", host)
+            _notify_connection_status(host, True)
+            return True
+
+        except Exception as err:
+            _LOGGER.warning(
+                "Reconnect attempt %d/%d to %s failed: %s",
+                attempt + 1,
+                CAST_RECONNECT_ATTEMPTS,
+                host,
+                err,
+            )
+            if attempt < CAST_RECONNECT_ATTEMPTS - 1:
+                time.sleep(CAST_RECONNECT_DELAY)
+
+    _LOGGER.error(
+        "Failed to reconnect to %s after %d attempts", host, CAST_RECONNECT_ATTEMPTS
+    )
+    return False
+
+
+async def async_attempt_reconnect(hass: HomeAssistant, host: str) -> bool:
+    """Attempt to reconnect asynchronously."""
+    return await hass.async_add_executor_job(_attempt_reconnect, host)
+
+
+def _connect_to_chromecast(host: str) -> Any | None:
+    """Connect to a Chromecast by host. Returns cast object or None."""
+    try:
+        import pychromecast
+    except ImportError:
+        _LOGGER.error("pychromecast is not available")
+        return None
+
+    cast = None
+    browser = None
+
+    try:
+        # Try get_chromecasts with known_hosts
+        if hasattr(pychromecast, "get_chromecasts"):
+            try:
+                result = pychromecast.get_chromecasts(known_hosts=[host], timeout=10)
+                if isinstance(result, tuple) and len(result) >= 2:
+                    chromecasts, browser = result[0], result[1]
+                else:
+                    chromecasts = result
+
+                for cc in chromecasts:
+                    cc_host = None
+                    if hasattr(cc, "host"):
+                        cc_host = cc.host
+                    elif hasattr(cc, "cast_info") and hasattr(cc.cast_info, "host"):
+                        cc_host = cc.cast_info.host
+
+                    if cc_host == host:
+                        cast = cc
+                        break
+
+                if cast is None and chromecasts:
+                    cast = chromecasts[0]
+
+            except Exception as err:
+                _LOGGER.debug("get_chromecasts failed: %s", err)
+
+        # Fallback: direct instantiation
+        if cast is None:
+            try:
+                cast = pychromecast.Chromecast(host)
+            except Exception:
+                try:
+                    cast = pychromecast.Chromecast(host=host)
+                except Exception as err:
+                    _LOGGER.debug("Direct Chromecast instantiation failed: %s", err)
+                    return None
+
+        if cast:
+            cast.wait(timeout=CAST_CONNECT_TIMEOUT)
+            if not cast.socket_client or not cast.socket_client.is_connected:
+                _LOGGER.warning("Chromecast %s connection timed out", host)
+                return None
+
+        return cast
+
+    finally:
+        if browser is not None:
+            try:
+                from pychromecast.discovery import stop_discovery
+
+                stop_discovery(browser)
             except Exception:
                 pass
 
@@ -179,6 +400,7 @@ def _cast_media_blocking(
             _LOGGER.debug("Trying get_chromecasts(known_hosts=[%s])", cast_target)
             try:
                 import inspect
+
                 sig = inspect.signature(pychromecast.get_chromecasts)
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_chromecasts params: %s", params)
@@ -193,7 +415,8 @@ def _cast_media_blocking(
                         chromecasts = result
                     _LOGGER.debug(
                         "get_chromecasts result: chromecasts=%s, browser=%s",
-                        chromecasts, browser
+                        chromecasts,
+                        browser,
                     )
             except Exception as err:
                 _LOGGER.debug("get_chromecasts failed: %s", err)
@@ -203,6 +426,7 @@ def _cast_media_blocking(
             _LOGGER.debug("Trying get_listed_chromecasts")
             try:
                 import inspect
+
                 sig = inspect.signature(pychromecast.get_listed_chromecasts)
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_listed_chromecasts params: %s", params)
@@ -213,7 +437,8 @@ def _cast_media_blocking(
                 else:
                     chromecasts = result
                 _LOGGER.debug(
-                    "get_listed_chromecasts result: %d devices", len(chromecasts) if chromecasts else 0
+                    "get_listed_chromecasts result: %d devices",
+                    len(chromecasts) if chromecasts else 0,
                 )
             except Exception as err:
                 _LOGGER.debug("get_listed_chromecasts failed: %s", err)
@@ -298,17 +523,19 @@ def _cast_media_blocking(
         _LOGGER.debug("Launching cast app: %s", app_id)
         _launch_cast_app(cast, app_id)
 
-        stream_type = (
-            media.STREAM_TYPE_LIVE if is_live else media.STREAM_TYPE_BUFFERED
-        )
+        stream_type = media.STREAM_TYPE_LIVE if is_live else media.STREAM_TYPE_BUFFERED
         _LOGGER.debug(
             "Playing media: url=%s, type=%s, stream_type=%s",
-            asset_url[:100], content_type, stream_type
+            asset_url[:100],
+            content_type,
+            stream_type,
         )
 
         # custom_data must be passed via media_info in newer pychromecast
         media_info = {"customData": custom_data}
-        _LOGGER.debug("media_info keys: %s", list(media_info.get("customData", {}).keys()))
+        _LOGGER.debug(
+            "media_info keys: %s", list(media_info.get("customData", {}).keys())
+        )
 
         if title:
             cast.media_controller.play_media(
@@ -330,9 +557,19 @@ def _cast_media_blocking(
         cast.media_controller.block_until_active(timeout=CAST_MEDIA_TIMEOUT)
         _LOGGER.debug("Cast complete")
 
-        # Store the cast connection for later control
-        set_active_cast(cast_target, cast)
+        # Store the cast connection for later control with metadata for reconnection
+        set_active_cast(
+            cast_target,
+            cast,
+            app_id=app_id,
+            asset_url=asset_url,
+            content_type=content_type,
+            custom_data=custom_data,
+            title=title,
+            is_live=is_live,
+        )
         _LOGGER.debug("Stored active cast for %s", cast_target)
+        _notify_connection_status(cast_target, True)
         # Don't disconnect - keep connection for controls
         cast = None  # Prevent finally from disconnecting
 
@@ -402,42 +639,58 @@ async def async_cast_mute(hass: HomeAssistant, host: str, mute: bool) -> None:
     await hass.async_add_executor_job(_cast_control, host, "mute", mute)
 
 
-async def async_cast_volume_up(hass: HomeAssistant, host: str, step: float = 0.1) -> None:
+async def async_cast_volume_up(
+    hass: HomeAssistant, host: str, step: float = 0.1
+) -> None:
     """Increase volume on a Chromecast by step (default 10%)."""
     await hass.async_add_executor_job(_cast_control, host, "volume_up", step)
 
 
-async def async_cast_volume_down(hass: HomeAssistant, host: str, step: float = 0.1) -> None:
+async def async_cast_volume_down(
+    hass: HomeAssistant, host: str, step: float = 0.1
+) -> None:
     """Decrease volume on a Chromecast by step (default 10%)."""
     await hass.async_add_executor_job(_cast_control, host, "volume_down", step)
 
 
-async def async_cast_skip_forward(hass: HomeAssistant, host: str, seconds: float = 30) -> None:
+async def async_cast_skip_forward(
+    hass: HomeAssistant, host: str, seconds: float = 30
+) -> None:
     """Skip forward on a Chromecast."""
     await hass.async_add_executor_job(_cast_control, host, "skip_forward", seconds)
 
 
-async def async_cast_skip_back(hass: HomeAssistant, host: str, seconds: float = 10) -> None:
+async def async_cast_skip_back(
+    hass: HomeAssistant, host: str, seconds: float = 10
+) -> None:
     """Skip back on a Chromecast."""
     await hass.async_add_executor_job(_cast_control, host, "skip_back", seconds)
 
 
-async def async_cast_register_listener(hass: HomeAssistant, host: str, callback: Any) -> None:
+async def async_cast_register_listener(
+    hass: HomeAssistant, host: str, callback: Any
+) -> None:
     """Register a status listener for the active cast."""
     await hass.async_add_executor_job(_cast_register_listener, host, callback)
 
 
-async def async_cast_select_track(hass: HomeAssistant, host: str, track_id: int) -> None:
+async def async_cast_select_track(
+    hass: HomeAssistant, host: str, track_id: int
+) -> None:
     """Select a specific track (audio/subtitle) on the Chromecast."""
     await hass.async_add_executor_job(_cast_select_track, host, track_id)
 
 
 def _cast_register_listener(host: str, callback: Any) -> None:
-    cast = get_active_cast(host)
-    if not cast:
+    conn = get_cast_connection(host)
+    if not conn:
         return
     try:
-        cast.media_controller.register_status_listener(callback)
+        conn.cast.media_controller.register_status_listener(callback)
+        # Store listener for reconnection
+        with _cast_lock:
+            if callback not in conn.listeners:
+                conn.listeners.append(callback)
         _LOGGER.debug("Registered status listener for %s", host)
     except Exception as err:
         _LOGGER.warning("Failed to register listener: %s", err)
@@ -449,7 +702,9 @@ def _cast_select_track(host: str, track_id: int) -> None:
         return
     try:
         # Enable the track (activates it)
-        cast.media_controller.enable_subtitle(track_id) # enable_subtitle works for audio too in some versions, or update_active_track_ids
+        cast.media_controller.enable_subtitle(
+            track_id
+        )  # enable_subtitle works for audio too in some versions, or update_active_track_ids
         # Explicitly update active tracks
         cast.media_controller.update_active_track_ids([track_id])
         _LOGGER.debug("Selected track %s on %s", track_id, host)
@@ -457,13 +712,30 @@ def _cast_select_track(host: str, track_id: int) -> None:
         _LOGGER.error("Failed to select track: %s", err)
 
 
-def _cast_control(host: str, action: str, *args: Any) -> None:
-    """Execute a control action on a Chromecast."""
-    cast = get_active_cast(host)
-    if not cast:
+def _cast_control(host: str, action: str, *args: Any) -> bool:
+    """Execute a control action on a Chromecast. Returns True if successful."""
+    conn = get_cast_connection(host)
+    if not conn:
         _LOGGER.warning("No active cast for %s, cannot %s", host, action)
-        return
+        return False
 
+    # Health check before operation
+    if not is_cast_connected(host):
+        _LOGGER.warning("Cast connection lost for %s, attempting reconnect", host)
+        _notify_connection_status(host, False)
+
+        if _attempt_reconnect(host):
+            _LOGGER.info("Reconnected to %s, retrying %s", host, action)
+            # Refresh connection reference after reconnect
+            conn = get_cast_connection(host)
+            if not conn:
+                return False
+        else:
+            _LOGGER.error("Failed to reconnect to %s, cannot %s", host, action)
+            remove_active_cast(host)
+            return False
+
+    cast = conn.cast
     try:
         mc = cast.media_controller
         _LOGGER.debug("Executing %s on %s", action, host)
@@ -474,6 +746,7 @@ def _cast_control(host: str, action: str, *args: Any) -> None:
             mc.play()
         elif action == "stop":
             mc.stop()
+            _notify_connection_status(host, False)
             # Clean up after stop
             try:
                 cast.disconnect()
@@ -510,8 +783,13 @@ def _cast_control(host: str, action: str, *args: Any) -> None:
             cast.set_volume(new_level)
         else:
             _LOGGER.warning("Unknown cast action: %s", action)
-            return
+            return False
 
         _LOGGER.debug("Cast %s completed", action)
+        return True
     except Exception as err:
         _LOGGER.error("Cast %s failed: %s", action, err)
+        # Check if this was a connection issue
+        if not is_cast_connected(host):
+            _notify_connection_status(host, False)
+        return False

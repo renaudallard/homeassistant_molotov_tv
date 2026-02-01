@@ -46,6 +46,11 @@ CONF_CAST_HOSTS = "cast_hosts"
 DEFAULT_ENVIRONMENT = "prod"
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 
+# Cast connection reliability
+CAST_HEALTH_CHECK_INTERVAL = timedelta(seconds=30)
+CAST_RECONNECT_ATTEMPTS = 3
+CAST_RECONNECT_DELAY = 5  # seconds
+
 ENVIRONMENTS: dict[str, dict[str, str]] = {
     "prod": {
         "base_api_url": "https://fapi.molotov.tv/",
