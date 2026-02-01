@@ -87,6 +87,7 @@ from .chromecast import (
     async_attempt_reconnect,
     async_cast_switch_media,
     async_get_cast_position,
+    async_get_cast_volume,
     async_is_our_app_running,
     register_connection_callback,
     unregister_connection_callback,
@@ -218,6 +219,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._media_position: float | None = None
         self._media_duration: float | None = None
         self._media_position_updated_at: datetime | None = None
+        # Volume tracking
+        self._volume_level: float | None = None
+        self._is_volume_muted: bool = False
 
     @property
     def device_info(self):
@@ -308,6 +312,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._media_position = None
         self._media_duration = None
         self._media_position_updated_at = None
+        self._volume_level = None
+        self._is_volume_muted = False
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
@@ -416,6 +422,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._media_position = None
         self._media_duration = None
         self._media_position_updated_at = None
+        self._volume_level = None
+        self._is_volume_muted = False
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
@@ -1356,6 +1364,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Return when position was last updated."""
         return self._media_position_updated_at
 
+    @property
+    def volume_level(self) -> float | None:
+        """Return the volume level (0.0 to 1.0)."""
+        return self._volume_level
+
+    @property
+    def is_volume_muted(self) -> bool:
+        """Return True if volume is muted."""
+        return self._is_volume_muted
+
     async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Select sound mode."""
         info = self._tracks.get(sound_mode)
@@ -1554,6 +1572,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._media_position_updated_at = dt_util.utcnow()
             self._media_duration = None  # Will be set by status callback
 
+            # Get initial volume from Chromecast
+            volume_info = await async_get_cast_volume(self.hass, resolved_target)
+            if volume_info:
+                self._volume_level, self._is_volume_muted = volume_info
+
             await async_cast_register_listener(
                 self.hass, resolved_target, self._on_cast_status
             )
@@ -1748,6 +1771,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._media_position = None
         self._media_duration = None
         self._media_position_updated_at = None
+        self._volume_level = None
+        self._is_volume_muted = False
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
@@ -1774,21 +1799,35 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Set volume level on active cast."""
         if self._active_cast_target:
             await async_cast_volume(self.hass, self._active_cast_target, volume)
+            # Update local state immediately for responsive UI
+            self._volume_level = volume
+            self.async_write_ha_state()
 
     async def async_volume_up(self) -> None:
         """Turn volume up on active cast."""
         if self._active_cast_target:
             await async_cast_volume_up(self.hass, self._active_cast_target)
+            # Update local state (estimate +10%)
+            if self._volume_level is not None:
+                self._volume_level = min(1.0, self._volume_level + 0.1)
+                self.async_write_ha_state()
 
     async def async_volume_down(self) -> None:
         """Turn volume down on active cast."""
         if self._active_cast_target:
             await async_cast_volume_down(self.hass, self._active_cast_target)
+            # Update local state (estimate -10%)
+            if self._volume_level is not None:
+                self._volume_level = max(0.0, self._volume_level - 0.1)
+                self.async_write_ha_state()
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute/unmute active cast."""
         if self._active_cast_target:
             await async_cast_mute(self.hass, self._active_cast_target, mute)
+            # Update local state immediately for responsive UI
+            self._is_volume_muted = mute
+            self.async_write_ha_state()
 
     async def async_turn_off(self) -> None:
         """Turn off (stop) the active cast."""

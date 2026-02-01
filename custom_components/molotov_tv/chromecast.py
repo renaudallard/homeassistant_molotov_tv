@@ -810,6 +810,36 @@ async def async_get_cast_position(
     return await hass.async_add_executor_job(get_cast_position, host)
 
 
+def get_cast_volume(host: str) -> tuple[float, bool] | None:
+    """Get current volume level and mute state from cast.
+
+    Returns (volume_level, is_muted) tuple or None if not available.
+    Volume level is 0.0 to 1.0.
+    """
+    conn = get_cast_connection(host)
+    if not conn or not conn.cast:
+        return None
+
+    try:
+        status = conn.cast.status
+        if status:
+            volume_level = getattr(status, "volume_level", None)
+            is_muted = getattr(status, "volume_muted", False)
+            if volume_level is not None:
+                return (float(volume_level), bool(is_muted))
+    except Exception as err:
+        _LOGGER.debug("Failed to get cast volume: %s", err)
+
+    return None
+
+
+async def async_get_cast_volume(
+    hass: HomeAssistant, host: str
+) -> tuple[float, bool] | None:
+    """Get current volume level and mute state asynchronously."""
+    return await hass.async_add_executor_job(get_cast_volume, host)
+
+
 async def async_cast_pause(hass: HomeAssistant, host: str) -> None:
     """Pause playback on a Chromecast."""
     await hass.async_add_executor_job(_cast_control, host, "pause")
