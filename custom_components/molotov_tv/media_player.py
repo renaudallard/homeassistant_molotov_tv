@@ -85,6 +85,8 @@ from .chromecast import (
     async_cast_select_track,
     async_check_cast_health,
     async_attempt_reconnect,
+    async_cast_switch_media,
+    async_get_cast_position,
     register_connection_callback,
     unregister_connection_callback,
 )
@@ -137,6 +139,7 @@ from .helpers import (
     split_manual_target,
 )
 from .models import BrowseAsset
+from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,7 +158,8 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: MolotovEpgCoordinator = data["coordinator"]
     api: MolotovApi = data["api"]
-    async_add_entities([MolotovTvMediaPlayer(entry, coordinator, api)])
+    resume_store: ResumePositionStore = data["resume_store"]
+    async_add_entities([MolotovTvMediaPlayer(entry, coordinator, api, resume_store)])
 
 
 class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayerEntity):
@@ -183,10 +187,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         entry: ConfigEntry,
         coordinator: MolotovEpgCoordinator,
         api: MolotovApi,
+        resume_store: ResumePositionStore,
     ) -> None:
         super().__init__(coordinator)
         self._entry = entry
         self._api = api
+        self._resume_store = resume_store
         self._attr_unique_id = entry.entry_id
         self._attr_name = None
         self._attr_has_entity_name = True
@@ -202,6 +208,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._cast_connected: bool = False
         self._cast_connection_error: str | None = None
         self._health_check_unsub: Any = None
+        # Content tracking for quick switch and resume
+        self._current_content_id: str | None = None
+        self._current_is_live: bool = False
 
     @property
     def device_info(self):
@@ -464,7 +473,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if len(parts) == 4:
                 _, encoded_target, receiver_type, base_media_id = parts
                 target = self._decode_cast_target(encoded_target)
-                await self._async_cast_media(
+                await self._async_cast_or_switch(
                     base_media_id, target, receiver_type=receiver_type
                 )
                 return
@@ -473,20 +482,109 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 _, encoded_target, base_media_id = parts
                 target = self._decode_cast_target(encoded_target)
                 receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
-                await self._async_cast_media(
+                await self._async_cast_or_switch(
                     base_media_id, target, receiver_type=receiver_type
                 )
+                return
+
+        # If already casting, try quick switch to same target
+        if self._active_cast_target and self._cast_connected:
+            receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
+            if await self._async_try_quick_switch(media_id, receiver_type):
                 return
 
         targets = await self._async_get_cast_targets()
         if len(targets) == 1:
             receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
-            await self._async_cast_media(
+            await self._async_cast_or_switch(
                 media_id, targets[0], receiver_type=receiver_type
             )
             return
 
         await self._async_play_local(media_id)
+
+    async def _async_cast_or_switch(
+        self,
+        media_id: str,
+        target: str,
+        receiver_type: str = "native",
+    ) -> None:
+        """Cast media, using quick switch if already connected to same target."""
+        resolved_target = self._resolve_cast_target(target)
+
+        # If already casting to this target, try quick switch
+        if (
+            self._active_cast_target
+            and self._active_cast_target == resolved_target
+            and self._cast_connected
+        ):
+            if await self._async_try_quick_switch(media_id, receiver_type):
+                return
+
+        # Fall back to full cast
+        await self._async_cast_media(media_id, target, receiver_type=receiver_type)
+
+    async def _async_try_quick_switch(self, media_id: str, receiver_type: str) -> bool:
+        """Try to quick switch media on active cast. Returns True if successful."""
+        if not self._active_cast_target or not self._cast_connected:
+            return False
+
+        try:
+            asset_url, title, is_live = self._build_cast_request(media_id)
+            custom_data = self._build_cast_custom_data(asset_url)
+
+            use_custom = (receiver_type == "custom") and (
+                CUSTOM_RECEIVER_APP_ID is not None
+            )
+
+            if use_custom:
+                # For custom receiver, resolve stream locally
+                asset_data = await self._api.async_get_asset_stream(asset_url)
+                stream = asset_data.get("stream", {})
+                stream_url = stream.get("url")
+                if not stream_url:
+                    return False
+                asset_url = stream_url
+
+                video_format = stream.get("video_format")
+                if video_format == "DASH":
+                    content_type = "application/dash+xml"
+                elif video_format == "HLS":
+                    content_type = "application/x-mpegurl"
+                else:
+                    content_type = "application/dash+xml"
+            else:
+                content_type = self._api.stream_content_type()
+
+            _LOGGER.debug(
+                "Attempting quick switch to %s on %s",
+                title,
+                self._active_cast_target,
+            )
+
+            success = await async_cast_switch_media(
+                self.hass,
+                self._active_cast_target,
+                asset_url,
+                content_type,
+                custom_data,
+                title,
+                is_live,
+            )
+
+            if success:
+                self._attr_media_title = title
+                self._attr_state = STATE_PLAYING
+                self._current_content_id = media_id
+                self._current_is_live = is_live
+                self.async_write_ha_state()
+                _LOGGER.info("Quick switched to: %s", title)
+                return True
+
+        except Exception as err:
+            _LOGGER.debug("Quick switch preparation failed: %s", err)
+
+        return False
 
     async def _async_play_local(self, media_id: str) -> None:
         """Play media locally by resolving stream URL."""
@@ -1295,13 +1393,33 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._active_cast_target = resolved_target
             self._active_cast_entity = self._find_cast_entity(resolved_target)
             self._attr_state = STATE_PLAYING
+            self._attr_media_title = title
             self._cast_connected = True
             self._cast_connection_error = None
+            self._current_content_id = media_id
+            self._current_is_live = is_live
 
             await async_cast_register_listener(
                 self.hass, resolved_target, self._on_cast_status
             )
             await self._async_start_health_monitor()
+
+            # Check for resume position (VOD only)
+            if not is_live:
+                resume_data = await self._resume_store.async_get_position(media_id)
+                if resume_data:
+                    saved_position = resume_data.get("position", 0)
+                    if saved_position > 0:
+                        _LOGGER.info(
+                            "Resuming %s at position %.1f",
+                            title,
+                            saved_position,
+                        )
+                        # Small delay to let cast stabilize
+                        await asyncio.sleep(1)
+                        await async_cast_seek(
+                            self.hass, resolved_target, saved_position
+                        )
 
             self.async_write_ha_state()
             _LOGGER.debug(
@@ -1442,6 +1560,26 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     async def async_media_stop(self) -> None:
         """Send stop command to active cast."""
+        # Save position for resume (will be implemented with resume store)
+        if self._active_cast_target and not self._current_is_live:
+            position_data = await async_get_cast_position(
+                self.hass, self._active_cast_target
+            )
+            if position_data:
+                position, duration = position_data
+                _LOGGER.debug(
+                    "Saving position %.1f/%.1f for %s",
+                    position,
+                    duration,
+                    self._current_content_id,
+                )
+                await self._resume_store.async_save_position(
+                    self._current_content_id,
+                    position,
+                    duration,
+                    self._attr_media_title,
+                )
+
         if self._active_cast_target:
             await async_cast_stop(self.hass, self._active_cast_target)
         await self._async_stop_health_monitor()
@@ -1450,6 +1588,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._current_stream = None
         self._cast_connected = False
         self._cast_connection_error = None
+        self._current_content_id = None
+        self._current_is_live = False
         self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 

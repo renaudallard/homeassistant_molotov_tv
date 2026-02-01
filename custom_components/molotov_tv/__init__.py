@@ -49,6 +49,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import MolotovEpgCoordinator
+from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,18 +88,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = MolotovEpgCoordinator(hass, api)
     await coordinator.async_config_entry_first_refresh()
 
+    # Initialize resume position storage
+    resume_store = ResumePositionStore(hass, entry.entry_id)
+    await resume_store.async_load()
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
         "search_cache": None,  # Shared search cache: (timestamp, query, results)
+        "resume_store": resume_store,
     }
 
     # Register static path and load custom card automatically
     path = hass.config.path("custom_components/molotov_tv/www")
     _LOGGER.debug("Registering Molotov TV static path: %s", path)
-    await hass.http.async_register_static_paths([
-        StaticPathConfig("/molotov_tv/www", path, cache_headers=True)
-    ])
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig("/molotov_tv/www", path, cache_headers=True)]
+    )
     try:
         # Fixed version string for easier debugging/caching control
         add_extra_js_url(hass, "/molotov_tv/www/molotov-card.js?v=0.1.34")

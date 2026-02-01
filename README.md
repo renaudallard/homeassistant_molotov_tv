@@ -103,6 +103,22 @@ L'intégration surveille automatiquement la connexion avec votre Chromecast pend
     *   `cast_connected` : `true` si la connexion est active, `false` sinon.
     *   `cast_error` : Message d'erreur en cas de problème de connexion.
 
+### Changement de chaîne rapide (Zap)
+Pendant la lecture sur Chromecast, vous pouvez changer de chaîne ou de programme instantanément :
+*   **Pas de reconnexion :** Le changement réutilise la connexion existante.
+*   **Détection automatique :** Si vous êtes déjà en train de caster, le système utilise automatiquement le changement rapide.
+*   **Fallback :** En cas d'échec du changement rapide, une reconnexion complète est effectuée.
+
+### Reprise de lecture (Continue Watching)
+L'intégration mémorise automatiquement votre position pour le contenu VOD (replay, enregistrements) :
+*   **Sauvegarde automatique :** La position est enregistrée lorsque vous arrêtez la lecture.
+*   **Reprise automatique :** Lors du relancement du même contenu, la lecture reprend là où vous vous étiez arrêté.
+*   **Critères de sauvegarde :**
+    *   Position sauvegardée uniquement si > 60 secondes de visionnage.
+    *   Position non sauvegardée si > 95% du contenu a été visionné.
+*   **Expiration :** Les positions sont automatiquement supprimées après 30 jours.
+*   **TV en direct :** La reprise ne s'applique pas au contenu en direct.
+
 ## 🛠️ Avancé
 
 ### Hébergement du récepteur personnalisé

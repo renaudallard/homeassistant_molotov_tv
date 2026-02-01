@@ -609,6 +609,121 @@ def _launch_cast_app(cast: Any, app_id: str) -> None:
     raise MolotovCastError("Chromecast does not support launching apps")
 
 
+async def async_cast_switch_media(
+    hass: HomeAssistant,
+    host: str,
+    asset_url: str,
+    content_type: str,
+    custom_data: dict[str, Any],
+    title: str | None,
+    is_live: bool,
+) -> bool:
+    """Switch media on an existing cast connection without reconnecting.
+
+    Returns True if switch succeeded, False if a full reconnect is needed.
+    """
+    return await hass.async_add_executor_job(
+        _cast_switch_media_blocking,
+        host,
+        asset_url,
+        content_type,
+        custom_data,
+        title,
+        is_live,
+    )
+
+
+def _cast_switch_media_blocking(
+    host: str,
+    asset_url: str,
+    content_type: str,
+    custom_data: dict[str, Any],
+    title: str | None,
+    is_live: bool,
+) -> bool:
+    """Switch media on existing connection. Returns True on success."""
+    conn = get_cast_connection(host)
+    if not conn or not is_cast_connected(host):
+        _LOGGER.debug("No active connection for %s, cannot quick switch", host)
+        return False
+
+    try:
+        from pychromecast.controllers import media
+
+        cast = conn.cast
+        stream_type = media.STREAM_TYPE_LIVE if is_live else media.STREAM_TYPE_BUFFERED
+
+        _LOGGER.debug(
+            "Quick switching media on %s: url=%s, type=%s",
+            host,
+            asset_url[:80] if asset_url else None,
+            content_type,
+        )
+
+        media_info = {"customData": custom_data}
+
+        if title:
+            cast.media_controller.play_media(
+                asset_url,
+                content_type,
+                title=title,
+                stream_type=stream_type,
+                media_info=media_info,
+            )
+        else:
+            cast.media_controller.play_media(
+                asset_url,
+                content_type,
+                stream_type=stream_type,
+                media_info=media_info,
+            )
+
+        cast.media_controller.block_until_active(timeout=CAST_MEDIA_TIMEOUT)
+
+        # Update connection metadata
+        with _cast_lock:
+            conn.last_asset_url = asset_url
+            conn.last_content_type = content_type
+            conn.last_custom_data = custom_data
+            conn.last_title = title
+            conn.is_live = is_live
+            conn.timestamp = time.time()
+
+        _LOGGER.info("Quick switch successful on %s: %s", host, title)
+        return True
+
+    except Exception as err:
+        _LOGGER.warning("Quick switch failed on %s: %s", host, err)
+        return False
+
+
+def get_cast_position(host: str) -> tuple[float, float] | None:
+    """Get current playback position and duration from cast.
+
+    Returns (position, duration) tuple or None if not available.
+    """
+    conn = get_cast_connection(host)
+    if not conn:
+        return None
+
+    try:
+        status = conn.cast.media_controller.status
+        if status and status.current_time is not None:
+            duration = status.duration if status.duration else 0.0
+            return (float(status.current_time), float(duration))
+    except Exception as err:
+        _LOGGER.debug("Failed to get cast position: %s", err)
+
+    return None
+
+
+async def async_get_cast_position(
+    hass: HomeAssistant, host: str
+) -> tuple[float, float] | None:
+    """Get current playback position asynchronously."""
+    return await hass.async_add_executor_job(get_cast_position, host)
+
+
 async def async_cast_pause(hass: HomeAssistant, host: str) -> None:
     """Pause playback on a Chromecast."""
     await hass.async_add_executor_job(_cast_control, host, "pause")

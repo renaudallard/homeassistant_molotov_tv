@@ -51,6 +51,12 @@ CAST_HEALTH_CHECK_INTERVAL = timedelta(seconds=30)
 CAST_RECONNECT_ATTEMPTS = 3
 CAST_RECONNECT_DELAY = 5  # seconds
 
+# Resume position storage
+RESUME_STORAGE_VERSION = 1
+RESUME_MIN_POSITION = 60  # Don't save if watched less than 60 seconds
+RESUME_MAX_PERCENT = 0.95  # Don't save if watched more than 95%
+RESUME_EXPIRY_DAYS = 30  # Clear positions older than 30 days
+
 ENVIRONMENTS: dict[str, dict[str, str]] = {
     "prod": {
         "base_api_url": "https://fapi.molotov.tv/",
