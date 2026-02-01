@@ -91,8 +91,6 @@ from .chromecast import (
     async_is_our_app_running,
     register_connection_callback,
     unregister_connection_callback,
-    register_app_takeover_callback,
-    unregister_app_takeover_callback,
 )
 from .const import (
     CAST_HEALTH_CHECK_INTERVAL,
@@ -238,14 +236,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         await super().async_added_to_hass()
         # Register for cast connection status updates
         register_connection_callback(self._on_cast_connection_change)
-        register_app_takeover_callback(self._on_app_takeover)
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from hass."""
         await super().async_will_remove_from_hass()
-        # Unregister callbacks
+        # Unregister callback
         unregister_connection_callback(self._on_cast_connection_change)
-        unregister_app_takeover_callback(self._on_app_takeover)
         # Stop health monitor
         await self._async_stop_health_monitor()
 
@@ -265,22 +261,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         # Schedule state update (callback may be called from executor thread)
         self.hass.loop.call_soon_threadsafe(self.async_schedule_update_ha_state)
-
-    def _on_app_takeover(self, host: str, new_app_id: str | None) -> None:
-        """Handle app takeover events from chromecast module."""
-        if host != self._active_cast_target:
-            return
-
-        _LOGGER.info(
-            "Another app took over Chromecast %s (new app: %s), ending session",
-            host,
-            new_app_id,
-        )
-
-        # Schedule async cleanup on the event loop
-        self.hass.loop.call_soon_threadsafe(
-            lambda: self.hass.async_create_task(self._async_end_session_takeover())
-        )
 
     async def _async_end_session_takeover(self) -> None:
         """End session gracefully when another app takes over."""
@@ -1782,9 +1762,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await async_cast_skip_forward(self.hass, self._active_cast_target, 30)
 
     async def async_media_previous_track(self) -> None:
-        """Skip back 10 seconds."""
+        """Restart from beginning, or skip back 30s if already at start."""
         if self._active_cast_target:
-            await async_cast_skip_back(self.hass, self._active_cast_target, 10)
+            # If more than 5 seconds in, restart from beginning
+            if self._media_position and self._media_position > 5:
+                await async_cast_seek(self.hass, self._active_cast_target, 0)
+                self._media_position = 0
+                self._media_position_updated_at = dt_util.utcnow()
+                self.async_write_ha_state()
+            else:
+                # Already near start, skip back further
+                await async_cast_skip_back(self.hass, self._active_cast_target, 30)
 
     async def async_media_seek(self, position: float) -> None:
         """Send seek command to active cast."""

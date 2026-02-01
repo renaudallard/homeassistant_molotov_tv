@@ -7,32 +7,424 @@
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <!-- Cast Debug Logger -->
     <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+        cast-media-player {
+            --advancement-background-color: rgba(0,0,0,0.8);
+        }
+
+        /* Control Menu Overlay */
+        #control-menu {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.9));
+            padding: 40px 20px 30px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            transform: translateY(100%);
+            transition: transform 0.3s ease-out;
+            z-index: 1000;
+        }
+        #control-menu.visible {
+            transform: translateY(0);
+        }
+
+        .menu-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 15px 25px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            font-family: 'Roboto', sans-serif;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 100px;
+        }
+        .menu-item.selected {
+            background: rgba(229, 9, 20, 0.9);
+            transform: scale(1.1);
+        }
+        .menu-item .icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        .menu-item .label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        /* Audio submenu */
+        #audio-submenu {
+            position: fixed;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: rgba(0,0,0,0.95);
+            border-radius: 8px;
+            padding: 10px 0;
+            min-width: 200px;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.2s ease;
+            z-index: 1001;
+        }
+        #audio-submenu.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateX(-50%) translateY(0);
+        }
+        .audio-option {
+            padding: 12px 20px;
+            color: #fff;
+            font-family: 'Roboto', sans-serif;
+            font-size: 16px;
+        }
+        .audio-option.selected {
+            background: rgba(229, 9, 20, 0.9);
+        }
+        .audio-option.active::after {
+            content: ' ✓';
+            color: #4CAF50;
+        }
+
+        /* Hint overlay */
+        #menu-hint {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: rgba(255,255,255,0.5);
+            font-family: 'Roboto', sans-serif;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        #menu-hint.visible {
+            opacity: 1;
+        }
+    </style>
 </head>
 <body>
     <cast-media-player></cast-media-player>
-    
+
+    <!-- Control Menu -->
+    <div id="control-menu">
+        <div class="menu-item" data-action="back">
+            <span class="icon">⏪</span>
+            <span class="label">-10s</span>
+        </div>
+        <div class="menu-item" data-action="forward">
+            <span class="icon">⏩</span>
+            <span class="label">+30s</span>
+        </div>
+        <div class="menu-item" data-action="restart">
+            <span class="icon">↺</span>
+            <span class="label">Restart</span>
+        </div>
+        <div class="menu-item" data-action="audio">
+            <span class="icon">🔊</span>
+            <span class="label">Audio</span>
+        </div>
+    </div>
+
+    <!-- Audio Track Submenu -->
+    <div id="audio-submenu"></div>
+
+    <!-- Menu Hint -->
+    <div id="menu-hint">Press ↓ for controls</div>
+
     <script>
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
         const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
 
-        // --- 1. Track Selection Logic ---
+        // --- Menu State ---
+        let menuVisible = false;
+        let audioMenuVisible = false;
+        let selectedIndex = 0;
+        let audioSelectedIndex = 0;
+        let menuItems = [];
+        let audioTracks = [];
+        let hideHintTimer = null;
+        let hideMenuTimer = null;
+
+        // --- DOM Elements ---
+        const controlMenu = document.getElementById('control-menu');
+        const audioSubmenu = document.getElementById('audio-submenu');
+        const menuHint = document.getElementById('menu-hint');
+
+        // --- Initialize Menu Items ---
+        function initMenu() {
+            menuItems = document.querySelectorAll('.menu-item');
+            updateMenuSelection();
+        }
+
+        // --- Menu Visibility ---
+        function showMenu() {
+            menuVisible = true;
+            controlMenu.classList.add('visible');
+            menuHint.classList.remove('visible');
+            resetHideMenuTimer();
+        }
+
+        function hideMenu() {
+            menuVisible = false;
+            audioMenuVisible = false;
+            controlMenu.classList.remove('visible');
+            audioSubmenu.classList.remove('visible');
+            clearTimeout(hideMenuTimer);
+        }
+
+        function toggleMenu() {
+            if (menuVisible) {
+                hideMenu();
+            } else {
+                showMenu();
+            }
+        }
+
+        function resetHideMenuTimer() {
+            clearTimeout(hideMenuTimer);
+            hideMenuTimer = setTimeout(() => {
+                if (menuVisible && !audioMenuVisible) {
+                    hideMenu();
+                }
+            }, 5000);
+        }
+
+        // --- Menu Navigation ---
+        function updateMenuSelection() {
+            menuItems.forEach((item, index) => {
+                item.classList.toggle('selected', index === selectedIndex);
+            });
+        }
+
+        function navigateMenu(direction) {
+            if (!menuVisible) return;
+            resetHideMenuTimer();
+
+            if (audioMenuVisible) {
+                navigateAudioMenu(direction);
+                return;
+            }
+
+            selectedIndex += direction;
+            if (selectedIndex < 0) selectedIndex = menuItems.length - 1;
+            if (selectedIndex >= menuItems.length) selectedIndex = 0;
+            updateMenuSelection();
+        }
+
+        function activateMenuItem() {
+            if (!menuVisible) return;
+            resetHideMenuTimer();
+
+            if (audioMenuVisible) {
+                selectAudioTrack();
+                return;
+            }
+
+            const action = menuItems[selectedIndex].dataset.action;
+            executeAction(action);
+        }
+
+        // --- Actions ---
+        function executeAction(action) {
+            const currentTime = playerManager.getCurrentTimeSec();
+            const duration = playerManager.getDurationSec();
+
+            switch (action) {
+                case 'back':
+                    playerManager.seek(Math.max(0, currentTime - 10));
+                    break;
+                case 'forward':
+                    playerManager.seek(Math.min(duration, currentTime + 30));
+                    break;
+                case 'restart':
+                    playerManager.seek(0);
+                    break;
+                case 'audio':
+                    showAudioMenu();
+                    return; // Don't hide menu
+            }
+
+            // Brief feedback then hide
+            setTimeout(hideMenu, 500);
+        }
+
+        // --- Audio Track Menu ---
+        function showAudioMenu() {
+            const tracks = playerManager.getTracks();
+            if (!tracks) return;
+
+            audioTracks = tracks.filter(t => t.type === 'AUDIO');
+            if (audioTracks.length === 0) return;
+
+            const stats = playerManager.getStats();
+            const activeIds = stats ? stats.currentTrackIds : [];
+
+            // Build audio menu
+            audioSubmenu.innerHTML = '';
+            audioTracks.forEach((track, index) => {
+                const div = document.createElement('div');
+                div.className = 'audio-option';
+
+                // Determine label
+                let label = track.name || track.language || 'Track ' + (index + 1);
+                if (track.language) {
+                    const langNames = {
+                        'fr': 'Français', 'fra': 'Français', 'fre': 'Français',
+                        'en': 'English', 'eng': 'English',
+                        'de': 'Deutsch', 'deu': 'Deutsch', 'ger': 'Deutsch',
+                        'es': 'Español', 'spa': 'Español',
+                        'it': 'Italiano', 'ita': 'Italiano',
+                        'qaa': 'Original'
+                    };
+                    label = langNames[track.language] || track.language.toUpperCase();
+                }
+
+                div.textContent = label;
+                div.dataset.trackId = track.trackId;
+
+                if (activeIds && activeIds.includes(track.trackId)) {
+                    div.classList.add('active');
+                    audioSelectedIndex = index;
+                }
+
+                audioSubmenu.appendChild(div);
+            });
+
+            audioMenuVisible = true;
+            audioSubmenu.classList.add('visible');
+            updateAudioSelection();
+        }
+
+        function hideAudioMenu() {
+            audioMenuVisible = false;
+            audioSubmenu.classList.remove('visible');
+        }
+
+        function navigateAudioMenu(direction) {
+            audioSelectedIndex += direction;
+            if (audioSelectedIndex < 0) audioSelectedIndex = audioTracks.length - 1;
+            if (audioSelectedIndex >= audioTracks.length) audioSelectedIndex = 0;
+            updateAudioSelection();
+        }
+
+        function updateAudioSelection() {
+            const options = audioSubmenu.querySelectorAll('.audio-option');
+            options.forEach((opt, index) => {
+                opt.classList.toggle('selected', index === audioSelectedIndex);
+            });
+        }
+
+        function selectAudioTrack() {
+            if (audioTracks[audioSelectedIndex]) {
+                const trackId = audioTracks[audioSelectedIndex].trackId;
+                playerManager.setActiveTrackIds([trackId]);
+                console.log('[Molotov] Audio track changed to:', trackId);
+            }
+            hideAudioMenu();
+            setTimeout(hideMenu, 500);
+        }
+
+        // --- Key Event Handling ---
+        function handleKeyDown(event) {
+            const key = event.keyCode;
+
+            // Key codes for TV remote
+            const KEYS = {
+                UP: 38,
+                DOWN: 40,
+                LEFT: 37,
+                RIGHT: 39,
+                ENTER: 13,
+                BACK: 8,
+                ESCAPE: 27
+            };
+
+            switch (key) {
+                case KEYS.DOWN:
+                    if (!menuVisible) {
+                        showMenu();
+                    } else if (audioMenuVisible) {
+                        navigateAudioMenu(1);
+                    }
+                    event.preventDefault();
+                    break;
+
+                case KEYS.UP:
+                    if (audioMenuVisible) {
+                        navigateAudioMenu(-1);
+                    } else if (menuVisible) {
+                        hideMenu();
+                    }
+                    event.preventDefault();
+                    break;
+
+                case KEYS.LEFT:
+                    if (menuVisible && !audioMenuVisible) {
+                        navigateMenu(-1);
+                    }
+                    event.preventDefault();
+                    break;
+
+                case KEYS.RIGHT:
+                    if (menuVisible && !audioMenuVisible) {
+                        navigateMenu(1);
+                    }
+                    event.preventDefault();
+                    break;
+
+                case KEYS.ENTER:
+                    if (menuVisible) {
+                        activateMenuItem();
+                    } else {
+                        showMenu();
+                    }
+                    event.preventDefault();
+                    break;
+
+                case KEYS.BACK:
+                case KEYS.ESCAPE:
+                    if (audioMenuVisible) {
+                        hideAudioMenu();
+                    } else if (menuVisible) {
+                        hideMenu();
+                    }
+                    event.preventDefault();
+                    break;
+            }
+        }
+
+        document.addEventListener('keydown', handleKeyDown);
+
+        // --- Track Selection Logic ---
         function forceFrenchAudio() {
             const tracks = playerManager.getTracks();
             const stats = playerManager.getStats();
             const activeIds = stats ? stats.currentTrackIds : [];
-            
+
             if (!tracks || tracks.length === 0) return;
 
-            const audioTracks = tracks.filter(t => t.type === 'AUDIO');
-            
+            const audioTracksLocal = tracks.filter(t => t.type === 'AUDIO');
+
             // 1. Check for explicit preference from Molotov API (passed via customData)
             const mediaInfo = playerManager.getMediaInformation();
             const customData = mediaInfo ? mediaInfo.customData : null;
-            
+
             if (customData && customData.selected_track && customData.selected_track.track_audio) {
                 const prefLang = customData.selected_track.track_audio;
-                const prefTrack = audioTracks.find(t => t.language === prefLang);
+                const prefTrack = audioTracksLocal.find(t => t.language === prefLang);
                 if (prefTrack) {
                     if (!activeIds || !activeIds.includes(prefTrack.trackId)) {
                         console.log("[Molotov] Switching to API preference:", prefLang);
@@ -44,18 +436,18 @@
 
             // 2. Fallback: If current track is English/Original, look for French
             let activeLang = 'unknown';
-            audioTracks.forEach(t => {
+            audioTracksLocal.forEach(t => {
                 if (activeIds && activeIds.includes(t.trackId)) activeLang = t.language;
             });
 
             if (activeLang === 'en' || activeLang === 'eng' || activeLang === 'qaa' || activeLang === 'unknown') {
-                const target = audioTracks.find(t => 
-                    t.language === 'fr' || 
-                    t.language === 'fra' || 
+                const target = audioTracksLocal.find(t =>
+                    t.language === 'fr' ||
+                    t.language === 'fra' ||
                     t.language === 'fre' ||
                     (t.label && t.label.toLowerCase().includes('franç')) ||
                     (t.name && t.name.toLowerCase().includes('franç'))
-                ) || audioTracks.find(t => t.language !== 'en' && t.language !== 'eng' && t.language !== 'qaa');
+                ) || audioTracksLocal.find(t => t.language !== 'en' && t.language !== 'eng' && t.language !== 'qaa');
 
                 if (target && (!activeIds || !activeIds.includes(target.trackId))) {
                     console.log("[Molotov] Fallback switch to:", target.language);
@@ -64,15 +456,20 @@
             }
         }
 
-        // --- 2. Event Listeners ---
+        // --- Event Listeners ---
         playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
             setTimeout(forceFrenchAudio, 1000);
+            // Show hint briefly
+            menuHint.classList.add('visible');
+            hideHintTimer = setTimeout(() => {
+                menuHint.classList.remove('visible');
+            }, 5000);
         });
 
         // Handle tracks appearing late
         playerManager.addEventListener(cast.framework.events.EventType.TRACKS_CHANGED, forceFrenchAudio);
 
-        // --- 3. Message Interceptors ---
+        // --- Message Interceptors ---
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             loadRequestData => {
@@ -85,7 +482,7 @@
                 if (customData.license_url && customData.drm_token) {
                     const playbackConfig = (Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig()));
                     playbackConfig.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
-                    
+
                     playbackConfig.shakaConfiguration = {
                         streaming: {
                             bufferingGoal: 30,
@@ -95,16 +492,16 @@
                         },
                         preferredAudioLanguage: 'fra'
                     };
-                    
+
                     let licenseUrl = customData.license_url;
                     if (customData.asset_id) {
                         const separator = licenseUrl.includes('?') ? '&' : '?';
                         licenseUrl += separator + 'assetId=' + customData.asset_id;
                     }
                     playbackConfig.licenseUrl = licenseUrl;
-                    
+
                     playbackConfig.licenseRequestHandler = requestInfo => {
-                        requestInfo.withCredentials = true; 
+                        requestInfo.withCredentials = true;
                         requestInfo.headers['x-dt-auth-token'] = customData.drm_token;
                     };
 
@@ -130,10 +527,14 @@
             }
         );
 
-        // --- 4. Start Receiver ---
+        // --- Initialize ---
+        initMenu();
+
+        // --- Start Receiver ---
         const options = new cast.framework.CastReceiverOptions();
-        options.supportedCommands = cast.framework.messages.Command.ALL_BASIC_COMMANDS | 
-                                    cast.framework.messages.Command.EDIT_TRACKS;
+        options.supportedCommands = cast.framework.messages.Command.ALL_BASIC_COMMANDS |
+                                    cast.framework.messages.Command.EDIT_TRACKS |
+                                    cast.framework.messages.Command.SEEK;
 
         context.start(options);
     </script>

@@ -76,11 +76,6 @@ ConnectionStatusCallback = Callable[[str, bool], None]
 _connection_callbacks: list[ConnectionStatusCallback] = []
 _callbacks_lock = threading.Lock()
 
-# App takeover callbacks: list of (host, new_app_id) -> None
-AppTakeoverCallback = Callable[[str, str | None], None]
-_app_takeover_callbacks: list[AppTakeoverCallback] = []
-_app_callbacks_lock = threading.Lock()
-
 
 class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
@@ -193,31 +188,6 @@ def _notify_connection_status(host: str, connected: bool) -> None:
             callback(host, connected)
         except Exception as err:
             _LOGGER.warning("Connection callback failed: %s", err)
-
-
-def register_app_takeover_callback(callback: AppTakeoverCallback) -> None:
-    """Register a callback for app takeover events."""
-    with _app_callbacks_lock:
-        if callback not in _app_takeover_callbacks:
-            _app_takeover_callbacks.append(callback)
-
-
-def unregister_app_takeover_callback(callback: AppTakeoverCallback) -> None:
-    """Unregister an app takeover callback."""
-    with _app_callbacks_lock:
-        if callback in _app_takeover_callbacks:
-            _app_takeover_callbacks.remove(callback)
-
-
-def _notify_app_takeover(host: str, new_app_id: str | None) -> None:
-    """Notify all registered callbacks of app takeover."""
-    with _app_callbacks_lock:
-        callbacks = list(_app_takeover_callbacks)
-    for callback in callbacks:
-        try:
-            callback(host, new_app_id)
-        except Exception as err:
-            _LOGGER.warning("App takeover callback failed: %s", err)
 
 
 def get_current_app_id(host: str) -> str | None:
