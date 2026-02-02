@@ -210,7 +210,10 @@ def build_search_results_browse(
 
         # Check if this is a program container (Series/Show) that should be browsed
         if (
-            (asset.asset_type in ("program", "serie") or (asset.asset_type == "vod" and not asset.episode_id))
+            (
+                asset.asset_type in ("program", "serie")
+                or (asset.asset_type == "vod" and not asset.episode_id)
+            )
             and asset.program_id
             and asset.channel_id
             and not asset.is_live
@@ -285,87 +288,105 @@ def build_search_input_browse(buffer: str) -> BrowseMedia:
 
     # Action buttons - Always present to maintain layout
     if buffer:
-        children.append(BrowseMedia(
-            title=f"🔎 Recherche pour '{buffer}'",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_PREFIX}:{buffer}",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
-        children.append(BrowseMedia(
-            title="⌫ Retour arrière",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer[:-1]}",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
-        children.append(BrowseMedia(
-            title="🗑 Effacer",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
+        children.append(
+            BrowseMedia(
+                title=f"🔎 Recherche pour '{buffer}'",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_PREFIX}:{buffer}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
+        children.append(
+            BrowseMedia(
+                title="⌫ Retour arrière",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer[:-1]}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
+        children.append(
+            BrowseMedia(
+                title="🗑 Effacer",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
     else:
-        children.append(BrowseMedia(
-            title="🔎 Taper pour rechercher...",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
-        children.append(BrowseMedia(
-            title="⌫ Retour arrière",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
-        children.append(BrowseMedia(
-            title="🗑 Effacer",
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
+        children.append(
+            BrowseMedia(
+                title="🔎 Taper pour rechercher...",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
+        children.append(
+            BrowseMedia(
+                title="⌫ Retour arrière",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
+        children.append(
+            BrowseMedia(
+                title="🗑 Effacer",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
 
     # Space is always useful
-    children.append(BrowseMedia(
-        title="␣ Espace",
-        media_class=MediaClass.DIRECTORY,
-        media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer} ",
-        media_content_type="directory",
-        can_play=False,
-        can_expand=True,
-    ))
+    children.append(
+        BrowseMedia(
+            title="␣ Espace",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer} ",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+        )
+    )
 
     # Keys A-Z
     for char in string.ascii_uppercase:
-        children.append(BrowseMedia(
-            title=char,
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
+        children.append(
+            BrowseMedia(
+                title=char,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
 
     # Keys 0-9
     for char in string.digits:
-        children.append(BrowseMedia(
-            title=char,
-            media_class=MediaClass.DIRECTORY,
-            media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
-            media_content_type="directory",
-            can_play=False,
-            can_expand=True,
-        ))
+        children.append(
+            BrowseMedia(
+                title=char,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_SEARCH_INPUT_PREFIX}:{buffer}{char}",
+                media_content_type="directory",
+                can_play=False,
+                can_expand=True,
+            )
+        )
 
     return BrowseMedia(
         title=f"Recherche: {buffer}█" if buffer else "Clavier de recherche",
@@ -389,11 +410,7 @@ async def async_fetch_channel_replays(
         data = await api.async_get_channel_replays(channel_id)
         assets = extract_replay_assets(data, api, channel_id=channel_id)
         if assets:
-            assets = [
-                asset
-                for asset in assets
-                if asset.channel_id == channel_id
-            ]
+            assets = [asset for asset in assets if asset.channel_id == channel_id]
         if assets:
             _LOGGER.debug(
                 "Found %d replays from replay API for channel %s",
@@ -416,9 +433,7 @@ async def async_fetch_channel_replays(
             )
             return programs
     except MolotovApiError as err:
-        _LOGGER.debug(
-            "Failed to fetch past programs for %s: %s", channel_id, err
-        )
+        _LOGGER.debug("Failed to fetch past programs for %s: %s", channel_id, err)
 
     # Fall back to using past programs from coordinator data
     if epg_data is None:
@@ -461,9 +476,7 @@ async def async_fetch_channel_replays(
             continue
 
         # Build replay URL with start_over
-        asset_url = api.build_asset_url(
-            "channel", channel_id, start_over=True
-        )
+        asset_url = api.build_asset_url("channel", channel_id, start_over=True)
 
         _LOGGER.debug(
             "Adding replay: %s (start=%s, end=%s)",
@@ -486,9 +499,7 @@ async def async_fetch_channel_replays(
             )
         )
 
-    _LOGGER.debug(
-        "Found %d replays from EPG for channel %s", len(replays), channel_id
-    )
+    _LOGGER.debug("Found %d replays from EPG for channel %s", len(replays), channel_id)
 
     return replays
 
@@ -503,9 +514,7 @@ async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
         all_sections = await api.async_get_all_recordings()
         _LOGGER.debug("Got %d sections from recordings API", len(all_sections))
         for section in all_sections:
-            section_assets = extract_recording_assets(
-                {"sections": [section]}, api
-            )
+            section_assets = extract_recording_assets({"sections": [section]}, api)
             for asset in section_assets:
                 if asset.asset_url not in seen_urls:
                     seen_urls.add(asset.asset_url)

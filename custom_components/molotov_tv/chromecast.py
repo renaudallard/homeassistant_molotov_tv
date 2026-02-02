@@ -41,6 +41,9 @@ from homeassistant.core import HomeAssistant
 
 from .const import CAST_RECONNECT_ATTEMPTS, CAST_RECONNECT_DELAY
 
+# Shared zeroconf instance (set from async context)
+_zeroconf_instance: Any = None
+
 _LOGGER = logging.getLogger(__name__)
 
 # Timeout for blocking Chromecast operations (seconds)
@@ -79,6 +82,32 @@ _callbacks_lock = threading.Lock()
 
 class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
+
+
+class MediaStatusListener:
+    """Wrapper class for media status callbacks.
+
+    pychromecast expects a listener object with new_media_status method,
+    not a plain callback function.
+    """
+
+    def __init__(self, callback: Callable[[Any], None]) -> None:
+        """Initialize with callback function."""
+        self._callback = callback
+
+    def new_media_status(self, status: Any) -> None:
+        """Called by pychromecast when media status changes."""
+        try:
+            self._callback(status)
+        except Exception as err:
+            _LOGGER.warning("Media status callback error: %s", err)
+
+
+def set_zeroconf_instance(zeroconf: Any) -> None:
+    """Set the shared zeroconf instance from Home Assistant."""
+    global _zeroconf_instance
+    _zeroconf_instance = zeroconf
+    _LOGGER.debug("Zeroconf instance set")
 
 
 def _cleanup_stale_casts() -> None:
@@ -335,10 +364,14 @@ def _connect_to_chromecast(host: str) -> Any | None:
     browser = None
 
     try:
-        # Try get_chromecasts with known_hosts
+        # Try get_chromecasts with known_hosts and shared zeroconf
         if hasattr(pychromecast, "get_chromecasts"):
             try:
-                result = pychromecast.get_chromecasts(known_hosts=[host], timeout=10)
+                kwargs = {"known_hosts": [host], "timeout": 10}
+                # Use shared zeroconf if available
+                if _zeroconf_instance is not None:
+                    kwargs["zeroconf_instance"] = _zeroconf_instance
+                result = pychromecast.get_chromecasts(**kwargs)
                 if isinstance(result, tuple) and len(result) >= 2:
                     chromecasts, browser = result[0], result[1]
                 else:
@@ -462,9 +495,11 @@ def _cast_media_blocking(
                 _LOGGER.debug("get_chromecasts params: %s", params)
 
                 if "known_hosts" in params:
-                    result = pychromecast.get_chromecasts(
-                        known_hosts=[cast_target], timeout=10
-                    )
+                    kwargs = {"known_hosts": [cast_target], "timeout": 10}
+                    # Use shared zeroconf if available
+                    if _zeroconf_instance is not None and "zeroconf_instance" in params:
+                        kwargs["zeroconf_instance"] = _zeroconf_instance
+                    result = pychromecast.get_chromecasts(**kwargs)
                     if isinstance(result, tuple) and len(result) >= 2:
                         chromecasts, browser = result[0], result[1]
                     else:
@@ -887,11 +922,16 @@ def _cast_register_listener(host: str, callback: Any) -> None:
     if not conn:
         return
     try:
-        conn.cast.media_controller.register_status_listener(callback)
+        # Wrap callback in MediaStatusListener if it's a plain function
+        if callable(callback) and not isinstance(callback, MediaStatusListener):
+            listener = MediaStatusListener(callback)
+        else:
+            listener = callback
+        conn.cast.media_controller.register_status_listener(listener)
         # Store listener for reconnection
         with _cast_lock:
-            if callback not in conn.listeners:
-                conn.listeners.append(callback)
+            if listener not in conn.listeners:
+                conn.listeners.append(listener)
         _LOGGER.debug("Registered status listener for %s", host)
     except Exception as err:
         _LOGGER.warning("Failed to register listener: %s", err)

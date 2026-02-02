@@ -257,7 +257,9 @@ def _coerce_int(value: Any) -> int | None:
     return None
 
 
-def _extract_image_url(payload: dict[str, Any], *, prefer_poster: bool = False) -> str | None:
+def _extract_image_url(
+    payload: dict[str, Any], *, prefer_poster: bool = False
+) -> str | None:
     for key in ("poster", "posterUrl", "logo", "logoUrl", "thumbnail", "thumbnailUrl"):
         url = payload.get(key)
         if isinstance(url, str) and url:
@@ -270,7 +272,13 @@ def _extract_image_url(payload: dict[str, Any], *, prefer_poster: bool = False) 
     if prefer_poster:
         preferred = ("poster_with_channel", "poster", "poster_tv", "landscape")
     else:
-        preferred = ("logo_light", "logo_16_9", "poster_with_channel", "poster", "landscape")
+        preferred = (
+            "logo_light",
+            "logo_16_9",
+            "poster_with_channel",
+            "poster",
+            "landscape",
+        )
     for key in preferred:
         url = _extract_image_from_bundle(bundle.get(key))
         if url:
@@ -282,9 +290,7 @@ def _extract_image_url(payload: dict[str, Any], *, prefer_poster: bool = False) 
     return None
 
 
-def _extract_channel_logo(
-    channel: dict[str, Any], entry: dict[str, Any]
-) -> str | None:
+def _extract_channel_logo(channel: dict[str, Any], entry: dict[str, Any]) -> str | None:
     for payload in (channel, entry):
         if not isinstance(payload, dict):
             continue

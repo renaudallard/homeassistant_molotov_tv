@@ -141,9 +141,7 @@ class MolotovTvOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_CAST_HOSTS,
                     default=existing_hosts or "",
-                ): selector.TextSelector(
-                    selector.TextSelectorConfig(multiline=True)
-                ),
+                ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
             }
         )
 

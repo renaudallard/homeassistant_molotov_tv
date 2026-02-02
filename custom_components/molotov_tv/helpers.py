@@ -285,7 +285,9 @@ def extract_asset_reference(item: dict[str, Any]) -> tuple[str, str, bool] | Non
 # --- Image extraction ---
 
 
-def extract_item_image(payload: dict[str, Any], *, prefer_poster: bool = False) -> str | None:
+def extract_item_image(
+    payload: dict[str, Any], *, prefer_poster: bool = False
+) -> str | None:
     """Extract image URL from item payload."""
     for key in ("thumbnail", "thumbnailUrl", "poster", "posterUrl", "logo", "logoUrl"):
         url = payload.get(key)
@@ -387,9 +389,7 @@ def find_current_program(channel: EpgChannel, now: datetime) -> EpgProgram | Non
     return None
 
 
-def count_channels_with_current(
-    channels: list[EpgChannel], now: datetime
-) -> int:
+def count_channels_with_current(channels: list[EpgChannel], now: datetime) -> int:
     """Count channels that have a current program."""
     return sum(1 for channel in channels if find_current_program(channel, now))
 
@@ -410,9 +410,7 @@ def merge_epg_channels(
             existing.label = channel.label
 
 
-def parse_remote_programs(
-    data: dict[str, Any], channel_id: str
-) -> list[EpgProgram]:
+def parse_remote_programs(data: dict[str, Any], channel_id: str) -> list[EpgProgram]:
     """Parse programs from remote API response."""
     if not isinstance(data, dict):
         return []
@@ -532,9 +530,7 @@ def parse_program_item(item: dict[str, Any], channel_id: str) -> EpgProgram | No
 # --- Asset parsing ---
 
 
-def parse_asset_item(
-    item: dict[str, Any], api: MolotovApi
-) -> BrowseAsset | None:
+def parse_asset_item(item: dict[str, Any], api: MolotovApi) -> BrowseAsset | None:
     """Parse an item dict into a BrowseAsset."""
     payload = extract_item_payload(item)
     actions = extract_item_actions(item, payload)
@@ -545,7 +541,7 @@ def parse_asset_item(
         if payload.get("is_available") is False:
             _LOGGER.debug(
                 "Skipping asset without playback ref (is_available=False): %s",
-                payload.get("title")
+                payload.get("title"),
             )
         return None
     asset_type, asset_id, start_over = ref
@@ -596,12 +592,8 @@ def parse_asset_item(
     available_until: datetime | None = None
 
     if isinstance(video, dict):
-        start = parse_timestamp(
-            video.get("start_at") or video.get("start")
-        )
-        end = parse_timestamp(
-            video.get("end_at") or video.get("end")
-        )
+        start = parse_timestamp(video.get("start_at") or video.get("start"))
+        end = parse_timestamp(video.get("end_at") or video.get("end"))
         available_from = parse_timestamp(video.get("available_from"))
         available_until = parse_timestamp(video.get("available_until"))
         # Extract IDs
@@ -667,7 +659,9 @@ def parse_asset_item(
     return BrowseAsset(
         title=title,
         asset_url=asset_url,
-        is_live=start is not None and end is not None and start <= dt_util.utcnow() < end,
+        is_live=start is not None
+        and end is not None
+        and start <= dt_util.utcnow() < end,
         description=description,
         episode_title=episode_title,
         thumbnail=thumbnail,
@@ -733,10 +727,14 @@ def parse_past_programs_as_replays(
         )
         if isinstance(first, dict):
             if first.get("data"):
-                _LOGGER.debug("First program has 'data' key with: %s", list(first["data"].keys()))
+                _LOGGER.debug(
+                    "First program has 'data' key with: %s", list(first["data"].keys())
+                )
             if first.get("video"):
                 video = first["video"]
-                _LOGGER.debug("First program has 'video' key with: %s", list(video.keys()))
+                _LOGGER.debug(
+                    "First program has 'video' key with: %s", list(video.keys())
+                )
                 _LOGGER.debug(
                     "First program video times: start_at=%s, end_at=%s, available_from=%s, available_until=%s",
                     video.get("start_at"),
@@ -850,7 +848,9 @@ def parse_past_programs_as_replays(
 
         # Extract program_id and channel_id for episode browsing
         program_id = str(video.get("program_id")) if video.get("program_id") else None
-        item_channel_id = str(video.get("channel_id")) if video.get("channel_id") else channel_id
+        item_channel_id = (
+            str(video.get("channel_id")) if video.get("channel_id") else channel_id
+        )
 
         replays.append(
             BrowseAsset(
@@ -934,12 +934,19 @@ def extract_replay_assets(
                 if asset.start:
                     is_future = asset.start > now
                     if is_future:
-                        _LOGGER.debug("Filtering future asset '%s': start=%s > now=%s", asset.title, asset.start, now)
+                        _LOGGER.debug(
+                            "Filtering future asset '%s': start=%s > now=%s",
+                            asset.title,
+                            asset.start,
+                            now,
+                        )
                         continue
 
                 # If broadcast and no start time, suspicious
                 if asset.asset_type == "broadcast" and not asset.start:
-                    _LOGGER.debug("Filtering broadcast without start time: %s", asset.title)
+                    _LOGGER.debug(
+                        "Filtering broadcast without start time: %s", asset.title
+                    )
                     continue
 
                 # Check if replay is within availability window
@@ -947,14 +954,19 @@ def extract_replay_assets(
                     if not (asset.available_from <= now <= asset.available_until):
                         _LOGGER.debug(
                             "Filtering unavailable asset '%s': now=%s not in [%s, %s]",
-                            asset.title, now, asset.available_from, asset.available_until
+                            asset.title,
+                            now,
+                            asset.available_from,
+                            asset.available_until,
                         )
                         continue
                 elif asset.available_until and asset.available_until < now:
                     # Replay has expired
                     _LOGGER.debug(
                         "Filtering expired asset '%s': available_until=%s < now=%s",
-                        asset.title, asset.available_until, now
+                        asset.title,
+                        asset.available_until,
+                        now,
                     )
                     continue
 
@@ -1017,7 +1029,7 @@ def extract_program_episodes(
 
     _LOGGER.debug(
         "Extracting episodes from data with keys: %s",
-        list(data.keys()) if data else "empty"
+        list(data.keys()) if data else "empty",
     )
 
     # Only look at sections that contain playable episodes
@@ -1041,14 +1053,19 @@ def extract_program_episodes(
             section_title = section.get("title") or section.get("slug") or "unknown"
 
             # Skip sections that aren't playable content
-            if any(skip in section_slug for skip in ("a-venir", "bientot", "upcoming", "soon")):
+            if any(
+                skip in section_slug
+                for skip in ("a-venir", "bientot", "upcoming", "soon")
+            ):
                 continue
 
             items = extract_section_items(section)
 
             _LOGGER.debug(
                 "Processing section '%s' (slug=%s) with %d items",
-                section_title, section_slug, len(items)
+                section_title,
+                section_slug,
+                len(items),
             )
 
             for item in items:
@@ -1059,11 +1076,19 @@ def extract_program_episodes(
                 if filter_program_id:
                     payload = extract_item_payload(item)
                     video = payload.get("video", {})
-                    item_program_id = str(video.get("program_id")) if video.get("program_id") else None
-                    if item_program_id is not None and item_program_id != filter_program_id:
+                    item_program_id = (
+                        str(video.get("program_id"))
+                        if video.get("program_id")
+                        else None
+                    )
+                    if (
+                        item_program_id is not None
+                        and item_program_id != filter_program_id
+                    ):
                         _LOGGER.debug(
                             "Skipping item with different program_id: %s != %s",
-                            item_program_id, filter_program_id
+                            item_program_id,
+                            filter_program_id,
                         )
                         continue
 
@@ -1074,7 +1099,9 @@ def extract_program_episodes(
                     if asset.start and asset.start > now:
                         _LOGGER.debug(
                             "Skipping future episode '%s': start=%s > now=%s",
-                            asset.title, asset.start, now
+                            asset.title,
+                            asset.start,
+                            now,
                         )
                         continue
 
@@ -1093,7 +1120,9 @@ def extract_program_episodes(
                         payload.get("is_available"),
                     )
 
-    _LOGGER.debug("Total unique episodes for program %s: %d", filter_program_id, len(assets))
+    _LOGGER.debug(
+        "Total unique episodes for program %s: %d", filter_program_id, len(assets)
+    )
     sorted_assets = sort_assets(assets)
     return sorted_assets[:50]
 
@@ -1210,9 +1239,7 @@ def dedupe_assets(assets: list[BrowseAsset]) -> list[BrowseAsset]:
 def sort_assets(assets: list[BrowseAsset]) -> list[BrowseAsset]:
     """Sort assets by start date, newest first."""
     assets.sort(
-        key=lambda asset: asset.start
-        or asset.end
-        or dt_util.utc_from_timestamp(0),
+        key=lambda asset: asset.start or asset.end or dt_util.utc_from_timestamp(0),
         reverse=True,
     )
     return assets
@@ -1249,6 +1276,7 @@ def discover_cast_targets_blocking(zconf: Any) -> list[str]:
             _LOGGER.debug("Trying get_chromecasts()")
             try:
                 import inspect
+
                 sig = inspect.signature(pychromecast.get_chromecasts)
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_chromecasts params: %s", params)
@@ -1260,7 +1288,10 @@ def discover_cast_targets_blocking(zconf: Any) -> list[str]:
                     chromecasts, browser = result[0], result[1]
                 else:
                     chromecasts = result
-                _LOGGER.debug("get_chromecasts found %d devices", len(chromecasts) if chromecasts else 0)
+                _LOGGER.debug(
+                    "get_chromecasts found %d devices",
+                    len(chromecasts) if chromecasts else 0,
+                )
             except Exception as err:
                 _LOGGER.debug("get_chromecasts failed: %s", err)
 
@@ -1269,18 +1300,20 @@ def discover_cast_targets_blocking(zconf: Any) -> list[str]:
             _LOGGER.debug("Trying get_listed_chromecasts()")
             try:
                 import inspect
+
                 sig = inspect.signature(pychromecast.get_listed_chromecasts)
                 params = list(sig.parameters.keys())
                 _LOGGER.debug("get_listed_chromecasts params: %s", params)
 
-                result = pychromecast.get_listed_chromecasts(
-                    zeroconf_instance=zconf
-                )
+                result = pychromecast.get_listed_chromecasts(zeroconf_instance=zconf)
                 if isinstance(result, tuple) and len(result) >= 2:
                     chromecasts, browser = result[0], result[1]
                 else:
                     chromecasts = result
-                _LOGGER.debug("get_listed_chromecasts found %d devices", len(chromecasts) if chromecasts else 0)
+                _LOGGER.debug(
+                    "get_listed_chromecasts found %d devices",
+                    len(chromecasts) if chromecasts else 0,
+                )
             except Exception as err:
                 _LOGGER.debug("get_listed_chromecasts failed: %s", err)
 

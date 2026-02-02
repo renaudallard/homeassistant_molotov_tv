@@ -63,7 +63,9 @@ class MolotovSearchText(TextEntity):
     _attr_native_max = 100
     _attr_native_min = 0
 
-    def __init__(self, entry: ConfigEntry, api: MolotovApi, hass: HomeAssistant) -> None:
+    def __init__(
+        self, entry: ConfigEntry, api: MolotovApi, hass: HomeAssistant
+    ) -> None:
         """Initialize the search text entity."""
         self._entry = entry
         self._api = api

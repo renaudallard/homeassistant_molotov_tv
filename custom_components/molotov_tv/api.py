@@ -75,7 +75,10 @@ def _extract_user_message(error_body: str | None) -> str | None:
             if isinstance(error, dict):
                 user_msg = error.get("user_message")
                 if user_msg:
-                    _LOGGER.debug("Extracted user_message: %s", user_msg[:100] if user_msg else None)
+                    _LOGGER.debug(
+                        "Extracted user_message: %s",
+                        user_msg[:100] if user_msg else None,
+                    )
                 return user_msg
     except (json.JSONDecodeError, TypeError) as err:
         _LOGGER.debug("Failed to extract user_message from error body: %s", err)
@@ -269,13 +272,13 @@ class MolotovApi:
         """Fetch dynamic config data."""
 
         data = await self._request("GET", "v2/config", auth=False)
-        
+
         api_root = data.get("apiRoot")
         if api_root and isinstance(api_root, str):
             _LOGGER.debug("Configured apiRoot: %s", api_root)
             # Potentially update base_api_url if we want to trust the config
-            # self._base_api_url = api_root 
-            
+            # self._base_api_url = api_root
+
         cast_app_id = data.get("cast_app_id")
         if cast_app_id:
             self._session_state.cast_app_id = cast_app_id
@@ -293,7 +296,7 @@ class MolotovApi:
         )
         if home_url:
             self._session_state.home_url = home_url
-        
+
         search_url = (
             _extract_config_url(data, "search")
             or _extract_config_url(data, "search_legacy")
@@ -381,29 +384,37 @@ class MolotovApi:
 
         # Try different search endpoints
         endpoints = []
-        
+
         # Use dynamic search URL if available (preferred)
         # Note: globalSearchUrl typically returns a list of SearchTile objects
         if self._session_state.search_url:
-            _LOGGER.debug("Using dynamic search URL: %s", self._session_state.search_url)
+            _LOGGER.debug(
+                "Using dynamic search URL: %s", self._session_state.search_url
+            )
             endpoints.append(("POST", self._session_state.search_url, {"query": query}))
-            
-        endpoints.extend([
-            ("POST", "v2/search", {"query": query}),
-            ("POST", "v2/universal-search", {"query": query}),
-            ("POST", "v2/me/search", {"query": query}), # Try without /query
-            ("POST", "v2/me/search/query", {"query": query}),
-            ("POST", "v3/me/search/query", {"query": query}),
-            ("POST", "v2/search/query", {"query": query}),  # Try without /me/
-            ("POST", "v3/search/query", {"query": query}),
-            ("GET", f"v2/me/search?query={query}", None),
-            ("GET", f"v3/search?q={query}", None),
-        ])
+
+        endpoints.extend(
+            [
+                ("POST", "v2/search", {"query": query}),
+                ("POST", "v2/universal-search", {"query": query}),
+                ("POST", "v2/me/search", {"query": query}),  # Try without /query
+                ("POST", "v2/me/search/query", {"query": query}),
+                ("POST", "v3/me/search/query", {"query": query}),
+                ("POST", "v2/search/query", {"query": query}),  # Try without /me/
+                ("POST", "v3/search/query", {"query": query}),
+                ("GET", f"v2/me/search?query={query}", None),
+                ("GET", f"v3/search?q={query}", None),
+            ]
+        )
 
         last_error: MolotovApiError | None = None
         for method, endpoint, body in endpoints:
             try:
-                url = endpoint if endpoint.startswith("http") else urljoin(self._base_api_url, endpoint)
+                url = (
+                    endpoint
+                    if endpoint.startswith("http")
+                    else urljoin(self._base_api_url, endpoint)
+                )
                 _LOGGER.debug("Trying search endpoint: %s %s", method, url)
 
                 if method == "POST" and body:
@@ -421,24 +432,24 @@ class MolotovApi:
                     has_sections = bool(result.get("sections"))
                     has_items = bool(result.get("items"))
                     has_results = bool(result.get("results"))
-                    
+
                     if has_sections or has_items or has_results:
                         return result
-                        
+
                 elif isinstance(result, list):
-                     # Global search returns a list of items directly
-                     # Wrap it in a section for compatibility
-                     _LOGGER.debug("Got list response with %d items", len(result))
-                     return {
-                         "sections": [
-                             {
-                                 "title": "Results",
-                                 "items": result,
-                                 "type": "search_results" 
-                             }
-                         ], 
-                         "query": query
-                     }
+                    # Global search returns a list of items directly
+                    # Wrap it in a section for compatibility
+                    _LOGGER.debug("Got list response with %d items", len(result))
+                    return {
+                        "sections": [
+                            {
+                                "title": "Results",
+                                "items": result,
+                                "type": "search_results",
+                            }
+                        ],
+                        "query": query,
+                    }
 
             except MolotovApiError as err:
                 _LOGGER.debug("Search endpoint %s failed: %s", endpoint, err)
@@ -457,13 +468,19 @@ class MolotovApi:
         endpoints = []
         if self._session_state.search_home_url:
             endpoints.append(self._session_state.search_home_url)
-        endpoints.extend([
-            "v3/search-home",
-            "v2/me/search/home",
-        ])
+        endpoints.extend(
+            [
+                "v3/search-home",
+                "v2/me/search/home",
+            ]
+        )
         last_error: MolotovApiError | None = None
         for endpoint in endpoints:
-            url = endpoint if endpoint.startswith("http") else urljoin(self._base_api_url, endpoint)
+            url = (
+                endpoint
+                if endpoint.startswith("http")
+                else urljoin(self._base_api_url, endpoint)
+            )
             try:
                 return await self._request("GET", url, auth=True)
             except MolotovApiError as err:
@@ -508,7 +525,11 @@ class MolotovApi:
             except MolotovApiError as err:
                 _LOGGER.debug("Program details endpoint %s failed: %s", endpoint, err)
 
-        return {"program": None, "channelEpisodeSections": [], "programEpisodeSections": []}
+        return {
+            "program": None,
+            "channelEpisodeSections": [],
+            "programEpisodeSections": [],
+        }
 
     async def async_get_asset_stream(self, asset_url: str) -> dict[str, Any]:
         """Resolve asset URL to stream data."""
@@ -518,15 +539,28 @@ class MolotovApi:
         asset_data = await self._request("GET", asset_url, auth=True)
 
         _LOGGER.debug(
-            "Asset response keys: %s", list(asset_data.keys()) if isinstance(asset_data, dict) else type(asset_data)
+            "Asset response keys: %s",
+            list(asset_data.keys())
+            if isinstance(asset_data, dict)
+            else type(asset_data),
         )
 
         # 2. Check CDN decision - stream might be at top level or nested
         stream = asset_data.get("stream", {})
         if not stream or not stream.get("url"):
             # Try alternative locations for stream URL
-            _LOGGER.debug("No 'stream.url' key, checking alternatives in: %s", list(asset_data.keys()))
-            for key in ["manifest_url", "url", "playback_url", "dash_url", "mpd_url", "content_url"]:
+            _LOGGER.debug(
+                "No 'stream.url' key, checking alternatives in: %s",
+                list(asset_data.keys()),
+            )
+            for key in [
+                "manifest_url",
+                "url",
+                "playback_url",
+                "dash_url",
+                "mpd_url",
+                "content_url",
+            ]:
                 if key in asset_data and asset_data[key]:
                     stream = {"url": asset_data[key]}
                     _LOGGER.debug("Found stream URL in '%s'", key)
@@ -546,19 +580,29 @@ class MolotovApi:
                     base_url = providers_data[0]
                     if isinstance(base_url, str):
                         if suffix_url:
-                            final_url = f"{base_url.rstrip('/')}/{suffix_url.lstrip('/')}"
+                            final_url = (
+                                f"{base_url.rstrip('/')}/{suffix_url.lstrip('/')}"
+                            )
                         else:
                             final_url = base_url
                         _LOGGER.debug("Resolved stream URL: %s", final_url)
             except MolotovAuthError:
                 raise
-            except (MolotovApiError, KeyError, TypeError, IndexError, ValueError) as err:
+            except (
+                MolotovApiError,
+                KeyError,
+                TypeError,
+                IndexError,
+                ValueError,
+            ) as err:
                 _LOGGER.warning("Failed to resolve CDN decision: %s", err)
 
         # Update the stream dict with the resolved URL
         if final_url:
             stream["url"] = final_url
-            _LOGGER.debug("Final stream URL: %s", final_url[:100] if final_url else None)
+            _LOGGER.debug(
+                "Final stream URL: %s", final_url[:100] if final_url else None
+            )
         else:
             _LOGGER.warning("No stream URL found in asset response")
 
@@ -618,9 +662,15 @@ class MolotovApi:
             _LOGGER.debug("Fetching channel sections for replays: %s", url)
             result = await self._request("GET", url, auth=True)
             if result and result.get("sections"):
-                _LOGGER.debug("Found %d sections for channel %s via dedicated endpoint", len(result.get("sections")), channel_id)
+                _LOGGER.debug(
+                    "Found %d sections for channel %s via dedicated endpoint",
+                    len(result.get("sections")),
+                    channel_id,
+                )
                 return result
-            _LOGGER.debug("Channel sections endpoint returned no sections for %s", channel_id)
+            _LOGGER.debug(
+                "Channel sections endpoint returned no sections for %s", channel_id
+            )
         except MolotovApiError as err:
             _LOGGER.debug(
                 "Channel sections endpoint failed for %s: %s", channel_id, err
@@ -676,15 +726,15 @@ class MolotovApi:
                             channel_id,
                             item.get("title", "unknown")[:30],
                             video.get("id"),
-                            section.get("title", "unknown")
+                            section.get("title", "unknown"),
                         )
                 elif item_channel:
-                     _LOGGER.debug(
-                         "Skipping item '%s': Item channel_id=%s != Target %s",
-                         item.get("title", "unknown")[:30],
-                         item_channel,
-                         channel_id
-                     )
+                    _LOGGER.debug(
+                        "Skipping item '%s': Item channel_id=%s != Target %s",
+                        item.get("title", "unknown")[:30],
+                        item_channel,
+                        channel_id,
+                    )
 
             if channel_items:
                 filtered_section = {**section, "items": channel_items}
@@ -918,9 +968,13 @@ class MolotovApi:
                 if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
                     _LOGGER.warning(
                         "Retryable error %s for %s %s, attempt %d/%d",
-                        resp.status, method, url, _retries + 1, MAX_RETRIES
+                        resp.status,
+                        method,
+                        url,
+                        _retries + 1,
+                        MAX_RETRIES,
                     )
-                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2 ** _retries))
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2**_retries))
                     return await self._request(
                         method,
                         url_or_path,
@@ -1034,9 +1088,13 @@ class MolotovApi:
                 if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
                     _LOGGER.warning(
                         "Retryable error %s for %s %s, attempt %d/%d",
-                        resp.status, method, url, _retries + 1, MAX_RETRIES
+                        resp.status,
+                        method,
+                        url,
+                        _retries + 1,
+                        MAX_RETRIES,
                     )
-                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2 ** _retries))
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2**_retries))
                     return await self._request_raw_bytes(
                         method,
                         url_or_path,
@@ -1111,7 +1169,7 @@ class MolotovApi:
             user_id = account.get("id")
             if user_id is not None:
                 self._session_state.user_id = str(user_id)
-            
+
             # Check for premium status
             user_type = account.get("user_type")
             if user_type not in ("premium", "vip"):

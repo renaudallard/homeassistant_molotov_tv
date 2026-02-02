@@ -33,12 +33,14 @@ import logging
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.zeroconf import async_get_instance as async_get_zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import MolotovApi, MolotovApiError, MolotovAuthError
+from .chromecast import set_zeroconf_instance
 from .const import (
     CONF_EMAIL,
     CONF_ENVIRONMENT,
@@ -56,6 +58,10 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Molotov TV from a config entry."""
+
+    # Set shared zeroconf instance for chromecast module
+    zeroconf = await async_get_zeroconf(hass)
+    set_zeroconf_instance(zeroconf)
 
     data = entry.data
     email = data[CONF_EMAIL]
