@@ -757,21 +757,35 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         probe_now = dt_util.utcnow()
         channels_by_id = {channel.channel_id: channel for channel in channels}
         if count_channels_with_current(channels, probe_now) < len(channels):
+            # First try live_home which often includes program data
+            try:
+                live_home = await self._api.async_get_live_home_channels()
+                live_data = _parse_epg(live_home)
+                merge_epg_channels(channels_by_id, live_data.channels)
+            except MolotovApiError as err:
+                _LOGGER.debug("Now playing live home refresh failed: %s", err)
 
-            async def fetch_live_home() -> None:
-                try:
-                    live_home = await self._api.async_get_live_home_channels()
-                    live_data = _parse_epg(live_home)
-                    merge_epg_channels(channels_by_id, live_data.channels)
-                except MolotovApiError as err:
-                    _LOGGER.debug("Now playing live home refresh failed: %s", err)
-
-            await asyncio.gather(
-                fetch_live_home(),
-                self._async_populate_now_playing_programs(
-                    list(channels_by_id.values())
-                ),
+            # Check if we still need per-channel program fetches
+            channels_list = list(channels_by_id.values())
+            channels_with_programs = sum(
+                1 for c in channels_list if c.programs and len(c.programs) > 0
             )
+            coverage = (
+                channels_with_programs / len(channels_list) if channels_list else 0
+            )
+
+            if coverage < 0.7:
+                # Less than 70% have programs, fetch missing ones
+                _LOGGER.debug(
+                    "Program coverage %.0f%%, fetching missing programs",
+                    coverage * 100,
+                )
+                await self._async_populate_now_playing_programs(channels_list)
+            else:
+                _LOGGER.debug(
+                    "Program coverage %.0f%%, skipping per-channel fetch",
+                    coverage * 100,
+                )
         else:
             await self._async_populate_now_playing_programs(
                 list(channels_by_id.values())
@@ -845,7 +859,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if not missing:
             return
 
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(10)  # Increased for faster fetching
 
         async def fetch_programs(channel: EpgChannel) -> None:
             async with semaphore:

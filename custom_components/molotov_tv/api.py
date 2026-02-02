@@ -35,6 +35,8 @@ import gzip
 import io
 import json
 import logging
+import random
+import time
 from typing import Any
 from urllib.parse import urlencode, urljoin
 import zipfile
@@ -136,13 +138,16 @@ def _extract_config_url(data: dict[str, Any], key: str) -> str | None:
 
 
 # HTTP request timeouts (seconds)
-DEFAULT_TIMEOUT = ClientTimeout(total=30, connect=10)
-LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=60, connect=10)  # For EPG downloads
+DEFAULT_TIMEOUT = ClientTimeout(total=20, connect=10)  # Reduced from 30s
+LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=45, connect=10)  # Reduced from 60s
 
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_STATUS_CODES = {502, 503, 504, 429}  # Gateway errors and rate limiting
 RETRY_DELAY_SECONDS = 1.0
+
+# EPG link cache TTL (seconds)
+EPG_LINK_CACHE_TTL = 300  # 5 minutes
 
 
 class MolotovApiError(Exception):
@@ -208,6 +213,7 @@ class MolotovApi:
         )
         self._language = language
         self._lock = asyncio.Lock()
+        self._epg_link_cache: tuple[float, str] | None = None  # (timestamp, link)
 
     @property
     def session_state(self) -> MolotovSession:
@@ -333,22 +339,41 @@ class MolotovApi:
         if session.live_home_url and session.live_home_url not in urls:
             urls.append(session.live_home_url)
 
+        if not urls:
+            _LOGGER.warning("No channel URLs available, falling back to EPG")
+            return await self.async_get_epg()
+
+        # Race all URLs concurrently - return first success
+        async def fetch_url(url: str) -> tuple[str, dict[str, Any]]:
+            _LOGGER.debug("Fetching Molotov channels from %s", url)
+            result = await self._request("GET", url, auth=True)
+            return url, result
+
+        tasks = [asyncio.create_task(fetch_url(url)) for url in urls]
         last_error: MolotovApiError | None = None
-        for url in urls:
+
+        for coro in asyncio.as_completed(tasks):
             try:
-                _LOGGER.debug("Fetching Molotov channels from %s", url)
-                return await self._request("GET", url, auth=True)
+                url, result = await coro
+                # Cancel remaining tasks
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                _LOGGER.debug("Channel fetch succeeded from %s", url)
+                return result
             except MolotovApiError as err:
                 last_error = err
-                _LOGGER.warning("Molotov channel fetch failed for %s: %s", url, err)
+                _LOGGER.debug("Channel fetch failed: %s", err)
+            except asyncio.CancelledError:
+                pass
 
-        _LOGGER.warning("Falling back to Live Channels EPG feed")
+        _LOGGER.warning("All channel endpoints failed, falling back to EPG feed")
         try:
             return await self.async_get_epg()
         except MolotovApiError as err:
             if last_error:
                 _LOGGER.error(
-                    "Molotov channel fetch failed for all endpoints; fallback failed: %s",
+                    "Channel fetch failed for all endpoints; fallback failed: %s",
                     err,
                 )
             raise
@@ -878,15 +903,28 @@ class MolotovApi:
         if not user_id:
             raise MolotovApiError("Missing user id for EPG request")
 
-        link_data = await self._request(
-            "GET",
-            f"{self._live_channel_api_url.rstrip('/')}/v1/{user_id}/firestick/download-link-epg-files",
-            auth=False,
-            basic_auth=self._live_channel_auth,
-        )
-        link = link_data.get("link")
+        # Check EPG link cache
+        link: str | None = None
+        now = time.time()
+        if self._epg_link_cache:
+            cached_time, cached_link = self._epg_link_cache
+            if now - cached_time < EPG_LINK_CACHE_TTL:
+                link = cached_link
+                _LOGGER.debug("Using cached EPG link")
+
+        # Fetch new link if not cached
         if not link:
-            raise MolotovApiError("EPG link not returned by live channel API")
+            link_data = await self._request(
+                "GET",
+                f"{self._live_channel_api_url.rstrip('/')}/v1/{user_id}/firestick/download-link-epg-files",
+                auth=False,
+                basic_auth=self._live_channel_auth,
+            )
+            link = link_data.get("link")
+            if not link:
+                raise MolotovApiError("EPG link not returned by live channel API")
+            # Cache the link
+            self._epg_link_cache = (now, link)
 
         live_channel_base = self._live_channel_api_url.rstrip("/")
         use_basic_auth = link.startswith(live_channel_base)
@@ -905,6 +943,7 @@ class MolotovApi:
         headers = {
             "User-Agent": "Android",
             "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
             "Content-Type": "application/json",
             "Accept-Language": self._language,
             "logged_in": "true" if auth else "false",
@@ -974,7 +1013,9 @@ class MolotovApi:
                         _retries + 1,
                         MAX_RETRIES,
                     )
-                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2**_retries))
+                    await asyncio.sleep(
+                        RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
+                    )
                     return await self._request(
                         method,
                         url_or_path,
@@ -1094,7 +1135,9 @@ class MolotovApi:
                         _retries + 1,
                         MAX_RETRIES,
                     )
-                    await asyncio.sleep(RETRY_DELAY_SECONDS * (2**_retries))
+                    await asyncio.sleep(
+                        RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
+                    )
                     return await self._request_raw_bytes(
                         method,
                         url_or_path,
