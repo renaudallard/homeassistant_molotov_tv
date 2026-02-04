@@ -91,6 +91,11 @@ MEDIA_SEARCH_PREFIX = "search"
 MEDIA_SEARCH_RESULT_PREFIX = "search_result"
 MEDIA_SEARCH_INPUT_PREFIX = "search_input"
 
+# Panel configuration
+PANEL_URL_PATH = "molotov-tv"
+PANEL_TITLE = "Molotov TV"
+PANEL_ICON = "mdi:television-play"
+
 CONTENT_TYPE_DASH = "application/dash+xml"
 
 MOLOTOV_AGENT = json.dumps(

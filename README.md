@@ -20,7 +20,7 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 *   **📲 Casting :** Castez en toute fluidité vers les appareils Chromecast avec prise en charge de :
     *   **Récepteur officiel :** Utilise le récepteur natif de Molotov pour une prise en charge complète des DRM (TV en direct).
     *   **Récepteur Arnor :** Une option de récepteur personnalisé et léger (expérimental).
-*   **💻 Lecture locale :** Regardez directement dans le navigateur de votre tableau de bord Home Assistant grâce à une carte vidéo personnalisée.
+*   **💻 Lecture locale :** Regardez directement dans Home Assistant via le panneau latéral dédié avec lecteur dash.js intégré.
 *   **🔄 Auto-découverte :** Trouve automatiquement les appareils Chromecast sur votre réseau.
 *   **🇫🇷 Audio en français :** La piste audio française (VF) est sélectionnée par défaut lorsqu'elle est disponible.
 
@@ -82,17 +82,18 @@ Une entité `text.molotov_tv_recherche` (ou similaire selon le nom de votre conf
 2.  Entrez votre recherche (ex: "Arte").
 3.  Les résultats seront mis à jour dans le dossier **Recherche** du navigateur de médias.
 
+### Panneau latéral Molotov TV
+L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre latérale de Home Assistant. Ce panneau offre :
+*   **Liste des chaînes avec EPG :** Visualisez toutes les chaînes avec le programme en cours et les horaires.
+*   **Lecture intégrée :** Cliquez sur une chaîne pour lancer la lecture directement dans le panneau.
+*   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
+*   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.
+
 ### Casting
-Lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
-*   **Lire sur cet appareil :** Lit localement dans votre navigateur.
+Depuis le navigateur de médias, lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
+*   **Lire sur cet appareil :** Lit localement dans votre navigateur (via le panneau latéral).
 *   **📺 Récepteur Officiel :** Caste en utilisant l'application officielle Molotov. **À utiliser pour la TV en direct et le contenu crypté.**
 *   **🏰 Récepteur Arnor :** Caste en utilisant le récepteur personnalisé de l'intégration. Utile pour le contenu non crypté ou le débogage.
-
-### Carte de tableau de bord
-L'intégration enregistre automatiquement une carte frontend personnalisée. Lors d'une lecture locale, la carte fournit :
-*   Des contrôles vidéo standards.
-*   Des paramètres de mise en mémoire tampon améliorés pour la stabilité.
-*   Des messages d'erreur directement sur la vidéo si la lecture échoue.
 
 ### Fiabilité de connexion Chromecast
 L'intégration surveille automatiquement la connexion avec votre Chromecast pendant la lecture :

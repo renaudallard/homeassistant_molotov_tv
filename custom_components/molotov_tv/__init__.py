@@ -31,8 +31,8 @@ from __future__ import annotations
 import importlib
 import logging
 
-from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.components.zeroconf import async_get_instance as async_get_zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -48,6 +48,9 @@ from .const import (
     DEFAULT_ENVIRONMENT,
     DOMAIN,
     ENVIRONMENTS,
+    PANEL_ICON,
+    PANEL_TITLE,
+    PANEL_URL_PATH,
     PLATFORMS,
 )
 from .coordinator import MolotovEpgCoordinator
@@ -105,18 +108,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "resume_store": resume_store,
     }
 
-    # Register static path and load custom card automatically
+    # Register static path for panel assets
     path = hass.config.path("custom_components/molotov_tv/www")
     _LOGGER.debug("Registering Molotov TV static path: %s", path)
     await hass.http.async_register_static_paths(
         [StaticPathConfig("/molotov_tv/www", path, cache_headers=True)]
     )
+
+    # Register sidebar panel
     try:
-        # Fixed version string for easier debugging/caching control
-        add_extra_js_url(hass, "/molotov_tv/www/molotov-card.js?v=0.1.34")
-        _LOGGER.info("Molotov TV frontend player registered")
+        await async_register_panel(
+            hass,
+            frontend_url_path=PANEL_URL_PATH,
+            webcomponent_name="molotov-panel",
+            sidebar_title=PANEL_TITLE,
+            sidebar_icon=PANEL_ICON,
+            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.0",
+            embed_iframe=False,
+            require_admin=False,
+            config={
+                "domain": DOMAIN,
+            },
+        )
+        _LOGGER.info("Molotov TV sidebar panel registered")
     except Exception as err:
-        _LOGGER.warning("Failed to register custom card JS: %s", err)
+        _LOGGER.warning("Failed to register sidebar panel: %s", err)
 
     # Pre-import platform modules in executor to avoid blocking the event loop
     for platform in PLATFORMS:
@@ -130,6 +146,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    from homeassistant.components.panel_custom import async_unregister_panel
+
+    # Unregister sidebar panel
+    try:
+        async_unregister_panel(hass, PANEL_URL_PATH)
+    except Exception:
+        pass
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
