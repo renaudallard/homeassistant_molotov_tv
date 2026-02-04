@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.6";
+const VERSION = "0.1.7";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -86,6 +86,7 @@ class MolotovPanel extends LitElement {
         display: block;
         height: 100%;
         background: var(--primary-background-color);
+        overflow: hidden;
       }
 
       .container {
@@ -223,6 +224,7 @@ class MolotovPanel extends LitElement {
         display: flex;
         flex-direction: column;
         height: 100%;
+        overflow: hidden;
       }
 
       .player-header {
@@ -232,6 +234,7 @@ class MolotovPanel extends LitElement {
         padding: 12px 16px;
         background: var(--card-background-color);
         border-bottom: 1px solid var(--divider-color);
+        flex-shrink: 0;
       }
 
       .player-header-left {
@@ -246,6 +249,8 @@ class MolotovPanel extends LitElement {
         flex-direction: column;
         background: #000;
         position: relative;
+        min-height: 0;
+        overflow: hidden;
       }
 
       .video-wrapper {
@@ -255,18 +260,20 @@ class MolotovPanel extends LitElement {
         justify-content: center;
         position: relative;
         min-height: 0;
+        overflow: hidden;
       }
 
       video {
         width: 100%;
         height: 100%;
-        max-height: 100%;
+        object-fit: contain;
         background: #000;
       }
 
       .player-info {
-        padding: 16px;
+        padding: 12px 16px;
         background: var(--card-background-color);
+        flex-shrink: 0;
       }
 
       .now-playing-title {
