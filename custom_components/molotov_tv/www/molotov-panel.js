@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.12";
+const VERSION = "0.1.13";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -1177,14 +1177,62 @@ class MolotovPanel extends LitElement {
       return;
     }
 
-    // Expand and fetch episodes if not cached
-    this._expandedRecordings = { ...this._expandedRecordings, [recordingId]: true };
-
+    // Fetch episodes if not cached
     if (!this._recordingEpisodes[recordingId]) {
       await this._fetchRecordingEpisodes(recording);
     }
 
+    // If no episodes found (or only 1), play the recording directly
+    const episodes = this._recordingEpisodes[recordingId] || [];
+    if (episodes.length === 0) {
+      console.log("[Molotov Panel] No episodes found, playing recording directly");
+      await this._playRecordingDirectly(recording);
+      return;
+    }
+    if (episodes.length === 1) {
+      console.log("[Molotov Panel] Only 1 episode found, playing it directly");
+      await this._playRecordingEpisode(episodes[0], recording.title);
+      return;
+    }
+
+    // Multiple episodes - expand to show list
+    this._expandedRecordings = { ...this._expandedRecordings, [recordingId]: true };
     this.requestUpdate();
+  }
+
+  async _playRecordingDirectly(recording) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._selectedChannel = {
+      name: "",
+      currentProgram: {
+        title: recording.title,
+        start: null,
+        end: null,
+      },
+    };
+    this._playerError = null;
+    this._isLive = false;
+    this._programStart = null;
+    this._programEnd = null;
+
+    try {
+      // Extract the base media ID from the recording (remove "recording:" prefix if present)
+      let baseMediaId = recording.mediaContentId;
+      if (baseMediaId.startsWith("recording:")) {
+        baseMediaId = baseMediaId.substring("recording:".length);
+      }
+      const mediaContentId = this._buildPlayMediaId(`replay:${baseMediaId}`);
+      await this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: mediaContentId,
+        media_content_type: "video",
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Play recording failed:", err);
+      this._playerError = err.message || "Erreur de lecture";
+    }
   }
 
   async _fetchRecordingEpisodes(recording) {
