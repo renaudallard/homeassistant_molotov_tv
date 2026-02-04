@@ -5,7 +5,15 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.18";
+const VERSION = "0.1.20";
+
+// Detect mobile/WebView where Widevine DRM doesn't work
+function isMobileOrWebView() {
+  const ua = navigator.userAgent || "";
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const isWebView = /wv|WebView/i.test(ua) || (window.navigator.standalone === true);
+  return isMobile || isWebView;
+}
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -1092,7 +1100,9 @@ class MolotovPanel extends LitElement {
     this._resultEpisodes = {};
     this._loadingEpisodes = {};
     this._castTargets = [];
-    this._selectedTarget = "local";
+    this._isMobile = isMobileOrWebView();
+    // On mobile/WebView, don't default to local (Widevine DRM doesn't work)
+    this._selectedTarget = this._isMobile ? "" : "local";
     this._activeTab = "live";
     this._recordings = [];
     this._loadingRecordings = false;
@@ -2507,7 +2517,7 @@ class MolotovPanel extends LitElement {
     return html`
       <div class="container">
         <div class="header">
-          <h1>Molotov TV</h1>
+          <h1>Molotov TV <small style="font-size: 10px; opacity: 0.5;">v${VERSION}</small></h1>
           <div class="header-actions">
             <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
               <option value="local">Cet appareil</option>
