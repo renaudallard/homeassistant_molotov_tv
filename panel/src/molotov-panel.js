@@ -105,6 +105,8 @@ class MolotovPanel extends LitElement {
       _castPlaying: { type: Boolean },
       _castTarget: { type: String },
       _castTitle: { type: String },
+      // Track if this session initiated local playback
+      _localPlaybackInitiated: { type: Boolean },
       // Tonight EPG
       _tonightChannels: { type: Array },
       _loadingTonight: { type: Boolean },
@@ -1101,6 +1103,8 @@ class MolotovPanel extends LitElement {
     this._castPlaying = false;
     this._castTarget = null;
     this._castTitle = null;
+    // Track if this session initiated local playback
+    this._localPlaybackInitiated = false;
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
@@ -1917,7 +1921,8 @@ class MolotovPanel extends LitElement {
     const state = this.hass.states[entityId];
 
     // Check if we're playing with a stream URL (local playback)
-    if (state.state === "playing" && state.attributes.stream_url) {
+    // Only show local player if THIS session initiated it
+    if (state.state === "playing" && state.attributes.stream_url && this._localPlaybackInitiated) {
       const streamUrl = state.attributes.stream_url;
       const drm = state.attributes.stream_drm;
       const selectedTrack = state.attributes.stream_selected_track;
@@ -1978,6 +1983,7 @@ class MolotovPanel extends LitElement {
       this._castTarget = null;
       this._castTitle = null;
       this._isLive = false;
+      this._localPlaybackInitiated = false;
     } else if (this._castPlaying && state.state === "paused") {
       // Cast paused
       this._paused = true;
@@ -1994,6 +2000,11 @@ class MolotovPanel extends LitElement {
 
     this._selectedChannel = channel;
     this._playerError = null;
+
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+    }
 
     // Set program times for progress bar (only for local playback)
     if (this._isLocalPlayback() && channel.currentProgram?.start && channel.currentProgram?.end) {
@@ -2284,6 +2295,7 @@ class MolotovPanel extends LitElement {
     this._streamData = null;
     this._selectedChannel = null;
     this._currentStreamUrl = null;
+    this._localPlaybackInitiated = false;
   }
 
   _togglePlayPause() {
