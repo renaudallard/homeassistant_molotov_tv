@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -1025,6 +1025,9 @@ class MolotovPanel extends LitElement {
 
     this._searching = true;
     this._showingSearch = true;
+    this._searchResults = [];
+    this._expandedResults = {};
+    this._resultEpisodes = {};
     this.requestUpdate();
 
     try {
@@ -1036,10 +1039,14 @@ class MolotovPanel extends LitElement {
       });
 
       if (result && result.children) {
-        this._searchResults = result.children
+        const rawResults = result.children
           .filter((item) => item.media_content_id.startsWith("search_result:"))
           .map((item) => this._parseSearchResult(item));
-        console.log(`[Molotov Panel] Found ${this._searchResults.length} results for "${query}"`);
+
+        // Pre-fetch episodes for all results and filter out those with none
+        const resultsWithEpisodes = await this._filterResultsWithEpisodes(rawResults, entityId);
+        this._searchResults = resultsWithEpisodes;
+        console.log(`[Molotov Panel] Found ${this._searchResults.length} results with episodes for "${query}"`);
       } else {
         this._searchResults = [];
       }
@@ -1050,6 +1057,49 @@ class MolotovPanel extends LitElement {
 
     this._searching = false;
     this.requestUpdate();
+  }
+
+  async _filterResultsWithEpisodes(results, entityId) {
+    const validResults = [];
+
+    // Fetch episodes for all results in parallel
+    const episodePromises = results.map(async (result) => {
+      try {
+        const browseResult = await this.hass.callWS({
+          type: "media_player/browse_media",
+          entity_id: entityId,
+          media_content_id: result.mediaContentId,
+          media_content_type: "search_result",
+        });
+
+        if (browseResult && browseResult.children) {
+          const episodes = browseResult.children
+            .filter((item) =>
+              item.media_content_id.startsWith("episode:") ||
+              item.media_content_id.startsWith("replay:") ||
+              item.can_play
+            )
+            .map((item) => ({
+              mediaContentId: item.media_content_id,
+              title: item.title,
+              thumbnail: item.thumbnail,
+            }));
+
+          if (episodes.length > 0) {
+            // Cache the episodes
+            this._resultEpisodes = { ...this._resultEpisodes, [result.mediaContentId]: episodes };
+            return result;
+          }
+        }
+        return null;
+      } catch (err) {
+        console.error(`[Molotov Panel] Failed to check episodes for "${result.title}":`, err);
+        return null;
+      }
+    });
+
+    const resolvedResults = await Promise.all(episodePromises);
+    return resolvedResults.filter((r) => r !== null);
   }
 
   _parseSearchResult(item) {
