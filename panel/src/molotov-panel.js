@@ -5,7 +5,7 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.17";
+const VERSION = "0.1.18";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -1105,6 +1105,7 @@ class MolotovPanel extends LitElement {
     this._castTitle = null;
     // Track if this session initiated local playback
     this._localPlaybackInitiated = false;
+    console.log("[Molotov Panel] Constructor: _localPlaybackInitiated initialized to false");
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
@@ -1417,6 +1418,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1507,6 +1510,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1693,6 +1698,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1918,6 +1925,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -2024,6 +2033,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -2689,6 +2700,8 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
+      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
+      console.trace();
       this._localPlaybackInitiated = true;
     }
 
