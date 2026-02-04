@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -546,15 +546,12 @@ class MolotovPanel extends LitElement {
         color: var(--text-primary-color);
       }
 
-      .replay-item-time {
-        color: var(--secondary-text-color);
-        font-size: 12px;
-        min-width: 90px;
-      }
-
-      .replay-item:hover .replay-item-time {
-        color: inherit;
-        opacity: 0.8;
+      .replay-thumb {
+        width: 60px;
+        height: 34px;
+        object-fit: cover;
+        border-radius: 4px;
+        flex-shrink: 0;
       }
 
       .replay-item-title {
@@ -762,7 +759,7 @@ class MolotovPanel extends LitElement {
     this.requestUpdate();
 
     try {
-      // Browse the channel to get its programs (including past/replay)
+      // Browse the channel to get its content including replays
       const result = await this.hass.callWS({
         type: "media_player/browse_media",
         entity_id: entityId,
@@ -771,15 +768,15 @@ class MolotovPanel extends LitElement {
       });
 
       if (result && result.children) {
-        // Filter to get past programs (replays) - those with ⏪ prefix
-        const programs = result.children
-          .filter((item) => item.title.startsWith("⏪") || item.title.startsWith("🔴"))
-          .map((item) => this._parseProgramItem(item, channel));
+        // Filter to get actual replays (items after separator with replay: prefix)
+        const replays = result.children
+          .filter((item) => item.media_content_id.startsWith("replay:"))
+          .map((item) => this._parseReplayItem(item, channel));
 
-        this._channelPrograms = { ...this._channelPrograms, [channelId]: programs };
+        this._channelPrograms = { ...this._channelPrograms, [channelId]: replays };
       }
     } catch (err) {
-      console.error("[Molotov Panel] Failed to fetch channel programs:", err);
+      console.error("[Molotov Panel] Failed to fetch channel replays:", err);
       this._channelPrograms = { ...this._channelPrograms, [channelId]: [] };
     }
 
@@ -787,57 +784,40 @@ class MolotovPanel extends LitElement {
     this.requestUpdate();
   }
 
-  _parseProgramItem(item, channel) {
-    // Parse program:channel_id:start_ts:end_ts
-    const id = item.media_content_id;
-    const parts = id.split(":");
-    let start = null;
-    let end = null;
-
-    if (parts.length >= 4) {
-      start = parseInt(parts[2]) * 1000;
-      end = parseInt(parts[3]) * 1000;
-    }
-
-    // Remove status emoji from title
-    let title = item.title.replace(/^[🔴⏪]\s*/, "");
-
+  _parseReplayItem(item, channel) {
     return {
-      mediaContentId: id,
-      title: title,
+      mediaContentId: item.media_content_id,
+      title: item.title,
       thumbnail: item.thumbnail,
-      start: start,
-      end: end,
-      isLive: item.title.startsWith("🔴"),
       channelName: channel.name,
     };
   }
 
-  async _playProgram(program) {
+  async _playReplay(replay) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
     this._selectedChannel = {
-      name: program.channelName,
+      name: replay.channelName,
       currentProgram: {
-        title: program.title,
-        start: program.start,
-        end: program.end,
+        title: replay.title,
+        start: null,
+        end: null,
       },
     };
     this._playerError = null;
-    this._isLive = program.isLive;
-    this._programStart = program.start;
-    this._programEnd = program.end;
+    this._isLive = false;
+    this._programStart = null;
+    this._programEnd = null;
 
     try {
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
-        media_content_id: `play_local:${program.mediaContentId}`,
+        media_content_id: `play_local:${replay.mediaContentId}`,
         media_content_type: "video",
       });
     } catch (err) {
-      console.error("[Molotov Panel] Play program failed:", err);
+      console.error("[Molotov Panel] Play replay failed:", err);
       this._playerError = err.message || "Erreur de lecture";
     }
   }
@@ -1440,12 +1420,12 @@ class MolotovPanel extends LitElement {
                   ? html`<div class="replay-loading">Chargement...</div>`
                   : programs.length > 0
                   ? programs.map(
-                      (program) => html`
-                        <div class="replay-item" @click=${() => this._playProgram(program)}>
-                          <span class="replay-item-time">
-                            ${program.isLive ? "🔴 " : ""}${this._formatClockTime(program.start)} - ${this._formatClockTime(program.end)}
-                          </span>
-                          <span class="replay-item-title">${program.title}</span>
+                      (replay) => html`
+                        <div class="replay-item" @click=${() => this._playReplay(replay)}>
+                          ${replay.thumbnail
+                            ? html`<img class="replay-thumb" src=${replay.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            : ""}
+                          <span class="replay-item-title">${replay.title}</span>
                         </div>
                       `
                     )
