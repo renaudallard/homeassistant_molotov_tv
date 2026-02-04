@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.7";
+const VERSION = "0.1.8";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -77,6 +77,8 @@ class MolotovPanel extends LitElement {
       _expandedResults: { type: Object },
       _resultEpisodes: { type: Object },
       _loadingEpisodes: { type: Object },
+      _castTargets: { type: Array },
+      _selectedTarget: { type: String },
     };
   }
 
@@ -114,6 +116,23 @@ class MolotovPanel extends LitElement {
       .header-actions {
         display: flex;
         gap: 8px;
+        align-items: center;
+      }
+
+      .cast-select {
+        padding: 8px 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 4px;
+        background: var(--primary-background-color);
+        color: var(--primary-text-color);
+        font-size: 14px;
+        cursor: pointer;
+        min-width: 150px;
+      }
+
+      .cast-select:focus {
+        outline: none;
+        border-color: var(--primary-color);
       }
 
       button {
@@ -799,6 +818,8 @@ class MolotovPanel extends LitElement {
     this._expandedResults = {};
     this._resultEpisodes = {};
     this._loadingEpisodes = {};
+    this._castTargets = [];
+    this._selectedTarget = "local";
   }
 
   connectedCallback() {
@@ -864,6 +885,11 @@ class MolotovPanel extends LitElement {
       if (result && result.children) {
         this._channels = result.children.map((child) => this._parseChannel(child));
         console.log(`[Molotov Panel] Loaded ${this._channels.length} channels`);
+
+        // Fetch cast targets using first channel
+        if (this._channels.length > 0) {
+          await this._fetchCastTargets(entityId, this._channels[0].mediaContentId);
+        }
       } else {
         this._channels = [];
       }
@@ -874,6 +900,62 @@ class MolotovPanel extends LitElement {
       this._error = err.message || "Erreur lors du chargement des chaines";
       this._loading = false;
     }
+  }
+
+  async _fetchCastTargets(entityId, sampleMediaId) {
+    try {
+      // Browse a channel to get cast targets
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: sampleMediaId,
+        media_content_type: "program",
+      });
+
+      if (result && result.children) {
+        // Extract cast targets from children (those starting with "cast:")
+        const targets = result.children
+          .filter((item) => item.media_content_id.startsWith("cast:"))
+          .map((item) => ({
+            mediaContentId: item.media_content_id,
+            title: item.title,
+          }));
+
+        this._castTargets = targets;
+        console.log(`[Molotov Panel] Found ${targets.length} cast targets`);
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to fetch cast targets:", err);
+      this._castTargets = [];
+    }
+  }
+
+  _handleTargetChange(e) {
+    this._selectedTarget = e.target.value;
+    console.log(`[Molotov Panel] Selected target: ${this._selectedTarget}`);
+  }
+
+  _buildPlayMediaId(baseMediaId) {
+    if (this._selectedTarget === "local") {
+      return `play_local:${baseMediaId}`;
+    }
+    // For cast targets, extract the encoded target and build cast media ID
+    // Cast target format: cast:{encoded_target}:native:{base_media_id} or cast:{encoded_target}:{base_media_id}
+    const parts = this._selectedTarget.split(":");
+    if (parts.length >= 2) {
+      const encodedTarget = parts[1];
+      const receiverType = parts.length >= 3 && parts[2] !== "native" && parts[2] !== "custom" ? "" : parts[2];
+      if (receiverType) {
+        return `cast:${encodedTarget}:${receiverType}:${baseMediaId}`;
+      }
+      return `cast:${encodedTarget}:${baseMediaId}`;
+    }
+    // Fallback to local
+    return `play_local:${baseMediaId}`;
+  }
+
+  _isLocalPlayback() {
+    return this._selectedTarget === "local";
   }
 
   _parseChannel(browseItem) {
@@ -1002,9 +1084,10 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
 
     try {
+      const mediaContentId = this._buildPlayMediaId(replay.mediaContentId);
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
-        media_content_id: `play_local:${replay.mediaContentId}`,
+        media_content_id: mediaContentId,
         media_content_type: "video",
       });
     } catch (err) {
@@ -1210,9 +1293,10 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
 
     try {
+      const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
-        media_content_id: `play_local:${episode.mediaContentId}`,
+        media_content_id: mediaContentId,
         media_content_type: "video",
       });
     } catch (err) {
@@ -1280,18 +1364,18 @@ class MolotovPanel extends LitElement {
     this._selectedChannel = channel;
     this._playerError = null;
 
-    // Set program times for progress bar
-    if (channel.currentProgram?.start && channel.currentProgram?.end) {
+    // Set program times for progress bar (only for local playback)
+    if (this._isLocalPlayback() && channel.currentProgram?.start && channel.currentProgram?.end) {
       this._programStart = channel.currentProgram.start;
       this._programEnd = channel.currentProgram.end;
       this._isLive = true;
     }
 
     try {
-      // Use play_local prefix to trigger local playback
+      const mediaContentId = this._buildPlayMediaId(channel.mediaContentId);
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
-        media_content_id: `play_local:${channel.mediaContentId}`,
+        media_content_id: mediaContentId,
         media_content_type: "video",
       });
     } catch (err) {
@@ -1747,6 +1831,14 @@ class MolotovPanel extends LitElement {
         <div class="header">
           <h1>Molotov TV</h1>
           <div class="header-actions">
+            <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
+              <option value="local">Cet appareil</option>
+              ${this._castTargets.map(
+                (target) => html`
+                  <option value=${target.mediaContentId}>${target.title}</option>
+                `
+              )}
+            </select>
             <button @click=${this._loadChannels}>
               <ha-icon icon="mdi:refresh"></ha-icon>
               Actualiser
