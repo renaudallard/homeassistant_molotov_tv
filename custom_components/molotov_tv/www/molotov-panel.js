@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.13";
+const VERSION = "0.1.14";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -109,6 +109,9 @@ class MolotovPanel extends LitElement {
       _castPlaying: { type: Boolean },
       _castTarget: { type: String },
       _castTitle: { type: String },
+      // Tonight EPG
+      _tonightChannels: { type: Array },
+      _loadingTonight: { type: Boolean },
     };
   }
 
@@ -911,6 +914,96 @@ class MolotovPanel extends LitElement {
         font-size: 13px;
       }
 
+      /* Tonight EPG styles */
+      .tonight-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .tonight-channel {
+        background: var(--card-background-color);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .tonight-channel-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--secondary-background-color);
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .tonight-channel-logo {
+        width: 40px;
+        height: 40px;
+        object-fit: contain;
+        border-radius: 4px;
+        background: #000;
+      }
+
+      .tonight-channel-name {
+        font-weight: 500;
+        font-size: 16px;
+        color: var(--primary-text-color);
+      }
+
+      .tonight-programs {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .tonight-program {
+        display: flex;
+        flex-direction: column;
+        padding: 10px 12px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--divider-color);
+        transition: background 0.2s;
+      }
+
+      .tonight-program:last-child {
+        border-bottom: none;
+      }
+
+      .tonight-program:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .tonight-program.live {
+        background: rgba(var(--rgb-primary-color), 0.1);
+        border-left: 3px solid var(--primary-color);
+      }
+
+      .tonight-program.past {
+        opacity: 0.5;
+      }
+
+      .tonight-program-time {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .tonight-program-title {
+        font-size: 14px;
+        color: var(--primary-text-color);
+      }
+
+      .live-indicator {
+        background: #f44336;
+        color: #fff;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: bold;
+      }
+
       /* Cast player placeholder */
       .cast-placeholder {
         display: flex;
@@ -1001,6 +1094,9 @@ class MolotovPanel extends LitElement {
     this._castPlaying = false;
     this._castTarget = null;
     this._castTitle = null;
+    // Tonight EPG
+    this._tonightChannels = [];
+    this._loadingTonight = false;
   }
 
   connectedCallback() {
@@ -1121,6 +1217,9 @@ class MolotovPanel extends LitElement {
     if (tab === "recordings" && this._recordings.length === 0) {
       this._loadRecordings();
     }
+    if (tab === "tonight" && this._tonightChannels.length === 0) {
+      this._loadTonight();
+    }
     this.requestUpdate();
   }
 
@@ -1163,6 +1262,98 @@ class MolotovPanel extends LitElement {
     }
 
     this._loadingRecordings = false;
+    this.requestUpdate();
+  }
+
+  async _loadTonight() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._loadingTonight = true;
+    this.requestUpdate();
+
+    try {
+      // Get channels from the "now_playing" endpoint which includes EPG data
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: "channels",
+        media_content_type: "directory",
+      });
+
+      if (result && result.children) {
+        // For each channel, fetch its programs for tonight
+        const tonightChannels = [];
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tonightStart = new Date(today.getTime() + 20 * 60 * 60 * 1000); // 20:00
+        const tonightEnd = new Date(today.getTime() + 24 * 60 * 60 * 1000); // 24:00
+
+        // Fetch programs for each channel
+        for (const channel of result.children.slice(0, 30)) { // Limit to 30 channels
+          try {
+            const channelResult = await this.hass.callWS({
+              type: "media_player/browse_media",
+              entity_id: entityId,
+              media_content_id: channel.media_content_id,
+              media_content_type: "channel",
+            });
+
+            if (channelResult && channelResult.children) {
+              // Filter programs for tonight (20:00-24:00)
+              const tonightPrograms = channelResult.children
+                .filter((item) => {
+                  // Parse program times from media_content_id: "program:channel_id:start_ts:end_ts"
+                  const parts = item.media_content_id.split(":");
+                  if (parts[0] !== "program" || parts.length < 4) return false;
+                  const startTs = parseInt(parts[2]) * 1000;
+                  const endTs = parseInt(parts[3]) * 1000;
+                  // Program overlaps with tonight window
+                  return startTs < tonightEnd.getTime() && endTs > tonightStart.getTime();
+                })
+                .map((item) => {
+                  const parts = item.media_content_id.split(":");
+                  const startTs = parseInt(parts[2]) * 1000;
+                  const endTs = parseInt(parts[3]) * 1000;
+                  // Parse title: "Status Title" where status might be emoji
+                  let title = item.title;
+                  if (title.startsWith("🔴 ")) title = title.substring(3);
+                  if (title.startsWith("⏪ ")) title = title.substring(3);
+                  return {
+                    mediaContentId: item.media_content_id,
+                    title: title,
+                    thumbnail: item.thumbnail,
+                    start: startTs,
+                    end: endTs,
+                  };
+                })
+                .sort((a, b) => a.start - b.start);
+
+              if (tonightPrograms.length > 0) {
+                tonightChannels.push({
+                  id: channel.media_content_id.split(":")[1],
+                  name: channel.title,
+                  thumbnail: channel.thumbnail,
+                  programs: tonightPrograms,
+                });
+              }
+            }
+          } catch (err) {
+            console.error(`[Molotov Panel] Failed to load programs for ${channel.title}:`, err);
+          }
+        }
+
+        this._tonightChannels = tonightChannels;
+        console.log(`[Molotov Panel] Loaded tonight EPG for ${tonightChannels.length} channels`);
+      } else {
+        this._tonightChannels = [];
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to load tonight EPG:", err);
+      this._tonightChannels = [];
+    }
+
+    this._loadingTonight = false;
     this.requestUpdate();
   }
 
@@ -2289,6 +2480,10 @@ class MolotovPanel extends LitElement {
             <ha-icon icon="mdi:television-play"></ha-icon>
             Direct
           </button>
+          <button class="tab ${this._activeTab === "tonight" ? "active" : ""}" @click=${() => this._switchTab("tonight")}>
+            <ha-icon icon="mdi:weather-night"></ha-icon>
+            Ce soir
+          </button>
           <button class="tab ${this._activeTab === "recordings" ? "active" : ""}" @click=${() => this._switchTab("recordings")}>
             <ha-icon icon="mdi:bookmark"></ha-icon>
             Enregistrements
@@ -2313,6 +2508,8 @@ class MolotovPanel extends LitElement {
           ? this._renderSearchResults()
           : this._activeTab === "live"
           ? this._renderChannels()
+          : this._activeTab === "tonight"
+          ? this._renderTonight()
           : this._renderRecordings()}
       </div>
     `;
@@ -2321,6 +2518,8 @@ class MolotovPanel extends LitElement {
   _handleRefresh() {
     if (this._activeTab === "live") {
       this._loadChannels();
+    } else if (this._activeTab === "tonight") {
+      this._loadTonight();
     } else {
       this._loadRecordings();
     }
@@ -2361,6 +2560,103 @@ class MolotovPanel extends LitElement {
           : html`<div class="error">Aucun enregistrement trouve</div>`}
       </div>
     `;
+  }
+
+  _renderTonight() {
+    return html`
+      <div class="content">
+        ${this._loadingTonight
+          ? html`<div class="loading">Chargement du programme de ce soir...</div>`
+          : this._tonightChannels.length > 0
+          ? html`
+              <div class="tonight-list">
+                ${this._tonightChannels.map((channel) => this._renderTonightChannel(channel))}
+              </div>
+            `
+          : html`<div class="error">Aucun programme disponible pour ce soir</div>`}
+      </div>
+    `;
+  }
+
+  _renderTonightChannel(channel) {
+    return html`
+      <div class="tonight-channel">
+        <div class="tonight-channel-header">
+          <img
+            class="tonight-channel-logo"
+            src=${channel.thumbnail || ""}
+            alt=${channel.name}
+            @error=${(e) => (e.target.style.display = "none")}
+          />
+          <div class="tonight-channel-name">${channel.name}</div>
+        </div>
+        <div class="tonight-programs">
+          ${channel.programs.map((program) => this._renderTonightProgram(program, channel))}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderTonightProgram(program, channel) {
+    const startTime = this._formatClockTime(program.start);
+    const endTime = this._formatClockTime(program.end);
+    const now = Date.now();
+    const isLive = program.start <= now && program.end > now;
+    const isPast = program.end <= now;
+
+    return html`
+      <div
+        class="tonight-program ${isLive ? "live" : ""} ${isPast ? "past" : ""}"
+        @click=${() => this._playTonightProgram(program, channel)}
+      >
+        <div class="tonight-program-time">
+          ${startTime} - ${endTime}
+          ${isLive ? html`<span class="live-indicator">EN DIRECT</span>` : ""}
+        </div>
+        <div class="tonight-program-title">${program.title}</div>
+      </div>
+    `;
+  }
+
+  async _playTonightProgram(program, channel) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._selectedChannel = {
+      id: channel.id,
+      name: channel.name,
+      thumbnail: channel.thumbnail,
+      mediaContentId: program.mediaContentId,
+      currentProgram: {
+        title: program.title,
+        start: program.start,
+        end: program.end,
+      },
+    };
+    this._playerError = null;
+
+    // Determine if this is live content
+    const now = Date.now();
+    this._isLive = program.start <= now && program.end > now;
+    if (this._isLive) {
+      this._programStart = program.start;
+      this._programEnd = program.end;
+    } else {
+      this._programStart = null;
+      this._programEnd = null;
+    }
+
+    try {
+      const mediaContentId = this._buildPlayMediaId(program.mediaContentId);
+      await this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: mediaContentId,
+        media_content_type: "video",
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Play tonight program failed:", err);
+      this._playerError = err.message || "Erreur de lecture";
+    }
   }
 
   _renderRecordingItem(recording) {
