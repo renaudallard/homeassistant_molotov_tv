@@ -120,7 +120,6 @@ from .const import (
     CUSTOM_RECEIVER_APP_ID,
 )
 from .coordinator import (
-    EpgChannel,
     EpgData,
     EpgProgram,
     MolotovEpgCoordinator,
@@ -815,39 +814,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         probe_now = dt_util.utcnow()
         channels_by_id = {channel.channel_id: channel for channel in channels}
         if count_channels_with_current(channels, probe_now) < len(channels):
-            # First try live_home which often includes program data
+            # Fetch full EPG (cached) and merge with channel data
             try:
-                live_home = await self._api.async_get_live_home_channels()
-                live_data = _parse_epg(live_home)
-                merge_epg_channels(channels_by_id, live_data.channels)
+                epg_raw = await self._api.async_get_epg()
+                epg_data = _parse_epg(epg_raw)
+                merge_epg_channels(channels_by_id, epg_data.channels)
+                _LOGGER.debug(
+                    "Now playing: merged full EPG data for %d channels",
+                    len(epg_data.channels),
+                )
             except MolotovApiError as err:
-                _LOGGER.debug("Now playing live home refresh failed: %s", err)
-
-            # Check if we still need per-channel program fetches
-            channels_list = list(channels_by_id.values())
-            channels_with_programs = sum(
-                1 for c in channels_list if c.programs and len(c.programs) > 0
-            )
-            coverage = (
-                channels_with_programs / len(channels_list) if channels_list else 0
-            )
-
-            if coverage < 0.7:
-                # Less than 70% have programs, fetch missing ones
-                _LOGGER.debug(
-                    "Program coverage %.0f%%, fetching missing programs",
-                    coverage * 100,
-                )
-                await self._async_populate_now_playing_programs(channels_list)
-            else:
-                _LOGGER.debug(
-                    "Program coverage %.0f%%, skipping per-channel fetch",
-                    coverage * 100,
-                )
-        else:
-            await self._async_populate_now_playing_programs(
-                list(channels_by_id.values())
-            )
+                _LOGGER.warning("Full EPG fetch failed: %s", err)
+                # Fall back to original data - channels already have some programs
 
         now = dt_util.utcnow()
         children: list[BrowseMedia] = []
@@ -906,44 +884,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             can_expand=True,
             children=children,
         )
-
-    async def _async_populate_now_playing_programs(
-        self, channels: list[EpgChannel]
-    ) -> None:
-        missing: list[EpgChannel] = []
-        probe_now = dt_util.utcnow()
-        for channel in channels:
-            if find_current_program(channel, probe_now):
-                continue
-            cached = self._get_cached_programs(channel.channel_id)
-            if cached is not None:
-                channel.programs = cached
-                if find_current_program(channel, probe_now):
-                    continue
-            missing.append(channel)
-
-        if not missing:
-            return
-
-        semaphore = asyncio.Semaphore(10)  # Increased for faster fetching
-
-        async def fetch_programs(channel: EpgChannel) -> None:
-            async with semaphore:
-                try:
-                    raw = await self._api.async_get_channel_programs(channel.channel_id)
-                except MolotovApiError as err:
-                    _LOGGER.debug(
-                        "Now playing programs fetch failed for %s: %s",
-                        channel.channel_id,
-                        err,
-                    )
-                    return
-                programs = parse_remote_programs(raw, channel.channel_id)
-                if programs:
-                    self._set_cached_programs(channel.channel_id, programs)
-                    channel.programs = programs
-
-        await asyncio.gather(*(fetch_programs(channel) for channel in missing))
 
     async def _async_browse_recordings(self) -> BrowseMedia:
         assets = self._get_cached_assets(self._recording_cache)
@@ -1224,23 +1164,38 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         programs = self._get_cached_programs(channel_id)
         if programs is None and not channel.programs:
+            # Try full EPG first (cached), then fall back to per-channel fetch
             try:
-                raw = await self._api.async_get_channel_programs(channel_id)
+                epg_raw = await self._api.async_get_epg()
+                epg_data = _parse_epg(epg_raw)
+                for epg_channel in epg_data.channels:
+                    if epg_channel.channel_id == channel_id:
+                        programs = epg_channel.programs
+                        if programs:
+                            self._set_cached_programs(channel_id, programs)
+                        break
             except MolotovApiError as err:
-                if channel.programs:
-                    _LOGGER.warning(
-                        "Failed to refresh programs for channel %s: %s",
-                        channel_id,
-                        err,
-                    )
-                    programs = channel.programs
+                _LOGGER.debug("Full EPG fetch failed for programs: %s", err)
+
+            # Fallback to per-channel fetch if EPG didn't have programs
+            if not programs:
+                try:
+                    raw = await self._api.async_get_channel_programs(channel_id)
+                except MolotovApiError as err:
+                    if channel.programs:
+                        _LOGGER.warning(
+                            "Failed to refresh programs for channel %s: %s",
+                            channel_id,
+                            err,
+                        )
+                        programs = channel.programs
+                    else:
+                        raise HomeAssistantError(
+                            "Failed to fetch channel programs"
+                        ) from err
                 else:
-                    raise HomeAssistantError(
-                        "Failed to fetch channel programs"
-                    ) from err
-            else:
-                programs = parse_remote_programs(raw, channel_id)
-                self._set_cached_programs(channel_id, programs)
+                    programs = parse_remote_programs(raw, channel_id)
+                    self._set_cached_programs(channel_id, programs)
 
         if programs is not None:
             channel.programs = programs
