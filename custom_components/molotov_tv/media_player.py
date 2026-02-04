@@ -975,18 +975,38 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Fetch programs for all channels concurrently
+        # First try live_home which includes more program data
+        channels_by_id = {channel.channel_id: channel for channel in data.channels}
+        try:
+            live_home = await self._api.async_get_live_home_channels()
+            live_data = _parse_epg(live_home)
+            merge_epg_channels(channels_by_id, live_data.channels)
+            _LOGGER.debug(
+                "Tonight EPG: merged live_home data for %d channels",
+                len(live_data.channels),
+            )
+        except MolotovApiError as err:
+            _LOGGER.debug("Tonight EPG live_home fetch failed: %s", err)
+
+        # Fetch programs for channels missing program data
         semaphore = asyncio.Semaphore(10)
         channel_results: dict[str, list[EpgProgram]] = {}
 
         async def fetch_channel_programs(channel: EpgChannel) -> None:
             async with semaphore:
                 try:
-                    # Use the working endpoint without time range params
                     raw = await self._api.async_get_channel_programs(channel.channel_id)
                     programs = parse_remote_programs(raw, channel.channel_id)
                     if programs:
                         channel_results[channel.channel_id] = programs
+                        _LOGGER.debug(
+                            "Tonight EPG: fetched %d programs for channel %s, "
+                            "time range: %s to %s",
+                            len(programs),
+                            channel.channel_id,
+                            programs[0].start.isoformat() if programs else "N/A",
+                            programs[-1].end.isoformat() if programs else "N/A",
+                        )
                 except Exception as err:
                     _LOGGER.debug(
                         "Failed to fetch tonight EPG for channel %s: %s",
@@ -994,16 +1014,29 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         err,
                     )
 
-        # Limit to first 30 channels to avoid timeout
-        await asyncio.gather(
-            *(fetch_channel_programs(channel) for channel in data.channels[:30])
-        )
+        # Only fetch for channels without programs
+        channels_to_fetch = [
+            c for c in data.channels[:30]
+            if not channels_by_id.get(c.channel_id, c).programs
+        ]
+        if channels_to_fetch:
+            _LOGGER.debug(
+                "Tonight EPG: fetching programs for %d channels without data",
+                len(channels_to_fetch),
+            )
+            await asyncio.gather(
+                *(fetch_channel_programs(channel) for channel in channels_to_fetch)
+            )
 
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
 
         for channel in data.channels[:30]:
-            programs = channel_results.get(channel.channel_id, [])
+            # Use programs from: fetched results, merged live_home, or original data
+            programs = channel_results.get(channel.channel_id)
+            if not programs:
+                merged_channel = channels_by_id.get(channel.channel_id)
+                programs = merged_channel.programs if merged_channel else channel.programs
             if not programs:
                 continue
 
