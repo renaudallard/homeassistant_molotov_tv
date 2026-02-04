@@ -1967,6 +1967,7 @@ class MolotovPanel extends LitElement {
       this._muted = state.attributes.is_volume_muted || false;
       this._paused = state.state === "paused";
       this._castTitle = state.attributes.media_title || this._castTitle;
+      this._isLive = state.attributes.is_live || false;
     } else if ((this._playing || this._castPlaying) && state.state !== "playing" && state.state !== "paused") {
       // Stopped playing (both local and cast)
       this._cleanupPlayer();
@@ -1976,6 +1977,7 @@ class MolotovPanel extends LitElement {
       this._castPlaying = false;
       this._castTarget = null;
       this._castTitle = null;
+      this._isLive = false;
     } else if (this._castPlaying && state.state === "paused") {
       // Cast paused
       this._paused = true;
@@ -3074,25 +3076,35 @@ class MolotovPanel extends LitElement {
 
             <!-- Cast controls -->
             <div class="custom-controls">
-              <div class="progress-container">
-                <span>${this._formatTime(this._currentTime)}</span>
-                <div class="progress-bar" @click=${this._handleCastSeek}>
-                  <div class="progress-filled" style="width: ${progressPercent}%"></div>
+              ${this._isLive ? html`
+                <div class="progress-container">
+                  <span class="live-badge" style="background: #e53935; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">EN DIRECT</span>
                 </div>
-                <span>${this._formatTime(this._duration)}</span>
-              </div>
+              ` : html`
+                <div class="progress-container">
+                  <span>${this._formatTime(this._currentTime)}</span>
+                  <div class="progress-bar" @click=${this._handleCastSeek}>
+                    <div class="progress-filled" style="width: ${progressPercent}%"></div>
+                  </div>
+                  <span>${this._formatTime(this._duration)}</span>
+                </div>
+              `}
 
               <div class="controls-row">
                 <div class="controls-left">
-                  <button class="icon-btn" @click=${this._castSkipBack}>
-                    <ha-icon icon="mdi:rewind-30"></ha-icon>
-                  </button>
+                  ${this._isLive ? "" : html`
+                    <button class="icon-btn" @click=${this._castSkipBack}>
+                      <ha-icon icon="mdi:rewind-30"></ha-icon>
+                    </button>
+                  `}
                   <button class="icon-btn" @click=${this._toggleCastPlayPause}>
                     <ha-icon icon=${this._paused ? "mdi:play" : "mdi:pause"}></ha-icon>
                   </button>
-                  <button class="icon-btn" @click=${this._castSkipForward}>
-                    <ha-icon icon="mdi:fast-forward-30"></ha-icon>
-                  </button>
+                  ${this._isLive ? "" : html`
+                    <button class="icon-btn" @click=${this._castSkipForward}>
+                      <ha-icon icon="mdi:fast-forward-30"></ha-icon>
+                    </button>
+                  `}
 
                   <div class="volume-container">
                     <button class="icon-btn" @click=${this._toggleCastMute}>

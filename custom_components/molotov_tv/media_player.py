@@ -508,6 +508,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if self._cast_connection_error:
                 attrs["cast_error"] = self._cast_connection_error
 
+        # Live content indicator
+        if self._current_is_live:
+            attrs["is_live"] = True
+
         return attrs
 
     def _get_search_cache(self) -> tuple[datetime, str, list[BrowseAsset]] | None:
