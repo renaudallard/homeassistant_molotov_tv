@@ -575,9 +575,9 @@ async def async_fetch_program_episodes(
             if episode.description:
                 payload_data["desc"] = episode.description
             payload = encode_asset_payload(payload_data)
-            ep_title = episode.title
-            if episode.episode_title:
-                ep_title = f"{episode.episode_title}"
+            ep_title = episode.episode_title or episode.title
+            if episode.description:
+                ep_title = f"{ep_title} - {episode.description}"
             if episode.start:
                 ep_title = f"{episode.start.strftime('%d/%m %H:%M')} - {ep_title}"
 
