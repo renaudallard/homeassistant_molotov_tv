@@ -975,86 +975,34 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # First try live_home which includes more program data
-        channels_by_id = {channel.channel_id: channel for channel in data.channels}
+        # Fetch full EPG data (contains multiple days of programs)
         try:
-            live_home = await self._api.async_get_live_home_channels()
-            live_data = _parse_epg(live_home)
-            merge_epg_channels(channels_by_id, live_data.channels)
-            _LOGGER.debug(
-                "Tonight EPG: merged live_home data for %d channels",
-                len(live_data.channels),
-            )
+            epg_raw = await self._api.async_get_epg()
+            epg_data = _parse_epg(epg_raw)
         except MolotovApiError as err:
-            _LOGGER.debug("Tonight EPG live_home fetch failed: %s", err)
-
-        # Fetch programs for channels missing program data
-        semaphore = asyncio.Semaphore(10)
-        channel_results: dict[str, list[EpgProgram]] = {}
-
-        async def fetch_channel_programs(channel: EpgChannel) -> None:
-            async with semaphore:
-                try:
-                    raw = await self._api.async_get_channel_programs(channel.channel_id)
-                    programs = parse_remote_programs(raw, channel.channel_id)
-                    if programs:
-                        channel_results[channel.channel_id] = programs
-                        _LOGGER.debug(
-                            "Tonight EPG: fetched %d programs for channel %s, "
-                            "time range: %s to %s",
-                            len(programs),
-                            channel.channel_id,
-                            programs[0].start.isoformat() if programs else "N/A",
-                            programs[-1].end.isoformat() if programs else "N/A",
-                        )
-                except Exception as err:
-                    _LOGGER.debug(
-                        "Failed to fetch tonight EPG for channel %s: %s",
-                        channel.channel_id,
-                        err,
-                    )
-
-        # Only fetch for channels without programs
-        channels_to_fetch = [
-            c for c in data.channels[:30]
-            if not channels_by_id.get(c.channel_id, c).programs
-        ]
-        if channels_to_fetch:
-            _LOGGER.debug(
-                "Tonight EPG: fetching programs for %d channels without data",
-                len(channels_to_fetch),
-            )
-            await asyncio.gather(
-                *(fetch_channel_programs(channel) for channel in channels_to_fetch)
-            )
+            _LOGGER.warning("Tonight EPG fetch failed: %s", err)
+            epg_data = data
 
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
 
-        for channel in data.channels[:30]:
-            # Use programs from: fetched results, merged live_home, or original data
-            programs = channel_results.get(channel.channel_id)
-            if not programs:
-                merged_channel = channels_by_id.get(channel.channel_id)
-                programs = merged_channel.programs if merged_channel else channel.programs
+        for channel in epg_data.channels[:30]:
+            programs = channel.programs
             if not programs:
                 continue
 
             # Filter programs that overlap with tonight window (20:00-24:00)
-            tonight_programs = []
-            for program in programs:
-                # Program overlaps if it starts before midnight and ends after 20:00
-                if program.start <= tonight_end_utc and program.end >= tonight_start_utc:
-                    tonight_programs.append(program)
+            tonight_programs = [
+                p for p in programs
+                if p.start <= tonight_end_utc and p.end >= tonight_start_utc
+            ]
 
             if not tonight_programs:
                 continue
 
-            # Sort by start time
+            # Sort by start time and add programs as flat list with channel info
             tonight_programs.sort(key=lambda p: p.start)
 
-            # Create channel entry with programs as children
-            channel_children: list[BrowseMedia] = []
             for program in tonight_programs:
                 start_ts = int(program.start.timestamp())
                 end_ts = int(program.end.timestamp())
@@ -1072,33 +1020,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 end_local = program.end.astimezone(now.tzinfo)
                 time_str = f"{start_local.strftime('%H:%M')}-{end_local.strftime('%H:%M')}"
 
-                channel_children.append(
+                # Flat structure: encode channel and program info in media_content_id
+                # Format: tonight_program:channel_id:channel_name:channel_thumb:start_ts:end_ts:description
+                channel_thumb_encoded = quote(channel.poster or "", safe="")
+                channel_name_encoded = quote(channel.label, safe="")
+                description_encoded = quote(program.description or "", safe="")
+                children.append(
                     BrowseMedia(
                         title=f"{status}{time_str} {title}",
                         media_class=MediaClass.TV_SHOW,
                         media_content_id=(
-                            f"{MEDIA_PROGRAM_PREFIX}:{channel.channel_id}:{start_ts}:{end_ts}"
+                            f"tonight_program:{channel.channel_id}:{channel_name_encoded}:"
+                            f"{channel_thumb_encoded}:{start_ts}:{end_ts}:{description_encoded}"
                         ),
-                        media_content_type=MEDIA_PROGRAM_PREFIX,
+                        media_content_type="tonight_program",
                         can_play=False,
                         can_expand=True,
                         thumbnail=program.thumbnail or program.poster,
                     )
                 )
-
-            children.append(
-                BrowseMedia(
-                    title=channel.label,
-                    media_class=MediaClass.CHANNEL,
-                    media_content_id=f"tonight_channel:{channel.channel_id}",
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=channel.poster,
-                    children=channel_children,
-                )
-            )
-
         if not children:
             children.append(
                 BrowseMedia(

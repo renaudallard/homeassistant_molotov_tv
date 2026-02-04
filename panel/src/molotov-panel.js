@@ -5,7 +5,7 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.15";
+const VERSION = "0.1.16";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -991,6 +991,17 @@ class MolotovPanel extends LitElement {
         color: var(--primary-text-color);
       }
 
+      .tonight-program-description {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-top: 4px;
+        line-height: 1.4;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+
       .live-indicator {
         background: #f44336;
         color: #fff;
@@ -1277,53 +1288,62 @@ class MolotovPanel extends LitElement {
         media_content_type: "directory",
       });
 
-      if (result && result.children) {
-        const tonightChannels = [];
+      if (result && result.children && result.children.length > 0) {
+        // Group programs by channel (flat structure from server)
+        // Format: tonight_program:channel_id:channel_name:channel_thumb:start_ts:end_ts:description
+        const channelMap = new Map();
 
-        for (const channelItem of result.children) {
-          // Skip placeholder messages like "Aucun programme disponible"
-          if (!channelItem.children || channelItem.children.length === 0) {
+        for (const item of result.children) {
+          // Skip placeholder messages
+          if (!item.media_content_id.startsWith("tonight_program:")) {
             continue;
           }
 
-          // Parse channel ID from media_content_id: "tonight_channel:channel_id"
-          const channelParts = channelItem.media_content_id.split(":");
-          const channelId = channelParts.length > 1 ? channelParts[1] : channelItem.media_content_id;
+          const parts = item.media_content_id.split(":");
+          if (parts.length < 6) continue;
 
-          // Parse programs from children
-          const programs = channelItem.children.map((item) => {
-            // Parse program times from media_content_id: "program:channel_id:start_ts:end_ts"
-            const parts = item.media_content_id.split(":");
-            const startTs = parts.length >= 3 ? parseInt(parts[2]) * 1000 : 0;
-            const endTs = parts.length >= 4 ? parseInt(parts[3]) * 1000 : 0;
+          const channelId = parts[1];
+          const channelName = decodeURIComponent(parts[2]);
+          const channelThumb = decodeURIComponent(parts[3]);
+          const startTs = parseInt(parts[4]) * 1000;
+          const endTs = parseInt(parts[5]) * 1000;
+          // Description is everything after the 6th colon (may contain colons)
+          const description = parts.length > 6 ? decodeURIComponent(parts.slice(6).join(":")) : "";
 
-            // Parse title: "Status HH:MM-HH:MM Title" - extract just the title part
-            let title = item.title;
-            // Remove live indicator if present
-            if (title.startsWith("🔴 ")) title = title.substring(3);
-            // The format is "HH:MM-HH:MM Title" - remove the time prefix
-            const timeMatch = title.match(/^\d{2}:\d{2}-\d{2}:\d{2}\s+(.+)$/);
-            if (timeMatch) {
-              title = timeMatch[1];
-            }
+          // Parse title: "Status HH:MM-HH:MM Title" - extract just the title part
+          let title = item.title;
+          // Remove live indicator if present
+          if (title.startsWith("🔴 ")) title = title.substring(3);
+          // The format is "HH:MM-HH:MM Title" - remove the time prefix
+          const timeMatch = title.match(/^\d{2}:\d{2}-\d{2}:\d{2}\s+(.+)$/);
+          if (timeMatch) {
+            title = timeMatch[1];
+          }
 
-            return {
-              mediaContentId: item.media_content_id,
-              title: title,
-              thumbnail: item.thumbnail,
-              start: startTs,
-              end: endTs,
-            };
-          });
+          const program = {
+            mediaContentId: item.media_content_id,
+            title: title,
+            thumbnail: item.thumbnail,
+            start: startTs,
+            end: endTs,
+            description: description,
+          };
 
-          if (programs.length > 0) {
-            tonightChannels.push({
+          if (!channelMap.has(channelId)) {
+            channelMap.set(channelId, {
               id: channelId,
-              name: channelItem.title,
-              thumbnail: channelItem.thumbnail,
-              programs: programs,
+              name: channelName,
+              thumbnail: channelThumb,
+              programs: [],
             });
           }
+          channelMap.get(channelId).programs.push(program);
+        }
+
+        // Convert map to array and sort programs within each channel
+        const tonightChannels = Array.from(channelMap.values());
+        for (const channel of tonightChannels) {
+          channel.programs.sort((a, b) => a.start - b.start);
         }
 
         this._tonightChannels = tonightChannels;
@@ -2597,6 +2617,9 @@ class MolotovPanel extends LitElement {
           ${isLive ? html`<span class="live-indicator">EN DIRECT</span>` : ""}
         </div>
         <div class="tonight-program-title">${program.title}</div>
+        ${program.description
+          ? html`<div class="tonight-program-description">${program.description}</div>`
+          : ""}
       </div>
     `;
   }
