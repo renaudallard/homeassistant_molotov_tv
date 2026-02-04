@@ -130,6 +130,17 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 
 ## 🛠️ Avancé
 
+### Développement du panneau
+Le panneau utilise LitElement et est bundlé avec esbuild.
+
+```bash
+cd panel
+npm install
+npm run build
+```
+
+Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-panel.js`.
+
 ### Hébergement du récepteur personnalisé
 Le "Récepteur Arnor" utilise un récepteur web hébergé. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
 
