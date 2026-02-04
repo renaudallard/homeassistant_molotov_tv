@@ -5,7 +5,7 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.20";
+const VERSION = "0.1.21";
 
 // Detect mobile/WebView where Widevine DRM doesn't work
 function isMobileOrWebView() {
@@ -1115,7 +1115,6 @@ class MolotovPanel extends LitElement {
     this._castTitle = null;
     // Track if this session initiated local playback
     this._localPlaybackInitiated = false;
-    console.log("[Molotov Panel] Constructor: _localPlaybackInitiated initialized to false");
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
@@ -1428,8 +1427,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1520,8 +1517,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1708,8 +1703,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1935,8 +1928,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -1961,7 +1952,6 @@ class MolotovPanel extends LitElement {
 
     // Check if we're playing with a stream URL (local playback)
     // Only show local player if THIS session initiated it
-    console.log(`[Molotov Panel] Entity state: ${state.state}, has stream_url: ${!!state.attributes.stream_url}, localPlaybackInitiated: ${this._localPlaybackInitiated}`);
     if (state.state === "playing" && state.attributes.stream_url && this._localPlaybackInitiated) {
       const streamUrl = state.attributes.stream_url;
       const drm = state.attributes.stream_drm;
@@ -2043,8 +2033,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
@@ -2517,7 +2505,7 @@ class MolotovPanel extends LitElement {
     return html`
       <div class="container">
         <div class="header">
-          <h1>Molotov TV <small style="font-size: 10px; opacity: 0.5;">v${VERSION}</small></h1>
+          <h1>Molotov TV</h1>
           <div class="header-actions">
             <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
               <option value="local">Cet appareil</option>
@@ -2710,8 +2698,6 @@ class MolotovPanel extends LitElement {
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
-      console.log("[Molotov Panel] Setting _localPlaybackInitiated = true");
-      console.trace();
       this._localPlaybackInitiated = true;
     }
 
