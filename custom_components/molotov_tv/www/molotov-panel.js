@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -74,6 +74,9 @@ class MolotovPanel extends LitElement {
       _searchResults: { type: Array },
       _searching: { type: Boolean },
       _showingSearch: { type: Boolean },
+      _expandedResults: { type: Object },
+      _resultEpisodes: { type: Object },
+      _loadingEpisodes: { type: Object },
     };
   }
 
@@ -666,6 +669,87 @@ class MolotovPanel extends LitElement {
         font-size: 12px;
         color: var(--secondary-text-color);
       }
+
+      /* Search result row with expand */
+      .search-result-row {
+        background: var(--card-background-color);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .search-result-main {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .search-result-main:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .expand-icon {
+        color: var(--secondary-text-color);
+        transition: transform 0.2s;
+      }
+
+      .expand-icon.expanded {
+        transform: rotate(90deg);
+      }
+
+      .episodes-list {
+        background: var(--secondary-background-color);
+        padding: 8px 12px 12px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .episode-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        background: var(--card-background-color);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .episode-item:hover {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .episode-thumb {
+        width: 80px;
+        height: 45px;
+        object-fit: cover;
+        border-radius: 4px;
+        flex-shrink: 0;
+        background: #000;
+      }
+
+      .episode-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .episode-title {
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .episodes-loading,
+      .episodes-empty {
+        padding: 12px;
+        color: var(--secondary-text-color);
+        font-size: 13px;
+      }
     `;
   }
 
@@ -705,6 +789,9 @@ class MolotovPanel extends LitElement {
     this._searchResults = [];
     this._searching = false;
     this._showingSearch = false;
+    this._expandedResults = {};
+    this._resultEpisodes = {};
+    this._loadingEpisodes = {};
   }
 
   connectedCallback() {
@@ -978,17 +1065,84 @@ class MolotovPanel extends LitElement {
     this._searchQuery = "";
     this._searchResults = [];
     this._showingSearch = false;
+    this._expandedResults = {};
+    this._resultEpisodes = {};
+    this._loadingEpisodes = {};
     this.requestUpdate();
   }
 
-  async _playSearchResult(result) {
+  async _toggleResultExpand(e, result) {
+    e.stopPropagation();
+    const resultId = result.mediaContentId;
+
+    if (this._expandedResults[resultId]) {
+      this._expandedResults = { ...this._expandedResults, [resultId]: false };
+      this.requestUpdate();
+      return;
+    }
+
+    this._expandedResults = { ...this._expandedResults, [resultId]: true };
+
+    if (!this._resultEpisodes[resultId]) {
+      await this._fetchResultEpisodes(result);
+    }
+
+    this.requestUpdate();
+  }
+
+  async _fetchResultEpisodes(result) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    const resultId = result.mediaContentId;
+    this._loadingEpisodes = { ...this._loadingEpisodes, [resultId]: true };
+    this.requestUpdate();
+
+    try {
+      // Browse the search result to get its episodes
+      const browseResult = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: resultId,
+        media_content_type: "search_result",
+      });
+
+      if (browseResult && browseResult.children) {
+        // Filter for playable episodes (episode: prefix) or cast targets (play_local available)
+        const episodes = browseResult.children
+          .filter((item) =>
+            item.media_content_id.startsWith("episode:") ||
+            item.media_content_id.startsWith("replay:") ||
+            item.can_play
+          )
+          .map((item) => ({
+            mediaContentId: item.media_content_id,
+            title: item.title,
+            thumbnail: item.thumbnail,
+          }));
+
+        this._resultEpisodes = { ...this._resultEpisodes, [resultId]: episodes };
+        console.log(`[Molotov Panel] Found ${episodes.length} episodes for "${result.title}"`);
+      } else {
+        this._resultEpisodes = { ...this._resultEpisodes, [resultId]: [] };
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to fetch episodes:", err);
+      this._resultEpisodes = { ...this._resultEpisodes, [resultId]: [] };
+    }
+
+    this._loadingEpisodes = { ...this._loadingEpisodes, [resultId]: false };
+    this.requestUpdate();
+  }
+
+  async _playEpisode(episode, parentTitle) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
     this._selectedChannel = {
       name: "",
       currentProgram: {
-        title: result.title,
+        title: episode.title || parentTitle,
         start: null,
         end: null,
       },
@@ -1001,11 +1155,11 @@ class MolotovPanel extends LitElement {
     try {
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
-        media_content_id: `play_local:${result.mediaContentId}`,
+        media_content_id: `play_local:${episode.mediaContentId}`,
         media_content_type: "video",
       });
     } catch (err) {
-      console.error("[Molotov Panel] Play search result failed:", err);
+      console.error("[Molotov Panel] Play episode failed:", err);
       this._playerError = err.message || "Erreur de lecture";
     }
   }
@@ -1611,14 +1765,47 @@ class MolotovPanel extends LitElement {
   }
 
   _renderSearchResultItem(result) {
+    const resultId = result.mediaContentId;
+    const isExpanded = this._expandedResults[resultId];
+    const episodes = this._resultEpisodes[resultId] || [];
+    const isLoadingEpisodes = this._loadingEpisodes[resultId];
+
     return html`
-      <div class="search-result-item" @click=${() => this._playSearchResult(result)}>
-        ${result.thumbnail
-          ? html`<img class="search-result-thumb" src=${result.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
-          : ""}
-        <div class="search-result-info">
-          <div class="search-result-title">${result.title}</div>
+      <div class="search-result-row">
+        <div class="search-result-main" @click=${(e) => this._toggleResultExpand(e, result)}>
+          <ha-icon
+            class="expand-icon ${isExpanded ? "expanded" : ""}"
+            icon="mdi:chevron-right"
+          ></ha-icon>
+          ${result.thumbnail
+            ? html`<img class="search-result-thumb" src=${result.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+            : ""}
+          <div class="search-result-info">
+            <div class="search-result-title">${result.title}</div>
+          </div>
         </div>
+        ${isExpanded
+          ? html`
+              <div class="episodes-list">
+                ${isLoadingEpisodes
+                  ? html`<div class="episodes-loading">Chargement des episodes...</div>`
+                  : episodes.length > 0
+                  ? episodes.map(
+                      (episode) => html`
+                        <div class="episode-item" @click=${() => this._playEpisode(episode, result.title)}>
+                          ${episode.thumbnail
+                            ? html`<img class="episode-thumb" src=${episode.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            : ""}
+                          <div class="episode-info">
+                            <div class="episode-title">${episode.title}</div>
+                          </div>
+                        </div>
+                      `
+                    )
+                  : html`<div class="episodes-empty">Aucun episode disponible</div>`}
+              </div>
+            `
+          : ""}
       </div>
     `;
   }
