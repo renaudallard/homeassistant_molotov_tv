@@ -1415,6 +1415,11 @@ class MolotovPanel extends LitElement {
     this._programStart = null;
     this._programEnd = null;
 
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+    }
+
     try {
       // Extract the base media ID from the recording (remove "recording:" prefix if present)
       let baseMediaId = recording.mediaContentId;
@@ -1499,6 +1504,11 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+    }
 
     try {
       const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
@@ -1680,6 +1690,11 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+    }
 
     try {
       const mediaContentId = this._buildPlayMediaId(replay.mediaContentId);
@@ -1900,6 +1915,11 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+    }
 
     try {
       const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
@@ -2664,6 +2684,11 @@ class MolotovPanel extends LitElement {
     } else {
       this._programStart = null;
       this._programEnd = null;
+    }
+
+    // Track if this session initiated local playback
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
     }
 
     try {
