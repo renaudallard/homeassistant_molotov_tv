@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -67,6 +67,9 @@ class MolotovPanel extends LitElement {
       _programEnd: { type: Number },
       _showAudioMenu: { type: Boolean },
       _showTextMenu: { type: Boolean },
+      _expandedChannels: { type: Object },
+      _channelPrograms: { type: Object },
+      _loadingPrograms: { type: Object },
     };
   }
 
@@ -168,20 +171,6 @@ class MolotovPanel extends LitElement {
         gap: 8px;
       }
 
-      .channel-item {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 12px;
-        background: var(--card-background-color);
-        border-radius: 8px;
-        cursor: pointer;
-        transition: background 0.2s;
-      }
-
-      .channel-item:hover {
-        background: var(--secondary-background-color);
-      }
 
       .channel-logo {
         width: 48px;
@@ -478,6 +467,115 @@ class MolotovPanel extends LitElement {
       .hidden {
         display: none !important;
       }
+
+      /* Channel row with replay button */
+      .channel-row {
+        display: flex;
+        flex-direction: column;
+        background: var(--card-background-color);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .channel-main {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .channel-main:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .channel-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      .replay-btn {
+        background: transparent;
+        color: var(--primary-color);
+        border: 1px solid var(--primary-color);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .replay-btn:hover {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .replay-btn.expanded {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .replay-list {
+        background: var(--secondary-background-color);
+        padding: 8px 12px 12px 72px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .replay-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--card-background-color);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.2s;
+      }
+
+      .replay-item:hover {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .replay-item-time {
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        min-width: 90px;
+      }
+
+      .replay-item:hover .replay-item-time {
+        color: inherit;
+        opacity: 0.8;
+      }
+
+      .replay-item-title {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .replay-loading {
+        padding: 12px;
+        color: var(--secondary-text-color);
+        font-size: 13px;
+      }
+
+      .replay-empty {
+        padding: 12px;
+        color: var(--secondary-text-color);
+        font-size: 13px;
+        font-style: italic;
+      }
     `;
   }
 
@@ -510,6 +608,9 @@ class MolotovPanel extends LitElement {
     this._showAudioMenu = false;
     this._showTextMenu = false;
     this._updateInterval = null;
+    this._expandedChannels = {};
+    this._channelPrograms = {};
+    this._loadingPrograms = {};
   }
 
   connectedCallback() {
@@ -629,6 +730,116 @@ class MolotovPanel extends LitElement {
       }
     }
     return null;
+  }
+
+  async _toggleChannelExpand(e, channel) {
+    e.stopPropagation();
+    const channelId = channel.id;
+
+    if (this._expandedChannels[channelId]) {
+      // Collapse
+      this._expandedChannels = { ...this._expandedChannels, [channelId]: false };
+      this.requestUpdate();
+      return;
+    }
+
+    // Expand and fetch programs if not cached
+    this._expandedChannels = { ...this._expandedChannels, [channelId]: true };
+
+    if (!this._channelPrograms[channelId]) {
+      await this._fetchChannelPrograms(channel);
+    }
+
+    this.requestUpdate();
+  }
+
+  async _fetchChannelPrograms(channel) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    const channelId = channel.id;
+    this._loadingPrograms = { ...this._loadingPrograms, [channelId]: true };
+    this.requestUpdate();
+
+    try {
+      // Browse the channel to get its programs (including past/replay)
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: `channel:${channelId}`,
+        media_content_type: "channel",
+      });
+
+      if (result && result.children) {
+        // Filter to get past programs (replays) - those with ⏪ prefix
+        const programs = result.children
+          .filter((item) => item.title.startsWith("⏪") || item.title.startsWith("🔴"))
+          .map((item) => this._parseProgramItem(item, channel));
+
+        this._channelPrograms = { ...this._channelPrograms, [channelId]: programs };
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to fetch channel programs:", err);
+      this._channelPrograms = { ...this._channelPrograms, [channelId]: [] };
+    }
+
+    this._loadingPrograms = { ...this._loadingPrograms, [channelId]: false };
+    this.requestUpdate();
+  }
+
+  _parseProgramItem(item, channel) {
+    // Parse program:channel_id:start_ts:end_ts
+    const id = item.media_content_id;
+    const parts = id.split(":");
+    let start = null;
+    let end = null;
+
+    if (parts.length >= 4) {
+      start = parseInt(parts[2]) * 1000;
+      end = parseInt(parts[3]) * 1000;
+    }
+
+    // Remove status emoji from title
+    let title = item.title.replace(/^[🔴⏪]\s*/, "");
+
+    return {
+      mediaContentId: id,
+      title: title,
+      thumbnail: item.thumbnail,
+      start: start,
+      end: end,
+      isLive: item.title.startsWith("🔴"),
+      channelName: channel.name,
+    };
+  }
+
+  async _playProgram(program) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._selectedChannel = {
+      name: program.channelName,
+      currentProgram: {
+        title: program.title,
+        start: program.start,
+        end: program.end,
+      },
+    };
+    this._playerError = null;
+    this._isLive = program.isLive;
+    this._programStart = program.start;
+    this._programEnd = program.end;
+
+    try {
+      await this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: `play_local:${program.mediaContentId}`,
+        media_content_type: "video",
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Play program failed:", err);
+      this._playerError = err.message || "Erreur de lecture";
+    }
   }
 
   _syncWithEntity() {
@@ -1189,31 +1400,59 @@ class MolotovPanel extends LitElement {
     const startTime = current?.start ? this._formatClockTime(current.start) : "";
     const endTime = current?.end ? this._formatClockTime(current.end) : "";
     const timeRange = startTime && endTime ? `${startTime} - ${endTime}` : "";
+    const isExpanded = this._expandedChannels[channel.id];
+    const programs = this._channelPrograms[channel.id] || [];
+    const isLoadingPrograms = this._loadingPrograms[channel.id];
 
     return html`
-      <div class="channel-item" @click=${() => this._playChannel(channel)}>
-        <img
-          class="channel-logo"
-          src=${channel.thumbnail || ""}
-          alt=${channel.name}
-          @error=${(e) => (e.target.style.display = "none")}
-        />
-        <div class="channel-info">
-          <div class="channel-name">${channel.name}</div>
-          <div class="program-info">
-            <div class="program-now">
-              ${current?.title || "Direct"}
-              ${timeRange ? html`<span class="program-time">(${timeRange})</span>` : ""}
+      <div class="channel-row">
+        <div class="channel-main">
+          <img
+            class="channel-logo"
+            src=${channel.thumbnail || ""}
+            alt=${channel.name}
+            @error=${(e) => (e.target.style.display = "none")}
+            @click=${() => this._playChannel(channel)}
+          />
+          <div class="channel-info" @click=${() => this._playChannel(channel)}>
+            <div class="channel-name">${channel.name}</div>
+            <div class="program-info">
+              <div class="program-now">
+                ${current?.title || "Direct"}
+                ${timeRange ? html`<span class="program-time">(${timeRange})</span>` : ""}
+              </div>
             </div>
-            ${channel.nextProgram
-              ? html`
-                  <div class="program-next">
-                    Ensuite: ${channel.nextProgram.title}
-                  </div>
-                `
-              : ""}
+          </div>
+          <div class="channel-actions">
+            <button
+              class="replay-btn ${isExpanded ? "expanded" : ""}"
+              @click=${(e) => this._toggleChannelExpand(e, channel)}
+            >
+              <ha-icon icon="mdi:history"></ha-icon>
+              Replay
+            </button>
           </div>
         </div>
+        ${isExpanded
+          ? html`
+              <div class="replay-list">
+                ${isLoadingPrograms
+                  ? html`<div class="replay-loading">Chargement...</div>`
+                  : programs.length > 0
+                  ? programs.map(
+                      (program) => html`
+                        <div class="replay-item" @click=${() => this._playProgram(program)}>
+                          <span class="replay-item-time">
+                            ${program.isLive ? "🔴 " : ""}${this._formatClockTime(program.start)} - ${this._formatClockTime(program.end)}
+                          </span>
+                          <span class="replay-item-title">${program.title}</span>
+                        </div>
+                      `
+                    )
+                  : html`<div class="replay-empty">Aucun replay disponible</div>`}
+              </div>
+            `
+          : ""}
       </div>
     `;
   }
