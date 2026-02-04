@@ -807,6 +807,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 media_id = (
                     f"{MEDIA_PROGRAM_PREFIX}:{channel.channel_id}:{start_ts}:{end_ts}"
                 )
+                # Append description if available (base64 encoded after |)
+                if current_program.description:
+                    import base64
+
+                    desc_encoded = base64.urlsafe_b64encode(
+                        current_program.description.encode("utf-8")
+                    ).decode("ascii").rstrip("=")
+                    media_id = f"{media_id}|{desc_encoded}"
                 media_class = MediaClass.TV_SHOW
                 thumb = (
                     current_program.thumbnail

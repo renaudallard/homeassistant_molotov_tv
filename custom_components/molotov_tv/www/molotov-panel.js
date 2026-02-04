@@ -1219,8 +1219,25 @@ class MolotovPanel extends LitElement {
 
   _parseChannel(browseItem) {
     // Parse the media_content_id to extract channel info
-    // Format: "program:channel_id:start_ts:end_ts" or "live:channel_id"
-    const id = browseItem.media_content_id;
+    // Format: "program:channel_id:start_ts:end_ts|base64_desc" or "live:channel_id"
+    const fullId = browseItem.media_content_id;
+
+    // Split description from main ID (separated by |)
+    const [id, encodedDesc] = fullId.split("|");
+    let description = null;
+    if (encodedDesc) {
+      try {
+        let padded = encodedDesc;
+        const padding = encodedDesc.length % 4;
+        if (padding) {
+          padded += "=".repeat(4 - padding);
+        }
+        description = decodeURIComponent(escape(atob(padded.replace(/-/g, "+").replace(/_/g, "/"))));
+      } catch (e) {
+        // Ignore decode errors
+      }
+    }
+
     const parts = id.split(":");
 
     let channelId, programStart, programEnd;
@@ -1241,9 +1258,10 @@ class MolotovPanel extends LitElement {
       id: channelId,
       name: channelName,
       thumbnail: browseItem.thumbnail,
-      mediaContentId: id,
+      mediaContentId: id,  // Use ID without description suffix for playback
       currentProgram: {
         title: programTitle,
+        description: description,
         start: programStart,
         end: programEnd,
       },
@@ -2336,6 +2354,9 @@ class MolotovPanel extends LitElement {
                 ${current?.title || "Direct"}
                 ${timeRange ? html`<span class="program-time">(${timeRange})</span>` : ""}
               </div>
+              ${current?.description
+                ? html`<div class="program-next">${current.description}</div>`
+                : ""}
             </div>
           </div>
           <div class="channel-actions">
