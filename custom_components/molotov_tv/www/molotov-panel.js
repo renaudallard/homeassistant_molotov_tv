@@ -693,11 +693,26 @@ class MolotovPanel extends LitElement {
         flex-shrink: 0;
       }
 
-      .replay-item-title {
+      .replay-item-info {
         flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+
+      .replay-item-title {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .replay-item-desc {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 2px;
       }
 
       .replay-loading {
@@ -874,6 +889,15 @@ class MolotovPanel extends LitElement {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .episode-desc {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 2px;
       }
 
       .episodes-loading,
@@ -1144,11 +1168,15 @@ class MolotovPanel extends LitElement {
             item.media_content_id.startsWith("cast:") ||
             item.can_play
           )
-          .map((item) => ({
-            mediaContentId: item.media_content_id,
-            title: item.title,
-            thumbnail: item.thumbnail,
-          }));
+          .map((item) => {
+            const payload = decodeAssetPayload(item.media_content_id);
+            return {
+              mediaContentId: item.media_content_id,
+              title: item.title,
+              thumbnail: item.thumbnail,
+              description: payload?.desc || null,
+            };
+          });
 
         this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: episodes };
         console.log(`[Molotov Panel] Found ${episodes.length} episodes for recording "${recording.title}"`);
@@ -1335,11 +1363,13 @@ class MolotovPanel extends LitElement {
   }
 
   _parseReplayItem(item, channel) {
+    const payload = decodeAssetPayload(item.media_content_id);
     return {
       mediaContentId: item.media_content_id,
       title: item.title,
       thumbnail: item.thumbnail,
       channelName: channel.name,
+      description: payload?.desc || null,
     };
   }
 
@@ -1446,11 +1476,15 @@ class MolotovPanel extends LitElement {
               item.media_content_id.startsWith("replay:") ||
               item.can_play
             )
-            .map((item) => ({
-              mediaContentId: item.media_content_id,
-              title: item.title,
-              thumbnail: item.thumbnail,
-            }));
+            .map((item) => {
+              const payload = decodeAssetPayload(item.media_content_id);
+              return {
+                mediaContentId: item.media_content_id,
+                title: item.title,
+                thumbnail: item.thumbnail,
+                description: payload?.desc || null,
+              };
+            });
 
           if (episodes.length > 0) {
             // Cache the episodes
@@ -1470,11 +1504,14 @@ class MolotovPanel extends LitElement {
   }
 
   _parseSearchResult(item) {
+    // Decode payload to get description
+    const payload = decodeAssetPayload(item.media_content_id);
     return {
       mediaContentId: item.media_content_id,
       title: item.title,
       thumbnail: item.thumbnail,
       mediaClass: item.media_class,
+      description: payload?.desc || null,
     };
   }
 
@@ -1532,11 +1569,15 @@ class MolotovPanel extends LitElement {
             item.media_content_id.startsWith("replay:") ||
             item.can_play
           )
-          .map((item) => ({
-            mediaContentId: item.media_content_id,
-            title: item.title,
-            thumbnail: item.thumbnail,
-          }));
+          .map((item) => {
+            const payload = decodeAssetPayload(item.media_content_id);
+            return {
+              mediaContentId: item.media_content_id,
+              title: item.title,
+              thumbnail: item.thumbnail,
+              description: payload?.desc || null,
+            };
+          });
 
         this._resultEpisodes = { ...this._resultEpisodes, [resultId]: episodes };
         console.log(`[Molotov Panel] Found ${episodes.length} episodes for "${result.title}"`);
@@ -2243,6 +2284,9 @@ class MolotovPanel extends LitElement {
                             : ""}
                           <div class="episode-info">
                             <div class="episode-title">${episode.title}</div>
+                            ${episode.description
+                              ? html`<div class="episode-desc">${episode.description}</div>`
+                              : ""}
                           </div>
                         </div>
                       `
@@ -2300,6 +2344,9 @@ class MolotovPanel extends LitElement {
             : ""}
           <div class="search-result-info">
             <div class="search-result-title">${result.title}</div>
+            ${result.description
+              ? html`<div class="search-result-subtitle">${result.description}</div>`
+              : ""}
           </div>
         </div>
         ${isExpanded
@@ -2316,6 +2363,9 @@ class MolotovPanel extends LitElement {
                             : ""}
                           <div class="episode-info">
                             <div class="episode-title">${episode.title}</div>
+                            ${episode.description
+                              ? html`<div class="episode-desc">${episode.description}</div>`
+                              : ""}
                           </div>
                         </div>
                       `
@@ -2381,7 +2431,12 @@ class MolotovPanel extends LitElement {
                           ${replay.thumbnail
                             ? html`<img class="replay-thumb" src=${replay.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
-                          <span class="replay-item-title">${replay.title}</span>
+                          <div class="replay-item-info">
+                            <span class="replay-item-title">${replay.title}</span>
+                            ${replay.description
+                              ? html`<span class="replay-item-desc">${replay.description}</span>`
+                              : ""}
+                          </div>
                         </div>
                       `
                     )

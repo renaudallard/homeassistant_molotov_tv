@@ -243,6 +243,8 @@ def build_search_results_browse(
                 payload_data["program_id"] = asset.program_id
             if asset.channel_id:
                 payload_data["channel_id"] = asset.channel_id
+            if asset.description:
+                payload_data["desc"] = asset.description
 
             payload = encode_asset_payload(payload_data)
             children.append(
@@ -564,14 +566,15 @@ async def async_fetch_program_episodes(
         )
 
         for episode in episodes:
-            payload = encode_asset_payload(
-                {
-                    "url": episode.asset_url,
-                    "title": episode.title,
-                    "thumb": episode.thumbnail or episode.poster,
-                    "live": episode.is_live,
-                }
-            )
+            payload_data = {
+                "url": episode.asset_url,
+                "title": episode.title,
+                "thumb": episode.thumbnail or episode.poster,
+                "live": episode.is_live,
+            }
+            if episode.description:
+                payload_data["desc"] = episode.description
+            payload = encode_asset_payload(payload_data)
             ep_title = episode.title
             if episode.episode_title:
                 ep_title = f"{episode.episode_title}"
