@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.11";
+const VERSION = "0.1.12";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -105,6 +105,10 @@ class MolotovPanel extends LitElement {
       _expandedRecordings: { type: Object },
       _recordingEpisodes: { type: Object },
       _loadingRecordingEpisodes: { type: Object },
+      // Cast playback state
+      _castPlaying: { type: Boolean },
+      _castTarget: { type: String },
+      _castTitle: { type: String },
     };
   }
 
@@ -906,6 +910,43 @@ class MolotovPanel extends LitElement {
         color: var(--secondary-text-color);
         font-size: 13px;
       }
+
+      /* Cast player placeholder */
+      .cast-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      }
+
+      .cast-info {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        text-align: center;
+        padding: 32px;
+        flex: 1;
+      }
+
+      .cast-info ha-icon {
+        --mdc-icon-size: 64px;
+        color: var(--primary-color);
+        margin-bottom: 16px;
+      }
+
+      .cast-title {
+        font-size: 24px;
+        font-weight: 500;
+        margin-bottom: 8px;
+      }
+
+      .cast-target {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
+      }
     `;
   }
 
@@ -956,6 +997,10 @@ class MolotovPanel extends LitElement {
     this._expandedRecordings = {};
     this._recordingEpisodes = {};
     this._loadingRecordingEpisodes = {};
+    // Cast playback state
+    this._castPlaying = false;
+    this._castTarget = null;
+    this._castTitle = null;
   }
 
   connectedCallback() {
@@ -1662,12 +1707,36 @@ class MolotovPanel extends LitElement {
         // Initialize player after render
         this.updateComplete.then(() => this._initDashPlayer());
       }
-    } else if (this._playing && state.state !== "playing") {
-      // Stopped playing
+    } else if (state.state === "playing" && state.attributes.cast_target && !state.attributes.stream_url) {
+      // Cast playback (no local stream URL but has cast target)
+      const castTarget = state.attributes.cast_target;
+      if (!this._castPlaying || this._castTarget !== castTarget) {
+        this._castPlaying = true;
+        this._castTarget = castTarget;
+        this._castTitle = state.attributes.media_title || "En cours de lecture";
+        this._playing = false;
+        this._cleanupPlayer();
+        console.log("[Molotov Panel] Cast playback detected:", castTarget);
+      }
+      // Update playback state from entity
+      this._currentTime = state.attributes.media_position || 0;
+      this._duration = state.attributes.media_duration || 0;
+      this._volume = state.attributes.volume_level ?? 0.5;
+      this._muted = state.attributes.is_volume_muted || false;
+      this._paused = state.state === "paused";
+      this._castTitle = state.attributes.media_title || this._castTitle;
+    } else if ((this._playing || this._castPlaying) && state.state !== "playing" && state.state !== "paused") {
+      // Stopped playing (both local and cast)
       this._cleanupPlayer();
       this._playing = false;
       this._streamData = null;
       this._currentStreamUrl = null;
+      this._castPlaying = false;
+      this._castTarget = null;
+      this._castTitle = null;
+    } else if (this._castPlaying && state.state === "paused") {
+      // Cast paused
+      this._paused = true;
     }
   }
 
@@ -2139,6 +2208,9 @@ class MolotovPanel extends LitElement {
   render() {
     if (this._playing && this._streamData) {
       return this._renderPlayer();
+    }
+    if (this._castPlaying) {
+      return this._renderCastPlayer();
     }
     return this._renderChannelList();
   }
@@ -2619,6 +2691,213 @@ class MolotovPanel extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  _renderCastPlayer() {
+    const progressPercent = this._duration > 0 ? (this._currentTime / this._duration) * 100 : 0;
+
+    return html`
+      <div class="player-view">
+        <div class="player-header">
+          <div class="player-header-left">
+            <button class="secondary" @click=${this._stopCastPlayback}>
+              <ha-icon icon="mdi:arrow-left"></ha-icon>
+              Retour
+            </button>
+          </div>
+          <div class="header-actions">
+            <ha-icon icon="mdi:cast-connected" style="color: var(--primary-color); margin-right: 8px;"></ha-icon>
+            <button class="danger" @click=${this._stopCastPlayback}>
+              <ha-icon icon="mdi:stop"></ha-icon>
+              Arreter
+            </button>
+          </div>
+        </div>
+
+        <div class="player-container">
+          <div class="video-wrapper cast-placeholder">
+            <div class="cast-info">
+              <ha-icon icon="mdi:cast-connected" style="font-size: 64px; margin-bottom: 16px;"></ha-icon>
+              <div class="cast-title">${this._castTitle || "En cours de lecture"}</div>
+              <div class="cast-target">Sur Chromecast</div>
+            </div>
+
+            <!-- Cast controls -->
+            <div class="custom-controls">
+              <div class="progress-container">
+                <span>${this._formatTime(this._currentTime)}</span>
+                <div class="progress-bar" @click=${this._handleCastSeek}>
+                  <div class="progress-filled" style="width: ${progressPercent}%"></div>
+                </div>
+                <span>${this._formatTime(this._duration)}</span>
+              </div>
+
+              <div class="controls-row">
+                <div class="controls-left">
+                  <button class="icon-btn" @click=${this._castSkipBack}>
+                    <ha-icon icon="mdi:rewind-30"></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._toggleCastPlayPause}>
+                    <ha-icon icon=${this._paused ? "mdi:play" : "mdi:pause"}></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._castSkipForward}>
+                    <ha-icon icon="mdi:fast-forward-30"></ha-icon>
+                  </button>
+
+                  <div class="volume-container">
+                    <button class="icon-btn" @click=${this._toggleCastMute}>
+                      <ha-icon
+                        icon=${this._muted || this._volume === 0
+                          ? "mdi:volume-off"
+                          : this._volume < 0.5
+                          ? "mdi:volume-medium"
+                          : "mdi:volume-high"}
+                      ></ha-icon>
+                    </button>
+                    <input
+                      type="range"
+                      class="volume-slider"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      .value=${this._muted ? 0 : this._volume}
+                      @input=${this._handleCastVolumeChange}
+                    />
+                  </div>
+                </div>
+
+                <div class="controls-right">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="player-info">
+          <div class="now-playing-title">
+            <ha-icon icon="mdi:cast" style="margin-right: 8px;"></ha-icon>
+            Chromecast
+          </div>
+          <div class="now-playing-program">
+            ${this._castTitle || ""}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async _stopCastPlayback() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      await this.hass.callService("media_player", "media_stop", {
+        entity_id: entityId,
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Stop cast failed:", err);
+    }
+
+    this._castPlaying = false;
+    this._castTarget = null;
+    this._castTitle = null;
+  }
+
+  async _toggleCastPlayPause() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      if (this._paused) {
+        await this.hass.callService("media_player", "media_play", {
+          entity_id: entityId,
+        });
+      } else {
+        await this.hass.callService("media_player", "media_pause", {
+          entity_id: entityId,
+        });
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Play/pause cast failed:", err);
+    }
+  }
+
+  async _castSkipForward() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      await this.hass.callService("media_player", "media_next_track", {
+        entity_id: entityId,
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Skip forward failed:", err);
+    }
+  }
+
+  async _castSkipBack() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      await this.hass.callService("media_player", "media_previous_track", {
+        entity_id: entityId,
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Skip back failed:", err);
+    }
+  }
+
+  async _handleCastSeek(e) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId || !this._duration) return;
+
+    const progressBar = e.currentTarget;
+    const rect = progressBar.getBoundingClientRect();
+    const percent = (e.clientX - rect.left) / rect.width;
+    const position = percent * this._duration;
+
+    try {
+      await this.hass.callService("media_player", "media_seek", {
+        entity_id: entityId,
+        seek_position: position,
+      });
+      this._currentTime = position;
+    } catch (err) {
+      console.error("[Molotov Panel] Seek failed:", err);
+    }
+  }
+
+  async _handleCastVolumeChange(e) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    const volume = parseFloat(e.target.value);
+    this._volume = volume;
+
+    try {
+      await this.hass.callService("media_player", "volume_set", {
+        entity_id: entityId,
+        volume_level: volume,
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Volume change failed:", err);
+    }
+  }
+
+  async _toggleCastMute() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      await this.hass.callService("media_player", "volume_mute", {
+        entity_id: entityId,
+        is_volume_muted: !this._muted,
+      });
+      this._muted = !this._muted;
+    } catch (err) {
+      console.error("[Molotov Panel] Mute toggle failed:", err);
+    }
   }
 }
 

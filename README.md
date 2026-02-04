@@ -90,6 +90,7 @@ L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre l
 *   **Recherche intégrée :** Barre de recherche pour trouver du contenu avec affichage des épisodes disponibles.
 *   **Sélecteur Chromecast :** Choisissez la cible de lecture (cet appareil ou un Chromecast) directement depuis l'en-tête.
 *   **Lecture intégrée :** Cliquez sur une chaîne pour lancer la lecture directement dans le panneau.
+*   **Contrôles Chromecast :** Pendant le casting, le panneau affiche les contrôles de lecture (play/pause, barre de progression, volume, avance/retour rapide).
 *   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
 *   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.
 
