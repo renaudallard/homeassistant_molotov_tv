@@ -867,7 +867,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if not missing:
             return
 
-        semaphore = asyncio.Semaphore(10)  # Increased for faster fetching
+        semaphore = asyncio.Semaphore(4)  # Limit concurrent API requests
 
         async def fetch_programs(channel: EpgChannel) -> None:
             async with semaphore:
