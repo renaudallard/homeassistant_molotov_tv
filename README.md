@@ -84,7 +84,11 @@ Une entité `text.molotov_tv_recherche` (ou similaire selon le nom de votre conf
 
 ### Panneau latéral Molotov TV
 L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre latérale de Home Assistant. Ce panneau offre :
-*   **Liste des chaînes avec EPG :** Visualisez toutes les chaînes avec le programme en cours et les horaires.
+*   **Onglet Direct :** Liste des chaînes avec le programme en cours et les horaires (EPG).
+*   **Onglet Enregistrements :** Accédez et lisez vos bookmarks directement depuis le panneau.
+*   **Replay par chaîne :** Cliquez sur le bouton "Replay" d'une chaîne pour voir et lire les programmes disponibles en replay.
+*   **Recherche intégrée :** Barre de recherche pour trouver du contenu avec affichage des épisodes disponibles.
+*   **Sélecteur Chromecast :** Choisissez la cible de lecture (cet appareil ou un Chromecast) directement depuis l'en-tête.
 *   **Lecture intégrée :** Cliquez sur une chaîne pour lancer la lecture directement dans le panneau.
 *   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
 *   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.

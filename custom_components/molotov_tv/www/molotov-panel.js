@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -79,6 +79,9 @@ class MolotovPanel extends LitElement {
       _loadingEpisodes: { type: Object },
       _castTargets: { type: Array },
       _selectedTarget: { type: String },
+      _activeTab: { type: String },
+      _recordings: { type: Array },
+      _loadingRecordings: { type: Boolean },
     };
   }
 
@@ -133,6 +136,86 @@ class MolotovPanel extends LitElement {
       .cast-select:focus {
         outline: none;
         border-color: var(--primary-color);
+      }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        background: var(--card-background-color);
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .tab {
+        flex: 1;
+        padding: 12px 16px;
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--secondary-text-color);
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+
+      .tab:hover {
+        color: var(--primary-text-color);
+        background: var(--secondary-background-color);
+      }
+
+      .tab.active {
+        color: var(--primary-color);
+        border-bottom-color: var(--primary-color);
+      }
+
+      /* Recording item */
+      .recording-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--card-background-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .recording-item:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .recording-thumb {
+        width: 100px;
+        height: 56px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #000;
+        flex-shrink: 0;
+      }
+
+      .recording-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .recording-title {
+        font-weight: 500;
+        color: var(--primary-text-color);
+        margin-bottom: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recording-subtitle {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       button {
@@ -820,6 +903,9 @@ class MolotovPanel extends LitElement {
     this._loadingEpisodes = {};
     this._castTargets = [];
     this._selectedTarget = "local";
+    this._activeTab = "live";
+    this._recordings = [];
+    this._loadingRecordings = false;
   }
 
   connectedCallback() {
@@ -933,6 +1019,78 @@ class MolotovPanel extends LitElement {
   _handleTargetChange(e) {
     this._selectedTarget = e.target.value;
     console.log(`[Molotov Panel] Selected target: ${this._selectedTarget}`);
+  }
+
+  _switchTab(tab) {
+    this._activeTab = tab;
+    if (tab === "recordings" && this._recordings.length === 0) {
+      this._loadRecordings();
+    }
+    this.requestUpdate();
+  }
+
+  async _loadRecordings() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._loadingRecordings = true;
+    this.requestUpdate();
+
+    try {
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: "recordings",
+        media_content_type: "directory",
+      });
+
+      if (result && result.children) {
+        this._recordings = result.children.map((item) => ({
+          mediaContentId: item.media_content_id,
+          title: item.title,
+          thumbnail: item.thumbnail,
+        }));
+        console.log(`[Molotov Panel] Loaded ${this._recordings.length} recordings`);
+      } else {
+        this._recordings = [];
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to load recordings:", err);
+      this._recordings = [];
+    }
+
+    this._loadingRecordings = false;
+    this.requestUpdate();
+  }
+
+  async _playRecording(recording) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._selectedChannel = {
+      name: "",
+      currentProgram: {
+        title: recording.title,
+        start: null,
+        end: null,
+      },
+    };
+    this._playerError = null;
+    this._isLive = false;
+    this._programStart = null;
+    this._programEnd = null;
+
+    try {
+      const mediaContentId = this._buildPlayMediaId(recording.mediaContentId);
+      await this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: mediaContentId,
+        media_content_type: "video",
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Play recording failed:", err);
+      this._playerError = err.message || "Erreur de lecture";
+    }
   }
 
   _buildPlayMediaId(baseMediaId) {
@@ -1839,11 +1997,22 @@ class MolotovPanel extends LitElement {
                 `
               )}
             </select>
-            <button @click=${this._loadChannels}>
+            <button @click=${this._handleRefresh}>
               <ha-icon icon="mdi:refresh"></ha-icon>
               Actualiser
             </button>
           </div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab ${this._activeTab === "live" ? "active" : ""}" @click=${() => this._switchTab("live")}>
+            <ha-icon icon="mdi:television-play"></ha-icon>
+            Direct
+          </button>
+          <button class="tab ${this._activeTab === "recordings" ? "active" : ""}" @click=${() => this._switchTab("recordings")}>
+            <ha-icon icon="mdi:bookmark"></ha-icon>
+            Enregistrements
+          </button>
         </div>
 
         <div class="search-bar">
@@ -1860,9 +2029,21 @@ class MolotovPanel extends LitElement {
           </button>
         </div>
 
-        ${this._showingSearch ? this._renderSearchResults() : this._renderChannels()}
+        ${this._showingSearch
+          ? this._renderSearchResults()
+          : this._activeTab === "live"
+          ? this._renderChannels()
+          : this._renderRecordings()}
       </div>
     `;
+  }
+
+  _handleRefresh() {
+    if (this._activeTab === "live") {
+      this._loadChannels();
+    } else {
+      this._loadRecordings();
+    }
   }
 
   _renderChannels() {
@@ -1882,6 +2063,37 @@ class MolotovPanel extends LitElement {
                 ${this._channels.map((channel) => this._renderChannelItem(channel))}
               </div>
             `}
+      </div>
+    `;
+  }
+
+  _renderRecordings() {
+    return html`
+      <div class="content">
+        ${this._loadingRecordings
+          ? html`<div class="loading">Chargement des enregistrements...</div>`
+          : this._recordings.length > 0
+          ? html`
+              <div class="channel-list">
+                ${this._recordings.map(
+                  (recording) => html`
+                    <div class="recording-item" @click=${() => this._playRecording(recording)}>
+                      ${recording.thumbnail
+                        ? html`<img
+                            class="recording-thumb"
+                            src=${recording.thumbnail}
+                            @error=${(e) => (e.target.style.display = "none")}
+                          />`
+                        : html`<div class="recording-thumb"></div>`}
+                      <div class="recording-info">
+                        <div class="recording-title">${recording.title}</div>
+                      </div>
+                    </div>
+                  `
+                )}
+              </div>
+            `
+          : html`<div class="error">Aucun enregistrement trouve</div>`}
       </div>
     `;
   }
