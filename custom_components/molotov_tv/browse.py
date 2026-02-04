@@ -154,6 +154,8 @@ def build_assets_browse(
             payload_data["program_id"] = asset.program_id
         if asset.channel_id:
             payload_data["channel_id"] = asset.channel_id
+        if asset.description:
+            payload_data["desc"] = asset.description
 
         payload = encode_asset_payload(payload_data)
         item_title = asset.title

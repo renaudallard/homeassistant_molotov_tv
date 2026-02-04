@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.9";
+const VERSION = "0.1.10";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -36,6 +36,26 @@ function getLangName(code) {
   if (!code) return "Inconnu";
   const lower = code.toLowerCase();
   return LANG_NAMES[lower] || code.toUpperCase();
+}
+
+function decodeAssetPayload(mediaContentId) {
+  // Format: prefix:base64_payload
+  const parts = mediaContentId.split(":");
+  if (parts.length < 2) return null;
+  const encoded = parts.slice(1).join(":");
+  try {
+    // Add padding if needed
+    let padded = encoded;
+    const padding = encoded.length % 4;
+    if (padding) {
+      padded += "=".repeat(4 - padding);
+    }
+    // URL-safe base64 decode
+    const decoded = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(decoded);
+  } catch (e) {
+    return null;
+  }
 }
 
 class MolotovPanel extends LitElement {
@@ -82,6 +102,9 @@ class MolotovPanel extends LitElement {
       _activeTab: { type: String },
       _recordings: { type: Array },
       _loadingRecordings: { type: Boolean },
+      _expandedRecordings: { type: Object },
+      _recordingEpisodes: { type: Object },
+      _loadingRecordingEpisodes: { type: Object },
     };
   }
 
@@ -906,6 +929,9 @@ class MolotovPanel extends LitElement {
     this._activeTab = "live";
     this._recordings = [];
     this._loadingRecordings = false;
+    this._expandedRecordings = {};
+    this._recordingEpisodes = {};
+    this._loadingRecordingEpisodes = {};
   }
 
   connectedCallback() {
@@ -1034,6 +1060,9 @@ class MolotovPanel extends LitElement {
     if (!entityId) return;
 
     this._loadingRecordings = true;
+    this._expandedRecordings = {};
+    this._recordingEpisodes = {};
+    this._loadingRecordingEpisodes = {};
     this.requestUpdate();
 
     try {
@@ -1045,11 +1074,16 @@ class MolotovPanel extends LitElement {
       });
 
       if (result && result.children) {
-        this._recordings = result.children.map((item) => ({
-          mediaContentId: item.media_content_id,
-          title: item.title,
-          thumbnail: item.thumbnail,
-        }));
+        this._recordings = result.children.map((item) => {
+          // Decode payload to get description
+          const payload = decodeAssetPayload(item.media_content_id);
+          return {
+            mediaContentId: item.media_content_id,
+            title: item.title,
+            thumbnail: item.thumbnail,
+            description: payload?.desc || null,
+          };
+        });
         console.log(`[Molotov Panel] Loaded ${this._recordings.length} recordings`);
       } else {
         this._recordings = [];
@@ -1063,14 +1097,81 @@ class MolotovPanel extends LitElement {
     this.requestUpdate();
   }
 
-  async _playRecording(recording) {
+  async _toggleRecordingExpand(e, recording) {
+    e.stopPropagation();
+    const recordingId = recording.mediaContentId;
+
+    if (this._expandedRecordings[recordingId]) {
+      // Collapse
+      this._expandedRecordings = { ...this._expandedRecordings, [recordingId]: false };
+      this.requestUpdate();
+      return;
+    }
+
+    // Expand and fetch episodes if not cached
+    this._expandedRecordings = { ...this._expandedRecordings, [recordingId]: true };
+
+    if (!this._recordingEpisodes[recordingId]) {
+      await this._fetchRecordingEpisodes(recording);
+    }
+
+    this.requestUpdate();
+  }
+
+  async _fetchRecordingEpisodes(recording) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    const recordingId = recording.mediaContentId;
+    this._loadingRecordingEpisodes = { ...this._loadingRecordingEpisodes, [recordingId]: true };
+    this.requestUpdate();
+
+    try {
+      // Browse the recording to get its episodes
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: recordingId,
+        media_content_type: "recording",
+      });
+
+      if (result && result.children) {
+        // Filter for playable episodes
+        const episodes = result.children
+          .filter((item) =>
+            item.media_content_id.startsWith("episode:") ||
+            item.media_content_id.startsWith("replay:") ||
+            item.media_content_id.startsWith("cast:") ||
+            item.can_play
+          )
+          .map((item) => ({
+            mediaContentId: item.media_content_id,
+            title: item.title,
+            thumbnail: item.thumbnail,
+          }));
+
+        this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: episodes };
+        console.log(`[Molotov Panel] Found ${episodes.length} episodes for recording "${recording.title}"`);
+      } else {
+        this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: [] };
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Failed to fetch recording episodes:", err);
+      this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: [] };
+    }
+
+    this._loadingRecordingEpisodes = { ...this._loadingRecordingEpisodes, [recordingId]: false };
+    this.requestUpdate();
+  }
+
+  async _playRecordingEpisode(episode, parentTitle) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
     this._selectedChannel = {
       name: "",
       currentProgram: {
-        title: recording.title,
+        title: episode.title || parentTitle,
         start: null,
         end: null,
       },
@@ -1081,14 +1182,14 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
 
     try {
-      const mediaContentId = this._buildPlayMediaId(recording.mediaContentId);
+      const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
         media_content_id: mediaContentId,
         media_content_type: "video",
       });
     } catch (err) {
-      console.error("[Molotov Panel] Play recording failed:", err);
+      console.error("[Molotov Panel] Play recording episode failed:", err);
       this._playerError = err.message || "Erreur de lecture";
     }
   }
@@ -2075,25 +2176,63 @@ class MolotovPanel extends LitElement {
           : this._recordings.length > 0
           ? html`
               <div class="channel-list">
-                ${this._recordings.map(
-                  (recording) => html`
-                    <div class="recording-item" @click=${() => this._playRecording(recording)}>
-                      ${recording.thumbnail
-                        ? html`<img
-                            class="recording-thumb"
-                            src=${recording.thumbnail}
-                            @error=${(e) => (e.target.style.display = "none")}
-                          />`
-                        : html`<div class="recording-thumb"></div>`}
-                      <div class="recording-info">
-                        <div class="recording-title">${recording.title}</div>
-                      </div>
-                    </div>
-                  `
-                )}
+                ${this._recordings.map((recording) => this._renderRecordingItem(recording))}
               </div>
             `
           : html`<div class="error">Aucun enregistrement trouve</div>`}
+      </div>
+    `;
+  }
+
+  _renderRecordingItem(recording) {
+    const recordingId = recording.mediaContentId;
+    const isExpanded = this._expandedRecordings[recordingId];
+    const episodes = this._recordingEpisodes[recordingId] || [];
+    const isLoadingEpisodes = this._loadingRecordingEpisodes[recordingId];
+
+    return html`
+      <div class="search-result-row">
+        <div class="search-result-main" @click=${(e) => this._toggleRecordingExpand(e, recording)}>
+          <ha-icon
+            class="expand-icon ${isExpanded ? "expanded" : ""}"
+            icon="mdi:chevron-right"
+          ></ha-icon>
+          ${recording.thumbnail
+            ? html`<img
+                class="recording-thumb"
+                src=${recording.thumbnail}
+                @error=${(e) => (e.target.style.display = "none")}
+              />`
+            : html`<div class="recording-thumb"></div>`}
+          <div class="recording-info">
+            <div class="recording-title">${recording.title}</div>
+            ${recording.description
+              ? html`<div class="recording-subtitle">${recording.description}</div>`
+              : ""}
+          </div>
+        </div>
+        ${isExpanded
+          ? html`
+              <div class="episodes-list">
+                ${isLoadingEpisodes
+                  ? html`<div class="episodes-loading">Chargement des episodes...</div>`
+                  : episodes.length > 0
+                  ? episodes.map(
+                      (episode) => html`
+                        <div class="episode-item" @click=${() => this._playRecordingEpisode(episode, recording.title)}>
+                          ${episode.thumbnail
+                            ? html`<img class="episode-thumb" src=${episode.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            : ""}
+                          <div class="episode-info">
+                            <div class="episode-title">${episode.title}</div>
+                          </div>
+                        </div>
+                      `
+                    )
+                  : html`<div class="episodes-empty">Aucun episode disponible</div>`}
+              </div>
+            `
+          : ""}
       </div>
     `;
   }
