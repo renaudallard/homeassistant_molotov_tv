@@ -1033,7 +1033,7 @@ class MolotovApi:
                     error_body = await _read_error_body(resp)
                     user_message = _extract_user_message(error_body)
                     if error_body:
-                        _LOGGER.error(
+                        _LOGGER.debug(
                             "Molotov API error: %s %s (%s %s): %s",
                             method,
                             url,
@@ -1042,7 +1042,7 @@ class MolotovApi:
                             error_body,
                         )
                     else:
-                        _LOGGER.error(
+                        _LOGGER.debug(
                             "Molotov API error: %s %s (%s %s)",
                             method,
                             url,
@@ -1155,7 +1155,7 @@ class MolotovApi:
                     error_body = await _read_error_body(resp)
                     user_message = _extract_user_message(error_body)
                     if error_body:
-                        _LOGGER.error(
+                        _LOGGER.debug(
                             "Molotov API error: %s %s (%s %s): %s",
                             method,
                             url,
@@ -1164,7 +1164,7 @@ class MolotovApi:
                             error_body,
                         )
                     else:
-                        _LOGGER.error(
+                        _LOGGER.debug(
                             "Molotov API error: %s %s (%s %s)",
                             method,
                             url,
