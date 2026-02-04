@@ -93,6 +93,7 @@ MEDIA_SEARCH = "search"
 MEDIA_SEARCH_PREFIX = "search"
 MEDIA_SEARCH_RESULT_PREFIX = "search_result"
 MEDIA_SEARCH_INPUT_PREFIX = "search_input"
+MEDIA_TONIGHT_EPG = "tonight_epg"
 
 # Panel configuration
 PANEL_URL_PATH = "molotov-tv"

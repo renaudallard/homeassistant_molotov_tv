@@ -835,6 +835,75 @@ class MolotovApi:
 
         return {"programs": []}
 
+    async def async_get_channel_programs_range(
+        self, channel_id: str, from_ts: int, to_ts: int
+    ) -> dict[str, Any]:
+        """Fetch programs for a channel within a specific time range.
+
+        Args:
+            channel_id: The channel ID
+            from_ts: Start timestamp in milliseconds since epoch
+            to_ts: End timestamp in milliseconds since epoch
+
+        Returns:
+            Dict with programs data
+        """
+
+        await self.async_ensure_logged_in()
+
+        _LOGGER.debug(
+            "Fetching programs for channel %s: from=%s to=%s",
+            channel_id,
+            from_ts,
+            to_ts,
+        )
+
+        # Try different endpoints for programs with time range
+        endpoints = [
+            f"v3.1/remote/programs/from-channel/{channel_id}?from={from_ts}&to={to_ts}",
+            f"v3.1/remote/programs/from-channel/{channel_id}?start={from_ts}&end={to_ts}",
+            # Without time params as fallback
+            f"v3.1/remote/programs/from-channel/{channel_id}",
+        ]
+
+        for endpoint in endpoints:
+            try:
+                url = urljoin(self._base_api_url, endpoint)
+                _LOGGER.debug("Trying programs endpoint: %s", url)
+                result = await self._request("GET", url, auth=True)
+                _LOGGER.debug(
+                    "Programs response for channel %s: keys=%s",
+                    channel_id,
+                    list(result.keys()) if isinstance(result, dict) else type(result),
+                )
+                # Check if we got programs
+                programs = result.get("programs", [])
+                if programs:
+                    _LOGGER.debug(
+                        "Endpoint %s returned %d programs",
+                        endpoint.split("?")[0],
+                        len(programs),
+                    )
+                    return result
+                # Also check sections format
+                sections = result.get("sections", [])
+                if sections:
+                    items_count = sum(
+                        len(s.get("items", [])) for s in sections if isinstance(s, dict)
+                    )
+                    if items_count > 0:
+                        _LOGGER.debug(
+                            "Endpoint %s returned %d sections with %d items",
+                            endpoint.split("?")[0],
+                            len(sections),
+                            items_count,
+                        )
+                        return result
+            except MolotovApiError as err:
+                _LOGGER.debug("Programs endpoint %s failed: %s", endpoint, err)
+
+        return {"programs": []}
+
     async def async_get_all_recordings(self) -> list[dict[str, Any]]:
         """Fetch all recordings with pagination."""
 

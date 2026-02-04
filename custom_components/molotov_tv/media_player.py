@@ -115,6 +115,7 @@ from .const import (
     MEDIA_SEARCH_PREFIX,
     MEDIA_SEARCH_RESULT_PREFIX,
     MEDIA_SEARCH_INPUT_PREFIX,
+    MEDIA_TONIGHT_EPG,
     MOLOTOV_AGENT,
     CUSTOM_RECEIVER_APP_ID,
 )
@@ -550,6 +551,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if media_content_id == MEDIA_RECORDINGS:
             return await self._async_browse_recordings()
 
+        if media_content_id == MEDIA_TONIGHT_EPG:
+            return await self._async_browse_tonight_epg(data)
+
         if media_content_id.startswith(f"{MEDIA_CHANNEL_PREFIX}:"):
             channel_id = media_content_id.split(":", 1)[1]
             return await self._async_browse_programs(data, channel_id)
@@ -948,6 +952,140 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._recording_cache = (dt_util.utcnow(), assets)
         return build_assets_browse(
             "Enregistrements", MEDIA_RECORDINGS, MEDIA_RECORDING_PREFIX, assets
+        )
+
+    async def _async_browse_tonight_epg(self, data: EpgData) -> BrowseMedia:
+        """Browse tonight's EPG (20:00-24:00) for all channels."""
+        now = dt_util.now()
+        # Create today's date at midnight local time
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Tonight window: 20:00 to 24:00 local time
+        tonight_start = today_midnight.replace(hour=20)
+        tonight_end = today_midnight.replace(hour=23, minute=59, second=59)
+
+        # Convert to UTC for comparison with program times
+        tonight_start_utc = tonight_start.astimezone(dt_util.UTC)
+        tonight_end_utc = tonight_end.astimezone(dt_util.UTC)
+
+        _LOGGER.debug(
+            "Fetching tonight EPG: from=%s to=%s (UTC: %s to %s)",
+            tonight_start.isoformat(),
+            tonight_end.isoformat(),
+            tonight_start_utc.isoformat(),
+            tonight_end_utc.isoformat(),
+        )
+
+        # Fetch programs for all channels concurrently
+        semaphore = asyncio.Semaphore(10)
+        channel_results: dict[str, list[EpgProgram]] = {}
+
+        async def fetch_channel_programs(channel: EpgChannel) -> None:
+            async with semaphore:
+                try:
+                    # Use the working endpoint without time range params
+                    raw = await self._api.async_get_channel_programs(channel.channel_id)
+                    programs = parse_remote_programs(raw, channel.channel_id)
+                    if programs:
+                        channel_results[channel.channel_id] = programs
+                except Exception as err:
+                    _LOGGER.debug(
+                        "Failed to fetch tonight EPG for channel %s: %s",
+                        channel.channel_id,
+                        err,
+                    )
+
+        # Limit to first 30 channels to avoid timeout
+        await asyncio.gather(
+            *(fetch_channel_programs(channel) for channel in data.channels[:30])
+        )
+
+        children: list[BrowseMedia] = []
+        now_utc = dt_util.utcnow()
+
+        for channel in data.channels[:30]:
+            programs = channel_results.get(channel.channel_id, [])
+            if not programs:
+                continue
+
+            # Filter programs that overlap with tonight window (20:00-24:00)
+            tonight_programs = []
+            for program in programs:
+                # Program overlaps if it starts before midnight and ends after 20:00
+                if program.start <= tonight_end_utc and program.end >= tonight_start_utc:
+                    tonight_programs.append(program)
+
+            if not tonight_programs:
+                continue
+
+            # Sort by start time
+            tonight_programs.sort(key=lambda p: p.start)
+
+            # Create channel entry with programs as children
+            channel_children: list[BrowseMedia] = []
+            for program in tonight_programs:
+                start_ts = int(program.start.timestamp())
+                end_ts = int(program.end.timestamp())
+
+                # Check if currently live
+                is_live = program.start <= now_utc < program.end
+                status = "🔴 " if is_live else ""
+
+                title = program.title
+                if program.episode_title:
+                    title = f"{program.title} - {program.episode_title}"
+
+                # Format time in local timezone
+                start_local = program.start.astimezone(now.tzinfo)
+                end_local = program.end.astimezone(now.tzinfo)
+                time_str = f"{start_local.strftime('%H:%M')}-{end_local.strftime('%H:%M')}"
+
+                channel_children.append(
+                    BrowseMedia(
+                        title=f"{status}{time_str} {title}",
+                        media_class=MediaClass.TV_SHOW,
+                        media_content_id=(
+                            f"{MEDIA_PROGRAM_PREFIX}:{channel.channel_id}:{start_ts}:{end_ts}"
+                        ),
+                        media_content_type=MEDIA_PROGRAM_PREFIX,
+                        can_play=False,
+                        can_expand=True,
+                        thumbnail=program.thumbnail or program.poster,
+                    )
+                )
+
+            children.append(
+                BrowseMedia(
+                    title=channel.label,
+                    media_class=MediaClass.CHANNEL,
+                    media_content_id=f"tonight_channel:{channel.channel_id}",
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=True,
+                    thumbnail=channel.poster,
+                    children=channel_children,
+                )
+            )
+
+        if not children:
+            children.append(
+                BrowseMedia(
+                    title="Aucun programme disponible pour ce soir",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=MEDIA_ROOT,
+                    media_content_type="directory",
+                    can_play=False,
+                    can_expand=False,
+                )
+            )
+
+        return BrowseMedia(
+            title="Ce soir",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=MEDIA_TONIGHT_EPG,
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            children=children,
         )
 
     async def _async_browse_search_home(self) -> BrowseMedia:

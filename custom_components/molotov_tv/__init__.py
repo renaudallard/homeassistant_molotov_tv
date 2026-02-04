@@ -124,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             webcomponent_name="molotov-panel",
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
-            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.14",
+            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.15",
             embed_iframe=False,
             require_admin=False,
             config={
@@ -147,11 +147,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    from homeassistant.components.panel_custom import async_unregister_panel
-
     # Unregister sidebar panel
     try:
-        async_unregister_panel(hass, PANEL_URL_PATH)
+        # Remove panel from frontend_panels registry
+        if "frontend_panels" in hass.data and PANEL_URL_PATH in hass.data["frontend_panels"]:
+            hass.data["frontend_panels"].pop(PANEL_URL_PATH, None)
     except Exception:
         pass
 
