@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -70,6 +70,10 @@ class MolotovPanel extends LitElement {
       _expandedChannels: { type: Object },
       _channelPrograms: { type: Object },
       _loadingPrograms: { type: Object },
+      _searchQuery: { type: String },
+      _searchResults: { type: Array },
+      _searching: { type: Boolean },
+      _showingSearch: { type: Boolean },
     };
   }
 
@@ -573,6 +577,95 @@ class MolotovPanel extends LitElement {
         font-size: 13px;
         font-style: italic;
       }
+
+      /* Search bar */
+      .search-bar {
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px;
+        background: var(--card-background-color);
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .search-input {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 4px;
+        background: var(--primary-background-color);
+        color: var(--primary-text-color);
+        font-size: 14px;
+      }
+
+      .search-input:focus {
+        outline: none;
+        border-color: var(--primary-color);
+      }
+
+      .search-input::placeholder {
+        color: var(--secondary-text-color);
+      }
+
+      .search-btn {
+        padding: 10px 16px;
+      }
+
+      .search-results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: var(--secondary-background-color);
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .search-results-title {
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+
+      .search-result-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--card-background-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .search-result-item:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .search-result-thumb {
+        width: 80px;
+        height: 45px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #000;
+        flex-shrink: 0;
+      }
+
+      .search-result-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .search-result-title {
+        font-weight: 500;
+        color: var(--primary-text-color);
+        margin-bottom: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .search-result-subtitle {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+      }
     `;
   }
 
@@ -608,6 +701,10 @@ class MolotovPanel extends LitElement {
     this._expandedChannels = {};
     this._channelPrograms = {};
     this._loadingPrograms = {};
+    this._searchQuery = "";
+    this._searchResults = [];
+    this._searching = false;
+    this._showingSearch = false;
   }
 
   connectedCallback() {
@@ -818,6 +915,97 @@ class MolotovPanel extends LitElement {
       });
     } catch (err) {
       console.error("[Molotov Panel] Play replay failed:", err);
+      this._playerError = err.message || "Erreur de lecture";
+    }
+  }
+
+  _handleSearchInput(e) {
+    this._searchQuery = e.target.value;
+  }
+
+  _handleSearchKeydown(e) {
+    if (e.key === "Enter") {
+      this._performSearch();
+    }
+  }
+
+  async _performSearch() {
+    const query = this._searchQuery.trim();
+    if (!query) return;
+
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._searching = true;
+    this._showingSearch = true;
+    this.requestUpdate();
+
+    try {
+      const result = await this.hass.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: `search:${encodeURIComponent(query)}`,
+        media_content_type: "search",
+      });
+
+      if (result && result.children) {
+        this._searchResults = result.children
+          .filter((item) => item.media_content_id.startsWith("search_result:"))
+          .map((item) => this._parseSearchResult(item));
+        console.log(`[Molotov Panel] Found ${this._searchResults.length} results for "${query}"`);
+      } else {
+        this._searchResults = [];
+      }
+    } catch (err) {
+      console.error("[Molotov Panel] Search failed:", err);
+      this._searchResults = [];
+    }
+
+    this._searching = false;
+    this.requestUpdate();
+  }
+
+  _parseSearchResult(item) {
+    return {
+      mediaContentId: item.media_content_id,
+      title: item.title,
+      thumbnail: item.thumbnail,
+      mediaClass: item.media_class,
+    };
+  }
+
+  _clearSearch() {
+    this._searchQuery = "";
+    this._searchResults = [];
+    this._showingSearch = false;
+    this.requestUpdate();
+  }
+
+  async _playSearchResult(result) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    this._selectedChannel = {
+      name: "",
+      currentProgram: {
+        title: result.title,
+        start: null,
+        end: null,
+      },
+    };
+    this._playerError = null;
+    this._isLive = false;
+    this._programStart = null;
+    this._programEnd = null;
+
+    try {
+      await this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: `play_local:${result.mediaContentId}`,
+        media_content_type: "video",
+      });
+    } catch (err) {
+      console.error("[Molotov Panel] Play search result failed:", err);
       this._playerError = err.message || "Erreur de lecture";
     }
   }
@@ -1355,21 +1543,81 @@ class MolotovPanel extends LitElement {
           </div>
         </div>
 
-        <div class="content">
-          ${this._loading
-            ? html`<div class="loading">Chargement des chaines...</div>`
-            : this._error
-            ? html`
-                <div class="error">
-                  <span>${this._error}</span>
-                  <button @click=${this._loadChannels}>Reessayer</button>
-                </div>
-              `
-            : html`
-                <div class="channel-list">
-                  ${this._channels.map((channel) => this._renderChannelItem(channel))}
-                </div>
-              `}
+        <div class="search-bar">
+          <input
+            type="text"
+            class="search-input"
+            placeholder="Rechercher un programme..."
+            .value=${this._searchQuery}
+            @input=${this._handleSearchInput}
+            @keydown=${this._handleSearchKeydown}
+          />
+          <button class="search-btn" @click=${this._performSearch}>
+            <ha-icon icon="mdi:magnify"></ha-icon>
+          </button>
+        </div>
+
+        ${this._showingSearch ? this._renderSearchResults() : this._renderChannels()}
+      </div>
+    `;
+  }
+
+  _renderChannels() {
+    return html`
+      <div class="content">
+        ${this._loading
+          ? html`<div class="loading">Chargement des chaines...</div>`
+          : this._error
+          ? html`
+              <div class="error">
+                <span>${this._error}</span>
+                <button @click=${this._loadChannels}>Reessayer</button>
+              </div>
+            `
+          : html`
+              <div class="channel-list">
+                ${this._channels.map((channel) => this._renderChannelItem(channel))}
+              </div>
+            `}
+      </div>
+    `;
+  }
+
+  _renderSearchResults() {
+    return html`
+      <div class="search-results-header">
+        <span class="search-results-title">
+          ${this._searching
+            ? "Recherche en cours..."
+            : `${this._searchResults.length} resultat(s) pour "${this._searchQuery}"`}
+        </span>
+        <button class="secondary" @click=${this._clearSearch}>
+          <ha-icon icon="mdi:close"></ha-icon>
+          Fermer
+        </button>
+      </div>
+      <div class="content">
+        ${this._searching
+          ? html`<div class="loading">Recherche...</div>`
+          : this._searchResults.length > 0
+          ? html`
+              <div class="channel-list">
+                ${this._searchResults.map((result) => this._renderSearchResultItem(result))}
+              </div>
+            `
+          : html`<div class="error">Aucun resultat trouve</div>`}
+      </div>
+    `;
+  }
+
+  _renderSearchResultItem(result) {
+    return html`
+      <div class="search-result-item" @click=${() => this._playSearchResult(result)}>
+        ${result.thumbnail
+          ? html`<img class="search-result-thumb" src=${result.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+          : ""}
+        <div class="search-result-info">
+          <div class="search-result-title">${result.title}</div>
         </div>
       </div>
     `;
