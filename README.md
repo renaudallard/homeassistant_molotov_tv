@@ -95,6 +95,18 @@ L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre l
 *   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
 *   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.
 
+### Multi-utilisateurs
+La lecture locale est isolée par session de navigateur :
+*   **Lecture privée :** Lorsqu'un utilisateur lance une lecture locale, seul son navigateur/appareil affiche le lecteur vidéo.
+*   **Pas d'interférence :** Les autres utilisateurs connectés à Home Assistant ne voient pas la lecture en cours des autres.
+*   **Chromecast partagé :** La lecture sur Chromecast reste visible par tous les utilisateurs (le Chromecast étant un appareil partagé).
+
+### Limitations sur mobile
+La lecture locale n'est **pas disponible** sur les appareils mobiles (Android/iOS) via l'application Home Assistant Companion :
+*   **Raison :** Les WebViews mobiles ne prennent pas en charge Widevine DRM, nécessaire pour décrypter les flux Molotov.
+*   **Solution :** Sur mobile, utilisez le **Chromecast** pour regarder le contenu. Sélectionnez un Chromecast dans le menu déroulant du panneau.
+*   **Détection automatique :** L'option "Cet appareil" est automatiquement désactivée sur mobile pour éviter les erreurs de lecture.
+
 ### Casting
 Depuis le navigateur de médias, lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
 *   **Lire sur cet appareil :** Lit localement dans votre navigateur (via le panneau latéral).
