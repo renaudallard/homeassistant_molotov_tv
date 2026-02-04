@@ -23,7 +23,6 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 *   **💻 Lecture locale :** Regardez directement dans Home Assistant via le panneau latéral dédié avec lecteur dash.js intégré.
 *   **🔄 Auto-découverte :** Trouve automatiquement les appareils Chromecast sur votre réseau.
 *   **🇫🇷 Audio en français :** La piste audio française (VF) est sélectionnée par défaut lorsqu'elle est disponible.
-*   **🔒 Gestion des flux :** Respect de la limite de 4 flux simultanés par compte Molotov.
 
 ## 📋 Prérequis
 
@@ -126,12 +125,6 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
     *   Position non sauvegardée si > 95% du contenu a été visionné.
 *   **Expiration :** Les positions sont automatiquement supprimées après 30 jours.
 *   **TV en direct :** La reprise ne s'applique pas au contenu en direct.
-
-### Limite de flux simultanés
-Molotov limite le nombre de flux simultanés à 4 par compte. L'intégration respecte cette limite :
-*   **Contrôle automatique :** L'intégration compte les flux actifs et bloque le démarrage d'un 5ème flux.
-*   **Message d'erreur :** Si la limite est atteinte, un message clair vous invite à arrêter un flux avant d'en démarrer un nouveau.
-*   **Libération automatique :** Les slots sont libérés automatiquement à l'arrêt de la lecture ou en cas d'erreur.
 
 ## 🛠️ Avancé
 

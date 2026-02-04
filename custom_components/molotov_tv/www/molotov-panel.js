@@ -9,7 +9,7 @@ import {
   css,
 } from "https://unpkg.com/lit-element@2.5.1/lit-element.js?module";
 
-const VERSION = "0.1.11";
+const VERSION = "0.1.10";
 
 // Language code to display name mapping
 const LANG_NAMES = {
