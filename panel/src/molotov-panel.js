@@ -5,7 +5,7 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.16";
+const VERSION = "0.1.17";
 
 // Language code to display name mapping
 const LANG_NAMES = {
@@ -1942,6 +1942,7 @@ class MolotovPanel extends LitElement {
 
     // Check if we're playing with a stream URL (local playback)
     // Only show local player if THIS session initiated it
+    console.log(`[Molotov Panel] Entity state: ${state.state}, has stream_url: ${!!state.attributes.stream_url}, localPlaybackInitiated: ${this._localPlaybackInitiated}`);
     if (state.state === "playing" && state.attributes.stream_url && this._localPlaybackInitiated) {
       const streamUrl = state.attributes.stream_url;
       const drm = state.attributes.stream_drm;
