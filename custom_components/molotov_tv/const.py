@@ -51,6 +51,9 @@ CAST_HEALTH_CHECK_INTERVAL = timedelta(seconds=30)
 CAST_RECONNECT_ATTEMPTS = 3
 CAST_RECONNECT_DELAY = 5  # seconds
 
+# Stream limits
+MAX_CONCURRENT_STREAMS = 4  # Molotov account limit
+
 # Resume position storage
 RESUME_STORAGE_VERSION = 1
 RESUME_MIN_POSITION = 60  # Don't save if watched less than 60 seconds

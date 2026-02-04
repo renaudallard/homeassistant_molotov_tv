@@ -106,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "search_cache": None,  # Shared search cache: (timestamp, query, results)
         "resume_store": resume_store,
+        "active_streams": set(),  # Track active stream IDs to limit concurrent streams
     }
 
     # Register static path for panel assets
