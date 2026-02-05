@@ -378,6 +378,14 @@ class MolotovApi:
                 )
             raise
 
+    async def async_get_all_channels(self) -> dict[str, Any]:
+        """Fetch all channels (not just subscribed)."""
+        await self.async_ensure_logged_in()
+        url = self._session_state.remote_url or urljoin(
+            self._base_api_url, "v2/remote/channels"
+        )
+        return await self._request("GET", url, auth=True)
+
     async def async_get_live_home_channels(self) -> dict[str, Any]:
         """Fetch live home sections (includes per-channel programs when available)."""
         await self.async_ensure_logged_in()

@@ -980,14 +980,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Merge full EPG data for channels missing programs
+        # Fetch all channels (not just subscribed) for tonight view
         channels = list(data.channels)
         channels_by_id = {ch.channel_id: ch for ch in channels}
+        try:
+            all_channels_raw = await self._api.async_get_all_channels()
+            all_channels_data = _parse_epg(all_channels_raw)
+            for ch in all_channels_data.channels:
+                if ch.channel_id not in channels_by_id:
+                    channels_by_id[ch.channel_id] = ch
+                    channels.append(ch)
+                else:
+                    existing = channels_by_id[ch.channel_id]
+                    if not existing.programs and ch.programs:
+                        existing.programs = ch.programs
+                    if existing.poster is None and ch.poster is not None:
+                        existing.poster = ch.poster
+        except MolotovApiError as err:
+            _LOGGER.warning("Tonight all-channels fetch failed: %s", err)
+
+        # Merge EPG program data for channels still missing programs
         try:
             epg_raw = await self._api.async_get_epg()
             epg_data = _parse_epg(epg_raw)
             merge_epg_channels(channels_by_id, epg_data.channels)
-            # Add channels from full EPG not present in coordinator data
             for epg_ch in epg_data.channels:
                 if epg_ch.channel_id not in channels_by_id:
                     channels_by_id[epg_ch.channel_id] = epg_ch
