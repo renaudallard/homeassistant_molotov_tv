@@ -88,87 +88,62 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
         self.api = api
 
     async def _async_update_data(self) -> EpgData:
-        # Fetch channels and EPG in parallel
+        # Fetch all 3 sources in parallel:
+        # - channels-subbed: 203 channels with posters, 0 programs
+        # - live/sections: programs for many/all channels
+        # - EPG feed: programs for ~30 channels (backup)
         channels_task = asyncio.create_task(self.api.async_get_channels())
+        live_task = asyncio.create_task(self.api.async_get_live_home_channels())
         epg_task = asyncio.create_task(self.api.async_get_epg())
 
         channels_raw = await channels_task
         channels_data = _parse_epg(channels_raw)
 
-        ch_total = len(channels_data.channels)
-        ch_with_programs = sum(1 for c in channels_data.channels if c.programs)
-        ch_with_poster = sum(1 for c in channels_data.channels if c.poster)
         _LOGGER.debug(
             "Channels endpoint: %d channels, %d with programs, %d with poster",
-            ch_total, ch_with_programs, ch_with_poster,
+            len(channels_data.channels),
+            sum(1 for c in channels_data.channels if c.programs),
+            sum(1 for c in channels_data.channels if c.poster),
         )
-        for c in channels_data.channels[:5]:
-            _LOGGER.debug(
-                "  ch %s (%s): programs=%d poster=%s",
-                c.channel_id, c.label, len(c.programs),
-                "yes" if c.poster else "no",
-            )
 
-        # Merge EPG data into channel data
-        try:
-            epg_raw = await epg_task
-            epg_data = _parse_epg(epg_raw)
+        channels_by_id = {
+            c.channel_id: c for c in channels_data.channels
+        }
 
-            epg_total = len(epg_data.channels)
-            epg_with_programs = sum(1 for c in epg_data.channels if c.programs)
-            epg_with_poster = sum(1 for c in epg_data.channels if c.poster)
-            _LOGGER.debug(
-                "EPG endpoint: %d channels, %d with programs, %d with poster",
-                epg_total, epg_with_programs, epg_with_poster,
-            )
-            for c in epg_data.channels[:5]:
+        # Merge live/sections first (likely has programs for most channels)
+        for label, task in (("live/sections", live_task), ("EPG", epg_task)):
+            try:
+                raw = await task
+                source = _parse_epg(raw)
+                matched = 0
+                merged_programs = 0
+                merged_poster = 0
+                for src_ch in source.channels:
+                    existing = channels_by_id.get(src_ch.channel_id)
+                    if existing is None:
+                        continue
+                    matched += 1
+                    if not existing.programs and src_ch.programs:
+                        existing.programs = src_ch.programs
+                        merged_programs += 1
+                    if existing.poster is None and src_ch.poster is not None:
+                        existing.poster = src_ch.poster
+                        merged_poster += 1
+                    if not existing.label and src_ch.label:
+                        existing.label = src_ch.label
                 _LOGGER.debug(
-                    "  epg %s (%s): programs=%d poster=%s",
-                    c.channel_id, c.label, len(c.programs),
-                    "yes" if c.poster else "no",
+                    "%s: %d channels, %d matched, %d got programs, %d got poster",
+                    label, len(source.channels), matched,
+                    merged_programs, merged_poster,
                 )
+            except MolotovApiError as err:
+                _LOGGER.warning("%s fetch failed: %s", label, err)
 
-            # Build lookup from channels data and merge EPG into it
-            channels_by_id = {
-                c.channel_id: c for c in channels_data.channels
-            }
-            matched = 0
-            merged_programs = 0
-            merged_poster = 0
-            epg_only = 0
-            for epg_ch in epg_data.channels:
-                existing = channels_by_id.get(epg_ch.channel_id)
-                if existing is None:
-                    epg_only += 1
-                    continue
-                matched += 1
-                if not existing.programs and epg_ch.programs:
-                    existing.programs = epg_ch.programs
-                    merged_programs += 1
-                if existing.poster is None and epg_ch.poster is not None:
-                    existing.poster = epg_ch.poster
-                    merged_poster += 1
-                if not existing.label and epg_ch.label:
-                    existing.label = epg_ch.label
-
-            _LOGGER.debug(
-                "EPG merge: %d matched, %d got programs, %d got poster, "
-                "%d EPG-only channels skipped",
-                matched, merged_programs, merged_poster, epg_only,
-            )
-        except MolotovApiError as err:
-            _LOGGER.warning("EPG fetch failed, using channels only: %s", err)
-
-        final_total = len(channels_data.channels)
-        final_with_programs = sum(
-            1 for c in channels_data.channels if c.programs
-        )
-        final_with_poster = sum(
-            1 for c in channels_data.channels if c.poster
-        )
         _LOGGER.debug(
             "Final coordinator data: %d channels, %d with programs, %d with poster",
-            final_total, final_with_programs, final_with_poster,
+            len(channels_data.channels),
+            sum(1 for c in channels_data.channels if c.programs),
+            sum(1 for c in channels_data.channels if c.poster),
         )
 
         return channels_data
