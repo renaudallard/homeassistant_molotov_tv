@@ -119,6 +119,8 @@ class MolotovPanel extends LitElement {
       _focusedCastHost: { type: String },
       // Track if this session initiated local playback
       _localPlaybackInitiated: { type: Boolean },
+      _localMinimized: { type: Boolean },
+      _castMinimized: { type: Boolean },
       // Tonight EPG
       _tonightChannels: { type: Array },
       _loadingTonight: { type: Boolean },
@@ -1256,6 +1258,8 @@ class MolotovPanel extends LitElement {
     this._castPositionUpdatedAt = null;
     // Track if this session initiated local playback
     this._localPlaybackInitiated = false;
+    this._localMinimized = false;
+    this._castMinimized = false;
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
@@ -1570,6 +1574,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     try {
@@ -1660,6 +1665,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     try {
@@ -1846,6 +1852,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     try {
@@ -2071,6 +2078,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     try {
@@ -2109,6 +2117,7 @@ class MolotovPanel extends LitElement {
           title: state.attributes.media_title || "En direct",
         };
         this._playing = true;
+        this._localMinimized = false;
         this._playerError = null;
         this._playerLoading = true;
 
@@ -2137,6 +2146,7 @@ class MolotovPanel extends LitElement {
 
       if (!this._castPlaying || this._castTarget !== castTarget) {
         this._castPlaying = true;
+        this._castMinimized = false;
         this._castTarget = castTarget;
         this._castTitle = state.attributes.media_title || "En cours de lecture";
         this._playing = false;
@@ -2166,6 +2176,8 @@ class MolotovPanel extends LitElement {
       this._castTitle = null;
       this._isLive = false;
       this._localPlaybackInitiated = false;
+      this._localMinimized = false;
+      this._castMinimized = false;
       this._activeCasts = {};
       this._focusedCastHost = null;
       this._stopCastProgressUpdate();
@@ -2189,6 +2201,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     // Set program times for progress bar (only for local playback)
@@ -2515,6 +2528,23 @@ class MolotovPanel extends LitElement {
     this._selectedChannel = null;
     this._currentStreamUrl = null;
     this._localPlaybackInitiated = false;
+    this._localMinimized = false;
+  }
+
+  _goBackFromPlayer() {
+    this._localMinimized = true;
+  }
+
+  _goBackFromCast() {
+    this._castMinimized = true;
+  }
+
+  _expandCurrentPlayback() {
+    if (this._playing && this._streamData) {
+      this._localMinimized = false;
+    } else if (this._castPlaying) {
+      this._castMinimized = false;
+    }
   }
 
   _togglePlayPause() {
@@ -2681,13 +2711,22 @@ class MolotovPanel extends LitElement {
   }
 
   render() {
-    if (this._playing && this._streamData) {
-      return this._renderPlayer();
-    }
-    if (this._castPlaying && !this._isMobile) {
-      return this._renderCastPlayer();
-    }
-    return this._renderChannelList();
+    const localActive = this._playing && this._streamData;
+    const showFullLocal = localActive && !this._localMinimized;
+    const showFullCast = this._castPlaying && !this._isMobile && !this._castMinimized;
+    const showList = !showFullLocal && !showFullCast;
+
+    return html`
+      ${localActive ? html`
+        <div style="${this._localMinimized
+          ? 'position:fixed;left:-9999px;width:1px;height:1px;overflow:hidden;'
+          : 'height:100%;'}">
+          ${this._renderPlayer()}
+        </div>
+      ` : ''}
+      ${showFullCast ? this._renderCastPlayer() : ''}
+      ${showList ? this._renderChannelList() : ''}
+    `;
   }
 
   _renderChannelList() {
@@ -2724,6 +2763,12 @@ class MolotovPanel extends LitElement {
             <ha-icon icon="mdi:bookmark"></ha-icon>
             Enregistrements
           </button>
+          ${(this._playing && this._localMinimized) || this._castMinimized ? html`
+            <button class="tab" @click=${this._expandCurrentPlayback}>
+              <ha-icon icon="mdi:play-circle"></ha-icon>
+              En cours
+            </button>
+          ` : ''}
         </div>
 
         <div class="search-bar">
@@ -2889,6 +2934,7 @@ class MolotovPanel extends LitElement {
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
+      this._localMinimized = false;
     }
 
     try {
@@ -3146,7 +3192,7 @@ class MolotovPanel extends LitElement {
       <div class="player-view">
         <div class="player-header">
           <div class="player-header-left">
-            <button class="secondary" @click=${this._stopPlayback}>
+            <button class="secondary" @click=${this._goBackFromPlayer}>
               <ha-icon icon="mdi:arrow-left"></ha-icon>
               Retour
             </button>
@@ -3318,7 +3364,7 @@ class MolotovPanel extends LitElement {
       <div class="player-view">
         <div class="player-header">
           <div class="player-header-left">
-            <button class="secondary" @click=${this._stopCastPlayback}>
+            <button class="secondary" @click=${this._goBackFromCast}>
               <ha-icon icon="mdi:arrow-left"></ha-icon>
               Retour
             </button>
@@ -3511,6 +3557,7 @@ class MolotovPanel extends LitElement {
     this._activeCasts = {};
     this._focusedCastHost = null;
     this._stopCastProgressUpdate();
+    this._castMinimized = false;
   }
 
   async _toggleCastPlayPause() {
