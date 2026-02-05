@@ -2246,7 +2246,7 @@ class MolotovPanel extends LitElement {
           buffer: {
             stableBufferTime: 6,
             bufferTimeAtTopQuality: 15,
-            bufferTimeAtTopQualityLongForm: 30,
+            bufferTimeAtTopQualityLongForm: 60,
           },
           delay: {
             liveDelay: 3,
