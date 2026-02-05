@@ -38,7 +38,7 @@ import logging
 import random
 import time
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin
 import zipfile
 
 from aiohttp import BasicAuth, ClientResponseError, ClientSession, ClientTimeout
@@ -427,8 +427,8 @@ class MolotovApi:
                 ("POST", "v3/me/search/query", {"query": query}),
                 ("POST", "v2/search/query", {"query": query}),  # Try without /me/
                 ("POST", "v3/search/query", {"query": query}),
-                ("GET", f"v2/me/search?query={query}", None),
-                ("GET", f"v3/search?q={query}", None),
+                ("GET", f"v2/me/search?query={quote(query)}", None),
+                ("GET", f"v3/search?q={quote(query)}", None),
             ]
         )
 
