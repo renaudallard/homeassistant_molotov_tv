@@ -984,13 +984,32 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             len(channels_by_id),
         )
 
-        # Fetch tonight's programs for channels not yet covered
-        from_ts = int(tonight_start_utc.timestamp() * 1000)
-        to_ts = int(tonight_end_utc.timestamp() * 1000)
+        # Determine which channels already have tonight programs
+        tonight_21h_utc = tonight_start_utc + timedelta(hours=1)
+
+        def _has_tonight_programs(ch: EpgChannel) -> bool:
+            return any(
+                (tonight_start_utc <= p.start <= tonight_end_utc)
+                or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
+                for p in ch.programs
+            )
+
+        covered_ids = {
+            cid for cid, ch in channels_by_id.items()
+            if _has_tonight_programs(ch)
+        }
+
+        # Fetch programs for all channels that don't have tonight data yet
         missing_ids = [
             ch.channel_id for ch in data.channels
-            if ch.channel_id not in channels_by_id
+            if ch.channel_id not in covered_ids
         ]
+
+        _LOGGER.debug(
+            "Tonight EPG: %d channels already covered, %d need fetching",
+            len(covered_ids),
+            len(missing_ids),
+        )
 
         if missing_ids:
             sem = asyncio.Semaphore(10)
@@ -998,8 +1017,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             async def fetch_channel(channel_id: str) -> tuple[str, list[EpgProgram]]:
                 async with sem:
                     try:
-                        raw = await self._api.async_get_channel_programs_range(
-                            channel_id, from_ts, to_ts,
+                        raw = await self._api.async_get_channel_programs(
+                            channel_id,
                         )
                         return channel_id, parse_remote_programs(raw, channel_id)
                     except MolotovApiError:
@@ -1036,7 +1055,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # Filter programs for tonight:
             # - Include if starts between 20:00 and 24:00
             # - If starts before 20:00, only include if ends after 21:00
-            tonight_21h_utc = tonight_start_utc + timedelta(hours=1)
             tonight_programs = [
                 p for p in programs
                 if (tonight_start_utc <= p.start <= tonight_end_utc)
