@@ -300,6 +300,17 @@ class MolotovPanel extends LitElement {
         background: rgba(255, 255, 255, 0.1);
       }
 
+      .pubs-btn {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .pubs-label {
+        font-size: 10px;
+        opacity: 0.8;
+      }
+
       .content {
         flex: 1;
         overflow-y: auto;
@@ -2616,6 +2627,31 @@ class MolotovPanel extends LitElement {
     }
   }
 
+  _localSeekBeginning() {
+    const video = this.shadowRoot.querySelector("video");
+    if (video) video.currentTime = 0;
+  }
+
+  _localSkipBack30() {
+    const video = this.shadowRoot.querySelector("video");
+    if (video) video.currentTime = Math.max(0, video.currentTime - 30);
+  }
+
+  _localSkipBack10() {
+    const video = this.shadowRoot.querySelector("video");
+    if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+  }
+
+  _localSkipForward30() {
+    const video = this.shadowRoot.querySelector("video");
+    if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 30);
+  }
+
+  _localSkipPubs() {
+    const video = this.shadowRoot.querySelector("video");
+    if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 480);
+  }
+
   _handleProgressClick(e) {
     const progressBar = e.currentTarget;
     const rect = progressBar.getBoundingClientRect();
@@ -3318,8 +3354,24 @@ class MolotovPanel extends LitElement {
 
               <div class="controls-row">
                 <div class="controls-left">
+                  <button class="icon-btn" @click=${this._localSeekBeginning}>
+                    <ha-icon icon="mdi:skip-previous"></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._localSkipBack30}>
+                    <ha-icon icon="mdi:rewind-30"></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._localSkipBack10}>
+                    <ha-icon icon="mdi:rewind-10"></ha-icon>
+                  </button>
                   <button class="icon-btn" @click=${this._togglePlayPause}>
                     <ha-icon icon=${this._paused ? "mdi:play" : "mdi:pause"}></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._localSkipForward30}>
+                    <ha-icon icon="mdi:fast-forward-30"></ha-icon>
+                  </button>
+                  <button class="icon-btn pubs-btn" @click=${this._localSkipPubs}>
+                    <ha-icon icon="mdi:fast-forward"></ha-icon>
+                    <span class="pubs-label">Pubs</span>
                   </button>
 
                   <div class="volume-container">
@@ -3475,14 +3527,24 @@ class MolotovPanel extends LitElement {
 
               <div class="controls-row">
                 <div class="controls-left">
-                  <button class="icon-btn" @click=${this._castSkipBack}>
+                  <button class="icon-btn" @click=${this._castSeekBeginning}>
+                    <ha-icon icon="mdi:skip-previous"></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._castSkipBack30}>
                     <ha-icon icon="mdi:rewind-30"></ha-icon>
+                  </button>
+                  <button class="icon-btn" @click=${this._castSkipBack10}>
+                    <ha-icon icon="mdi:rewind-10"></ha-icon>
                   </button>
                   <button class="icon-btn" @click=${this._toggleCastPlayPause}>
                     <ha-icon icon=${this._paused ? "mdi:play" : "mdi:pause"}></ha-icon>
                   </button>
                   <button class="icon-btn" @click=${this._castSkipForward}>
                     <ha-icon icon="mdi:fast-forward-30"></ha-icon>
+                  </button>
+                  <button class="icon-btn pubs-btn" @click=${this._castSkipPubs}>
+                    <ha-icon icon="mdi:fast-forward"></ha-icon>
+                    <span class="pubs-label">Pubs</span>
                   </button>
 
                   <div class="volume-container">
@@ -3660,16 +3722,66 @@ class MolotovPanel extends LitElement {
     }
   }
 
-  async _castSkipBack() {
+  async _castSeekBeginning() {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
     try {
-      await this.hass.callService("media_player", "media_previous_track", {
+      await this.hass.callService("media_player", "media_seek", {
         entity_id: entityId,
+        seek_position: 0,
       });
+      this._currentTime = 0;
     } catch (err) {
-      console.error("[Molotov Panel] Skip back failed:", err);
+      console.error("[Molotov Panel] Seek to beginning failed:", err);
+    }
+  }
+
+  async _castSkipBack30() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      const position = Math.max(0, this._currentTime - 30);
+      await this.hass.callService("media_player", "media_seek", {
+        entity_id: entityId,
+        seek_position: position,
+      });
+      this._currentTime = position;
+    } catch (err) {
+      console.error("[Molotov Panel] Skip back 30 failed:", err);
+    }
+  }
+
+  async _castSkipBack10() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      const position = Math.max(0, this._currentTime - 10);
+      await this.hass.callService("media_player", "media_seek", {
+        entity_id: entityId,
+        seek_position: position,
+      });
+      this._currentTime = position;
+    } catch (err) {
+      console.error("[Molotov Panel] Skip back 10 failed:", err);
+    }
+  }
+
+  async _castSkipPubs() {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    try {
+      const position = Math.min(this._duration || Infinity, this._currentTime + 480);
+      await this.hass.callService("media_player", "media_seek", {
+        entity_id: entityId,
+        seek_position: position,
+      });
+      this._currentTime = position;
+    } catch (err) {
+      console.error("[Molotov Panel] Skip pubs failed:", err);
     }
   }
 

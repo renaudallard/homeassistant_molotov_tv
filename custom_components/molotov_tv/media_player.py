@@ -2037,17 +2037,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await async_cast_skip_forward(self.hass, session.host, 30)
 
     async def async_media_previous_track(self) -> None:
-        """Restart from beginning, or skip back 30s if already at start."""
+        """Skip back 30 seconds."""
         session = self._focused_session
         if session:
-            # If more than 5 seconds in, restart from beginning
-            if session.position and session.position > 5:
-                await async_cast_seek(self.hass, session.host, 0)
-                session.position = 0
-                session.position_updated_at = dt_util.utcnow()
-                self.async_write_ha_state()
-            else:
-                await async_cast_skip_back(self.hass, session.host, 30)
+            await async_cast_skip_back(self.hass, session.host, 30)
 
     async def async_media_seek(self, position: float) -> None:
         """Send seek command to focused cast."""
