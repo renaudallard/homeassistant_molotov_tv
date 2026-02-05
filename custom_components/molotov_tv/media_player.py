@@ -587,6 +587,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_recordings()
 
         if media_content_id == MEDIA_TONIGHT_EPG:
+            await self.coordinator.async_request_refresh()
+            data = self.coordinator.data
+            if data is None:
+                raise HomeAssistantError("EPG data is not available yet")
             return await self._async_browse_tonight_epg(data)
 
         if media_content_id.startswith(f"{MEDIA_CHANNEL_PREFIX}:"):
@@ -976,18 +980,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Fetch full EPG data (contains multiple days of programs)
-        try:
-            epg_raw = await self._api.async_get_epg()
-            epg_data = _parse_epg(epg_raw)
-        except MolotovApiError as err:
-            _LOGGER.warning("Tonight EPG fetch failed: %s", err)
-            epg_data = data
-
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
 
-        for channel in epg_data.channels:
+        for channel in data.channels:
             programs = channel.programs
             if not programs:
                 continue
