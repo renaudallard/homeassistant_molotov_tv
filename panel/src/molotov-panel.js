@@ -1017,11 +1017,28 @@ class MolotovPanel extends LitElement {
 
       .tonight-program {
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 10px;
         padding: 10px 12px;
         cursor: pointer;
         border-bottom: 1px solid var(--divider-color);
         transition: background 0.2s;
+      }
+
+      .tonight-program-thumb {
+        width: 50px;
+        height: 70px;
+        object-fit: cover;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+
+      .tonight-program-info {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        flex: 1;
       }
 
       .tonight-program:last-child {
@@ -2936,14 +2953,19 @@ class MolotovPanel extends LitElement {
         class="tonight-program ${isLive ? "live" : ""} ${isPast ? "past" : ""}"
         @click=${() => this._playTonightProgram(program, channel)}
       >
-        <div class="tonight-program-time">
-          ${startTime} - ${endTime}
-          ${isLive ? html`<span class="live-indicator">EN DIRECT</span>` : ""}
-        </div>
-        <div class="tonight-program-title">${program.title}</div>
-        ${program.description
-          ? html`<div class="tonight-program-description">${program.description}</div>`
+        ${program.thumbnail
+          ? html`<img class="tonight-program-thumb" src=${program.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
           : ""}
+        <div class="tonight-program-info">
+          <div class="tonight-program-time">
+            ${startTime} - ${endTime}
+            ${isLive ? html`<span class="live-indicator">EN DIRECT</span>` : ""}
+          </div>
+          <div class="tonight-program-title">${program.title}</div>
+          ${program.description
+            ? html`<div class="tonight-program-description">${program.description}</div>`
+            : ""}
+        </div>
       </div>
     `;
   }

@@ -887,11 +887,28 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
 
       .tonight-program {
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 10px;
         padding: 10px 12px;
         cursor: pointer;
         border-bottom: 1px solid var(--divider-color);
         transition: background 0.2s;
+      }
+
+      .tonight-program-thumb {
+        width: 50px;
+        height: 70px;
+        object-fit: cover;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+
+      .tonight-program-info {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        flex: 1;
       }
 
       .tonight-program:last-child {
@@ -1201,12 +1218,15 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
         class="tonight-program ${r?"live":""} ${o?"past":""}"
         @click=${()=>this._playTonightProgram(e,t)}
       >
-        <div class="tonight-program-time">
-          ${i} - ${s}
-          ${r?l`<span class="live-indicator">EN DIRECT</span>`:""}
+        ${e.thumbnail?l`<img class="tonight-program-thumb" src=${e.thumbnail} @error=${c=>c.target.style.display="none"} />`:""}
+        <div class="tonight-program-info">
+          <div class="tonight-program-time">
+            ${i} - ${s}
+            ${r?l`<span class="live-indicator">EN DIRECT</span>`:""}
+          </div>
+          <div class="tonight-program-title">${e.title}</div>
+          ${e.description?l`<div class="tonight-program-description">${e.description}</div>`:""}
         </div>
-        <div class="tonight-program-title">${e.title}</div>
-        ${e.description?l`<div class="tonight-program-description">${e.description}</div>`:""}
       </div>
     `}async _playTonightProgram(e,t){let i=this._findMolotovEntity();if(!i)return;this._selectedChannel={id:t.id,name:t.name,thumbnail:t.thumbnail,mediaContentId:e.mediaContentId,currentProgram:{title:e.title,start:e.start,end:e.end}},this._playerError=null;let s=Date.now();this._isLive=e.start<=s&&e.end>s,this._isLive?(this._programStart=e.start,this._programEnd=e.end):(this._programStart=null,this._programEnd=null),this._isLocalPlayback()?(this._localPlaybackInitiated=!0,this._localMinimized=!1):this._castLoading=!0;try{let n=this._buildPlayMediaId(e.mediaContentId);await this.hass.callService("media_player","play_media",{entity_id:i,media_content_id:n,media_content_type:"video"})}catch(n){console.error("[Molotov Panel] Play tonight program failed:",n),this._playerError=n.message||"Erreur de lecture",this._castLoading=!1}}_renderRecordingItem(e){let t=e.mediaContentId,i=this._expandedRecordings[t],s=this._recordingEpisodes[t]||[],n=this._loadingRecordingEpisodes[t];return l`
       <div class="search-result-row">
