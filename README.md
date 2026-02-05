@@ -113,16 +113,26 @@ Depuis le navigateur de médias, lorsque vous sélectionnez un programme, vous v
 *   **📺 Récepteur Officiel :** Caste en utilisant l'application officielle Molotov. **À utiliser pour la TV en direct et le contenu crypté.**
 *   **🏰 Récepteur Arnor :** Caste en utilisant le récepteur personnalisé de l'intégration. Utile pour le contenu non crypté ou le débogage.
 
+### Multi-Chromecast
+L'intégration permet de diffuser simultanément sur plusieurs Chromecasts :
+*   **Sessions indépendantes :** Lancez une émission sur un Chromecast et une autre sur un second, chaque session est indépendante.
+*   **Contrôles par session :** Play/pause, volume, barre de progression fonctionnent indépendamment pour chaque Chromecast.
+*   **Barre multi-cast :** Lorsque plusieurs casts sont actifs, une barre en bas du panneau affiche tous les casts en cours sous forme de chips cliquables.
+*   **Changement de focus :** Cliquez sur un chip pour basculer les contrôles vers ce Chromecast. Vous pouvez aussi utiliser la sélection de source dans Home Assistant.
+*   **Arrêt individuel :** Chaque cast peut être arrêté indépendamment sans affecter les autres.
+*   **Attribut `active_casts` :** Un dictionnaire exposé dans les attributs d'état contenant l'état de chaque session active.
+
 ### Fiabilité de connexion Chromecast
-L'intégration surveille automatiquement la connexion avec votre Chromecast pendant la lecture :
-*   **Vérification périodique :** La connexion est vérifiée toutes les 30 secondes.
+L'intégration surveille automatiquement la connexion avec vos Chromecasts pendant la lecture :
+*   **Vérification périodique :** La connexion est vérifiée toutes les 30 secondes pour chaque cast actif.
 *   **Reconnexion automatique :** En cas de perte de connexion, l'intégration tente de se reconnecter automatiquement (jusqu'à 3 tentatives).
-*   **Détection de prise de contrôle :** Si une autre application (YouTube, Netflix, etc.) prend le contrôle du Chromecast, la session Molotov se termine proprement sans tentative de reconnexion inutile.
-*   **Arrêt intelligent :** Si le Chromecast est éteint ou inaccessible, l'intégration arrête automatiquement les tentatives de connexion après les échecs de reconnexion.
+*   **Détection de prise de contrôle :** Si une autre application (YouTube, Netflix, etc.) prend le contrôle d'un Chromecast, la session Molotov correspondante se termine proprement sans tentative de reconnexion inutile.
+*   **Arrêt intelligent :** Si un Chromecast est éteint ou inaccessible, l'intégration arrête automatiquement les tentatives de connexion après les échecs de reconnexion.
 *   **Attributs d'état :** Les attributs suivants sont exposés pendant le casting :
-    *   `cast_target` : L'adresse IP du Chromecast actif.
-    *   `cast_connected` : `true` si la connexion est active, `false` sinon.
+    *   `cast_target` : L'adresse IP du Chromecast ayant le focus.
+    *   `cast_connected` : `true` si la connexion du cast focalisé est active, `false` sinon.
     *   `cast_error` : Message d'erreur en cas de problème de connexion.
+    *   `active_casts` : Dictionnaire de tous les casts actifs avec leur état (titre, position, volume, etc.).
 
 ### Changement de chaîne rapide (Zap)
 Pendant la lecture sur Chromecast, vous pouvez changer de chaîne ou de programme instantanément :

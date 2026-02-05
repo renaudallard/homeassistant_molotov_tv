@@ -113,6 +113,9 @@ class MolotovPanel extends LitElement {
       _castPlaying: { type: Boolean },
       _castTarget: { type: String },
       _castTitle: { type: String },
+      // Multi-cast state
+      _activeCasts: { type: Object },
+      _focusedCastHost: { type: String },
       // Track if this session initiated local playback
       _localPlaybackInitiated: { type: Boolean },
       // Tonight EPG
@@ -1057,6 +1060,62 @@ class MolotovPanel extends LitElement {
         font-size: 14px;
         color: rgba(255, 255, 255, 0.7);
       }
+
+      /* Multi-cast bar */
+      .multi-cast-bar {
+        display: flex;
+        gap: 8px;
+        padding: 8px 16px;
+        background: var(--card-background-color);
+        border-top: 1px solid var(--divider-color);
+        overflow-x: auto;
+        flex-shrink: 0;
+      }
+
+      .cast-chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: var(--secondary-background-color);
+        border: 2px solid transparent;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        transition: all 0.2s;
+        flex-shrink: 0;
+      }
+
+      .cast-chip:hover {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .cast-chip.focused {
+        border-color: var(--primary-color);
+        background: rgba(var(--rgb-primary-color), 0.15);
+      }
+
+      .cast-chip .chip-icon {
+        display: flex;
+        align-items: center;
+      }
+
+      .cast-chip .chip-stop {
+        display: flex;
+        align-items: center;
+        padding: 2px;
+        border-radius: 50%;
+        cursor: pointer;
+        color: var(--error-color);
+      }
+
+      .cast-chip .chip-stop:hover {
+        background: var(--error-color);
+        color: #fff;
+      }
     `;
   }
 
@@ -1113,6 +1172,9 @@ class MolotovPanel extends LitElement {
     this._castPlaying = false;
     this._castTarget = null;
     this._castTitle = null;
+    // Multi-cast state
+    this._activeCasts = {};
+    this._focusedCastHost = null;
     // Track if this session initiated local playback
     this._localPlaybackInitiated = false;
     // Tonight EPG
@@ -1984,18 +2046,23 @@ class MolotovPanel extends LitElement {
         // Initialize player after render
         this.updateComplete.then(() => this._initDashPlayer());
       }
-    } else if (state.state === "playing" && state.attributes.cast_target && !state.attributes.stream_url) {
-      // Cast playback (no local stream URL but has cast target)
+    } else if (state.attributes.active_casts && Object.keys(state.attributes.active_casts).length > 0) {
+      // Multi-cast: track all active casts
+      const activeCasts = state.attributes.active_casts;
       const castTarget = state.attributes.cast_target;
+
+      this._activeCasts = activeCasts;
+      this._focusedCastHost = castTarget || null;
+
       if (!this._castPlaying || this._castTarget !== castTarget) {
         this._castPlaying = true;
         this._castTarget = castTarget;
         this._castTitle = state.attributes.media_title || "En cours de lecture";
         this._playing = false;
         this._cleanupPlayer();
-        console.log("[Molotov Panel] Cast playback detected:", castTarget);
+        console.log("[Molotov Panel] Cast playback detected:", castTarget, "total casts:", Object.keys(activeCasts).length);
       }
-      // Update playback state from entity
+      // Update playback state from entity (focused cast)
       this._currentTime = state.attributes.media_position || 0;
       this._duration = state.attributes.media_duration || 0;
       this._volume = state.attributes.volume_level ?? 0.5;
@@ -2014,6 +2081,8 @@ class MolotovPanel extends LitElement {
       this._castTitle = null;
       this._isLive = false;
       this._localPlaybackInitiated = false;
+      this._activeCasts = {};
+      this._focusedCastHost = null;
     } else if (this._castPlaying && state.state === "paused") {
       // Cast paused
       this._paused = true;
@@ -3191,8 +3260,87 @@ class MolotovPanel extends LitElement {
             ${this._castTitle || ""}
           </div>
         </div>
+
+        ${this._renderMultiCastBar()}
       </div>
     `;
+  }
+
+  _renderMultiCastBar() {
+    const castEntries = Object.entries(this._activeCasts || {});
+    if (castEntries.length <= 1) return "";
+
+    return html`
+      <div class="multi-cast-bar">
+        ${castEntries.map(([host, info]) => {
+          const isFocused = host === this._focusedCastHost;
+          const title = info.title || host;
+          const isPlaying = info.state === "playing";
+          return html`
+            <div
+              class="cast-chip ${isFocused ? "focused" : ""}"
+              @click=${() => this._focusCast(host)}
+            >
+              <span class="chip-icon">
+                <ha-icon icon=${isPlaying ? "mdi:cast-connected" : "mdi:cast"} style="--mdc-icon-size: 18px;"></ha-icon>
+              </span>
+              <span>${title}</span>
+              <span class="chip-stop" @click=${(e) => this._stopSpecificCast(e, host)}>
+                <ha-icon icon="mdi:close" style="--mdc-icon-size: 16px;"></ha-icon>
+              </span>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  async _focusCast(host) {
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    const info = this._activeCasts[host];
+    if (!info) return;
+
+    const source = info.title || host;
+    try {
+      await this.hass.callService("media_player", "select_source", {
+        entity_id: entityId,
+        source: source,
+      });
+      this._focusedCastHost = host;
+      this._castTarget = host;
+      this._castTitle = info.title || "En cours de lecture";
+      console.log("[Molotov Panel] Focused cast:", host);
+    } catch (err) {
+      console.error("[Molotov Panel] Focus cast failed:", err);
+    }
+  }
+
+  async _stopSpecificCast(e, host) {
+    e.stopPropagation();
+    const entityId = this._findMolotovEntity();
+    if (!entityId) return;
+
+    // First focus the cast to stop, then stop it
+    const info = this._activeCasts[host];
+    if (!info) return;
+
+    const source = info.title || host;
+    try {
+      await this.hass.callService("media_player", "select_source", {
+        entity_id: entityId,
+        source: source,
+      });
+      // Small delay to let focus switch
+      await new Promise((r) => setTimeout(r, 200));
+      await this.hass.callService("media_player", "media_stop", {
+        entity_id: entityId,
+      });
+      console.log("[Molotov Panel] Stopped cast:", host);
+    } catch (err) {
+      console.error("[Molotov Panel] Stop specific cast failed:", err);
+    }
   }
 
   async _stopCastPlayback() {
@@ -3210,6 +3358,8 @@ class MolotovPanel extends LitElement {
     this._castPlaying = false;
     this._castTarget = null;
     this._castTitle = null;
+    this._activeCasts = {};
+    this._focusedCastHost = null;
   }
 
   async _toggleCastPlayPause() {

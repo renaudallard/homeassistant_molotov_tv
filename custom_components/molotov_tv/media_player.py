@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
 import logging
@@ -153,6 +154,30 @@ SEARCH_CACHE_TTL = timedelta(minutes=10)
 MAX_PROGRAM_CACHE_SIZE = 50
 
 
+@dataclass
+class CastSessionState:
+    """Per-Chromecast session state."""
+
+    host: str
+    entity_id: str | None = None
+    title: str | None = None
+    content_id: str | None = None
+    is_live: bool = False
+    position: float | None = None
+    duration: float | None = None
+    position_updated_at: datetime | None = None
+    volume: float | None = None
+    muted: bool = False
+    connected: bool = False
+    error: str | None = None
+    health_unsub: Any = None
+    stream_id: str | None = None
+    stream_data: dict | None = None
+    player_state: str = STATE_IDLE
+    tracks: dict = field(default_factory=dict)
+    current_track_id: int | None = None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -182,6 +207,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
         | MediaPlayerEntityFeature.TURN_OFF
         | MediaPlayerEntityFeature.SELECT_SOUND_MODE
+        | MediaPlayerEntityFeature.SELECT_SOURCE
     )
     _attr_state = STATE_IDLE
 
@@ -202,27 +228,24 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
-        self._active_cast_target: str | None = None
-        self._active_cast_entity: str | None = None
+        # Multi-cast session tracking
+        self._cast_sessions: dict[str, CastSessionState] = {}
+        self._active_cast_target: str | None = None  # Focused cast
         self._current_stream: dict[str, Any] | None = None
-        self._tracks: dict[str, dict[str, Any]] = {}
-        self._current_track_id: int | None = None
-        # Connection reliability tracking
-        self._cast_connected: bool = False
-        self._cast_connection_error: str | None = None
-        self._health_check_unsub: Any = None
-        # Content tracking for quick switch and resume
-        self._current_content_id: str | None = None
-        self._current_is_live: bool = False
-        # Media position tracking
-        self._media_position: float | None = None
-        self._media_duration: float | None = None
-        self._media_position_updated_at: datetime | None = None
-        # Volume tracking
-        self._volume_level: float | None = None
-        self._is_volume_muted: bool = False
         # Stream slot tracking
         self._stream_id: str | None = None
+
+    @property
+    def _focused_session(self) -> CastSessionState | None:
+        """Get the currently focused cast session."""
+        if self._active_cast_target:
+            return self._cast_sessions.get(self._active_cast_target)
+        return None
+
+    def _sync_state_from_session(self, session: CastSessionState) -> None:
+        """Sync entity-level state from a cast session."""
+        self._attr_media_title = session.title
+        self._attr_state = session.player_state
 
     def _get_active_streams(self) -> set[str]:
         """Get the set of active stream IDs for this account."""
@@ -292,170 +315,161 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         await super().async_will_remove_from_hass()
         # Unregister callback
         unregister_connection_callback(self._on_cast_connection_change)
-        # Stop health monitor
-        await self._async_stop_health_monitor()
+        # Stop all health monitors
+        for session in list(self._cast_sessions.values()):
+            await self._async_stop_health_monitor_for(session)
 
     def _on_cast_connection_change(self, host: str, connected: bool) -> None:
         """Handle cast connection status changes from chromecast module."""
-        if host != self._active_cast_target:
+        session = self._cast_sessions.get(host)
+        if not session:
             return
 
         _LOGGER.debug("Cast connection change for %s: connected=%s", host, connected)
 
-        self._cast_connected = connected
+        session.connected = connected
         if not connected:
-            self._cast_connection_error = "Connection lost"
-            # Don't change state to IDLE immediately - health check will handle reconnect
+            session.error = "Connection lost"
         else:
-            self._cast_connection_error = None
+            session.error = None
+
+        # Update entity state if this is the focused cast
+        if host == self._active_cast_target:
+            self._sync_state_from_session(session)
 
         # Schedule state update (callback may be called from executor thread)
         self.hass.loop.call_soon_threadsafe(self.async_schedule_update_ha_state)
 
-    async def _async_end_session_takeover(self) -> None:
-        """End session gracefully when another app takes over."""
-        _LOGGER.debug("Cleaning up session after app takeover")
-        await self._async_stop_health_monitor()
+    async def _async_end_session_for_host(
+        self, host: str, reason: str
+    ) -> None:
+        """End a specific cast session and clean up."""
+        session = self._cast_sessions.get(host)
+        if not session:
+            return
+
+        _LOGGER.debug("Ending session for %s: %s", host, reason)
+        await self._async_stop_health_monitor_for(session)
 
         # Save resume position if applicable
         if (
-            self._current_content_id
-            and not self._current_is_live
-            and self._media_position is not None
-            and self._media_duration is not None
+            session.content_id
+            and not session.is_live
+            and session.position is not None
+            and session.duration is not None
         ):
             await self._resume_store.async_save_position(
-                self._current_content_id,
-                self._media_position,
-                self._media_duration,
-                self._attr_media_title,
+                session.content_id,
+                session.position,
+                session.duration,
+                session.title,
             )
 
-        # Clear cast state
-        self._active_cast_entity = None
-        self._active_cast_target = None
-        self._current_stream = None
-        self._cast_connected = False
-        self._cast_connection_error = "Session ended: another app took over"
-        self._current_content_id = None
-        self._current_is_live = False
-        self._media_position = None
-        self._media_duration = None
-        self._media_position_updated_at = None
-        self._volume_level = None
-        self._is_volume_muted = False
-        self._attr_state = STATE_IDLE
+        # Release stream slot
+        if session.stream_id:
+            active_streams = self._get_active_streams()
+            active_streams.discard(session.stream_id)
+
+        # Remove session
+        self._cast_sessions.pop(host, None)
+
+        # If this was the focused cast, pick another or go idle
+        if self._active_cast_target == host:
+            if self._cast_sessions:
+                self._active_cast_target = next(iter(self._cast_sessions))
+                self._sync_state_from_session(
+                    self._cast_sessions[self._active_cast_target]
+                )
+            else:
+                self._active_cast_target = None
+                self._attr_state = STATE_IDLE
+
         self.async_write_ha_state()
 
-    async def _async_start_health_monitor(self) -> None:
-        """Start periodic cast health monitoring."""
-        if self._health_check_unsub is not None:
+    async def _async_start_health_monitor_for(
+        self, session: CastSessionState
+    ) -> None:
+        """Start periodic cast health monitoring for a session."""
+        if session.health_unsub is not None:
             return
 
-        _LOGGER.debug("Starting cast health monitor for %s", self._active_cast_target)
-        self._health_check_unsub = async_track_time_interval(
+        host = session.host
+
+        async def _health_check(now: datetime | None = None) -> None:
+            await self._async_health_check_host(host)
+
+        _LOGGER.debug("Starting cast health monitor for %s", host)
+        session.health_unsub = async_track_time_interval(
             self.hass,
-            self._async_health_check,
+            _health_check,
             CAST_HEALTH_CHECK_INTERVAL,
         )
 
-    async def _async_stop_health_monitor(self) -> None:
-        """Stop health monitoring."""
-        if self._health_check_unsub is not None:
-            _LOGGER.debug("Stopping cast health monitor")
-            self._health_check_unsub()
-            self._health_check_unsub = None
+    async def _async_stop_health_monitor_for(
+        self, session: CastSessionState
+    ) -> None:
+        """Stop health monitoring for a session."""
+        if session.health_unsub is not None:
+            _LOGGER.debug("Stopping cast health monitor for %s", session.host)
+            session.health_unsub()
+            session.health_unsub = None
 
-    async def _async_health_check(self, now: datetime | None = None) -> None:
-        """Periodic health check of cast connection."""
-        if not self._active_cast_target:
-            await self._async_stop_health_monitor()
+    async def _async_health_check_host(self, host: str) -> None:
+        """Periodic health check of a specific cast connection."""
+        session = self._cast_sessions.get(host)
+        if not session:
             return
 
         # First check if our app is still running (detects app takeover)
-        our_app_running = await async_is_our_app_running(
-            self.hass, self._active_cast_target
-        )
+        our_app_running = await async_is_our_app_running(self.hass, host)
 
-        if not our_app_running and self._cast_connected:
+        if not our_app_running and session.connected:
             # Check if it's a connection issue or app takeover
-            connected = await async_check_cast_health(
-                self.hass, self._active_cast_target
-            )
+            connected = await async_check_cast_health(self.hass, host)
 
             if connected:
                 # Connection OK but different app - another app took over
                 _LOGGER.info(
                     "Another app took over Chromecast %s, ending session",
-                    self._active_cast_target,
+                    host,
                 )
-                await self._async_end_session_takeover()
+                await self._async_end_session_for_host(
+                    host, "Session ended: another app took over"
+                )
                 return
 
             # Connection lost - try to reconnect
             _LOGGER.warning(
-                "Cast connection lost to %s, attempting reconnect",
-                self._active_cast_target,
+                "Cast connection lost to %s, attempting reconnect", host
             )
-            self._cast_connected = False
-            self._cast_connection_error = "Connection lost - reconnecting..."
+            session.connected = False
+            session.error = "Connection lost - reconnecting..."
             self.async_write_ha_state()
 
             # Attempt reconnect
-            if await async_attempt_reconnect(self.hass, self._active_cast_target):
-                _LOGGER.info("Reconnected to %s", self._active_cast_target)
-                self._cast_connected = True
-                self._cast_connection_error = None
-                self._attr_state = STATE_PLAYING
+            if await async_attempt_reconnect(self.hass, host):
+                _LOGGER.info("Reconnected to %s", host)
+                session.connected = True
+                session.error = None
+                session.player_state = STATE_PLAYING
+                if host == self._active_cast_target:
+                    self._attr_state = STATE_PLAYING
                 self.async_write_ha_state()
             else:
                 _LOGGER.warning(
                     "Failed to reconnect to %s - device may be powered off",
-                    self._active_cast_target,
+                    host,
                 )
-                await self._async_end_session_unreachable()
+                await self._async_end_session_for_host(
+                    host, "Session ended: Chromecast unreachable"
+                )
 
-        elif our_app_running and not self._cast_connected:
+        elif our_app_running and not session.connected:
             # Connection restored (possibly from external reconnect)
-            _LOGGER.info("Cast connection restored to %s", self._active_cast_target)
-            self._cast_connected = True
-            self._cast_connection_error = None
+            _LOGGER.info("Cast connection restored to %s", host)
+            session.connected = True
+            session.error = None
             self.async_write_ha_state()
-
-    async def _async_end_session_unreachable(self) -> None:
-        """End session when Chromecast becomes unreachable."""
-        _LOGGER.debug("Cleaning up session - Chromecast unreachable")
-        await self._async_stop_health_monitor()
-
-        # Save resume position if applicable
-        if (
-            self._current_content_id
-            and not self._current_is_live
-            and self._media_position is not None
-            and self._media_duration is not None
-        ):
-            await self._resume_store.async_save_position(
-                self._current_content_id,
-                self._media_position,
-                self._media_duration,
-                self._attr_media_title,
-            )
-
-        # Clear cast state
-        self._active_cast_entity = None
-        self._active_cast_target = None
-        self._current_stream = None
-        self._cast_connected = False
-        self._cast_connection_error = "Session ended: Chromecast unreachable"
-        self._current_content_id = None
-        self._current_is_live = False
-        self._media_position = None
-        self._media_duration = None
-        self._media_position_updated_at = None
-        self._volume_level = None
-        self._is_volume_muted = False
-        self._attr_state = STATE_IDLE
-        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):
@@ -501,16 +515,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if selected_track:
                 attrs["stream_selected_track"] = selected_track
 
-        # Cast connection status
-        if self._active_cast_target:
-            attrs["cast_target"] = self._active_cast_target
-            attrs["cast_connected"] = self._cast_connected
-            if self._cast_connection_error:
-                attrs["cast_error"] = self._cast_connection_error
-
-        # Live content indicator
-        if self._current_is_live:
-            attrs["is_live"] = True
+        # Multi-cast session status
+        if self._cast_sessions:
+            attrs["active_casts"] = {
+                host: {
+                    "title": s.title,
+                    "is_live": s.is_live,
+                    "position": s.position,
+                    "duration": s.duration,
+                    "volume": s.volume,
+                    "muted": s.muted,
+                    "connected": s.connected,
+                    "state": s.player_state,
+                }
+                for host, s in self._cast_sessions.items()
+            }
+            if self._active_cast_target:
+                attrs["cast_target"] = self._active_cast_target
+                session = self._cast_sessions.get(self._active_cast_target)
+                if session:
+                    attrs["cast_connected"] = session.connected
+                    if session.error:
+                        attrs["cast_error"] = session.error
+                    if session.is_live:
+                        attrs["is_live"] = True
 
         return attrs
 
@@ -639,8 +667,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
                 return
 
-        # If already casting, try quick switch to same target
-        if self._active_cast_target and self._cast_connected:
+        # If already casting, try quick switch to focused target
+        session = self._focused_session
+        if session and session.connected:
             receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
             if await self._async_try_quick_switch(media_id, receiver_type):
                 return
@@ -665,20 +694,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         resolved_target = self._resolve_cast_target(target)
 
         # If already casting to this target, try quick switch
-        if (
-            self._active_cast_target
-            and self._active_cast_target == resolved_target
-            and self._cast_connected
-        ):
-            if await self._async_try_quick_switch(media_id, receiver_type):
+        session = self._cast_sessions.get(resolved_target) if resolved_target else None
+        if session and session.connected:
+            if await self._async_try_quick_switch(
+                media_id, receiver_type, resolved_target
+            ):
                 return
 
         # Fall back to full cast
         await self._async_cast_media(media_id, target, receiver_type=receiver_type)
 
-    async def _async_try_quick_switch(self, media_id: str, receiver_type: str) -> bool:
-        """Try to quick switch media on active cast. Returns True if successful."""
-        if not self._active_cast_target or not self._cast_connected:
+    async def _async_try_quick_switch(
+        self, media_id: str, receiver_type: str, host: str | None = None
+    ) -> bool:
+        """Try to quick switch media on a cast. Returns True if successful."""
+        target_host = host or self._active_cast_target
+        if not target_host:
+            return False
+        session = self._cast_sessions.get(target_host)
+        if not session or not session.connected:
             return False
 
         try:
@@ -711,12 +745,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             _LOGGER.debug(
                 "Attempting quick switch to %s on %s",
                 title,
-                self._active_cast_target,
+                target_host,
             )
 
             success = await async_cast_switch_media(
                 self.hass,
-                self._active_cast_target,
+                target_host,
                 asset_url,
                 content_type,
                 custom_data,
@@ -725,14 +759,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
             if success:
-                self._attr_media_title = title
-                self._attr_state = STATE_PLAYING
-                self._current_content_id = media_id
-                self._current_is_live = is_live
-                # Reset position tracking for new content
-                self._media_position = 0.0
-                self._media_duration = None
-                self._media_position_updated_at = dt_util.utcnow()
+                session.title = title
+                session.content_id = media_id
+                session.is_live = is_live
+                session.position = 0.0
+                session.duration = None
+                session.position_updated_at = dt_util.utcnow()
+                session.player_state = STATE_PLAYING
+                # Set as focused cast
+                self._active_cast_target = target_host
+                self._sync_state_from_session(session)
                 self.async_write_ha_state()
                 _LOGGER.info("Quick switched to: %s", title)
                 return True
@@ -1465,54 +1501,97 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     @property
     def sound_mode(self) -> str | None:
         """Return the current sound mode (track)."""
-        if self._current_track_id is None:
+        session = self._focused_session
+        if not session or session.current_track_id is None:
             return None
-        for name, info in self._tracks.items():
-            if info["id"] == self._current_track_id:
+        for name, info in session.tracks.items():
+            if info["id"] == session.current_track_id:
                 return name
         return None
 
     @property
     def sound_mode_list(self) -> list[str] | None:
         """Return available sound modes."""
-        return list(self._tracks.keys()) if self._tracks else None
+        session = self._focused_session
+        return list(session.tracks.keys()) if session and session.tracks else None
 
     @property
     def media_position(self) -> float | None:
         """Return current playback position in seconds."""
-        return self._media_position
+        session = self._focused_session
+        return session.position if session else None
 
     @property
     def media_duration(self) -> float | None:
         """Return total media duration in seconds."""
-        return self._media_duration
+        session = self._focused_session
+        return session.duration if session else None
 
     @property
     def media_position_updated_at(self) -> datetime | None:
         """Return when position was last updated."""
-        return self._media_position_updated_at
+        session = self._focused_session
+        return session.position_updated_at if session else None
 
     @property
     def volume_level(self) -> float | None:
         """Return the volume level (0.0 to 1.0)."""
-        return self._volume_level
+        session = self._focused_session
+        return session.volume if session else None
 
     @property
     def is_volume_muted(self) -> bool:
         """Return True if volume is muted."""
-        return self._is_volume_muted
+        session = self._focused_session
+        return session.muted if session else False
+
+    @property
+    def source_list(self) -> list[str] | None:
+        """Return list of active cast sessions as sources."""
+        if not self._cast_sessions:
+            return None
+        return [s.title or s.host for s in self._cast_sessions.values()]
+
+    @property
+    def source(self) -> str | None:
+        """Return the currently focused cast session."""
+        session = self._focused_session
+        if session:
+            return session.title or session.host
+        return None
+
+    async def async_select_source(self, source: str) -> None:
+        """Switch the focused cast to a different active session."""
+        for host, s in self._cast_sessions.items():
+            if (s.title or s.host) == source:
+                self._active_cast_target = host
+                self._sync_state_from_session(s)
+                self.async_write_ha_state()
+                break
 
     async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Select sound mode."""
-        info = self._tracks.get(sound_mode)
-        if info is not None and self._active_cast_target:
-            await async_cast_select_track(
-                self.hass, self._active_cast_target, info["id"]
-            )
+        session = self._focused_session
+        if session:
+            info = session.tracks.get(sound_mode)
+            if info is not None:
+                await async_cast_select_track(
+                    self.hass, session.host, info["id"]
+                )
 
-    def _on_cast_status(self, status: Any) -> None:
-        """Handle cast status updates."""
+    def _make_cast_status_handler(self, host: str):
+        """Create a per-host status callback."""
+        def handler(status: Any) -> None:
+            self._on_cast_status_for_host(host, status)
+        return handler
+
+    def _on_cast_status_for_host(self, host: str, status: Any) -> None:
+        """Handle cast status updates for a specific host."""
         if not status:
+            return
+
+        session = self._cast_sessions.get(host)
+        if not session:
             return
 
         # Update media position and duration
@@ -1520,24 +1599,23 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         duration = getattr(status, "duration", None)
 
         if current_time is not None:
-            self._media_position = float(current_time)
-            self._media_position_updated_at = dt_util.utcnow()
+            session.position = float(current_time)
+            session.position_updated_at = dt_util.utcnow()
 
         if duration is not None and duration > 0:
-            self._media_duration = float(duration)
+            session.duration = float(duration)
 
         # Update player state from cast status
         player_state = getattr(status, "player_state", None)
         if player_state == "PLAYING":
-            self._attr_state = STATE_PLAYING
+            session.player_state = STATE_PLAYING
         elif player_state == "PAUSED":
-            self._attr_state = STATE_PAUSED
-        elif player_state == "IDLE" and self._active_cast_target:
-            # Media finished or stopped
-            self._attr_state = STATE_IDLE
-            self._media_position = None
-            self._media_duration = None
-            self._media_position_updated_at = None
+            session.player_state = STATE_PAUSED
+        elif player_state == "IDLE":
+            session.player_state = STATE_IDLE
+            session.position = None
+            session.duration = None
+            session.position_updated_at = None
 
         # Handle track information
         raw_tracks = getattr(status, "tracks", [])
@@ -1564,13 +1642,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         name = f"{name} ({t_id})"
                     new_tracks[name] = info
 
-            self._tracks = new_tracks
+            session.tracks = new_tracks
 
             if active_ids:
                 for t_name, info in new_tracks.items():
                     if info["id"] in active_ids and "Audio" in t_name:
-                        self._current_track_id = info["id"]
+                        session.current_track_id = info["id"]
                         break
+
+        # Update entity-level state if this is the focused cast
+        if host == self._active_cast_target:
+            self._sync_state_from_session(session)
 
         self.schedule_update_ha_state()
 
@@ -1694,28 +1776,40 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 title=title,
                 is_live=is_live,
             )
-            self._active_cast_target = resolved_target
-            self._active_cast_entity = self._find_cast_entity(resolved_target)
-            self._attr_state = STATE_PLAYING
-            self._attr_media_title = title
-            self._cast_connected = True
-            self._cast_connection_error = None
-            self._current_content_id = media_id
-            self._current_is_live = is_live
-            # Initialize position (will be updated by status callback)
-            self._media_position = 0.0
-            self._media_position_updated_at = dt_util.utcnow()
-            self._media_duration = None  # Will be set by status callback
+
+            # Create or update session for this host
+            session = CastSessionState(
+                host=resolved_target,
+                entity_id=self._find_cast_entity(resolved_target),
+                title=title,
+                content_id=media_id,
+                is_live=is_live,
+                position=0.0,
+                position_updated_at=dt_util.utcnow(),
+                connected=True,
+                player_state=STATE_PLAYING,
+                stream_id=self._stream_id,
+            )
+            # Stop reusing the entity-level stream_id for this session
+            self._stream_id = None
 
             # Get initial volume from Chromecast
             volume_info = await async_get_cast_volume(self.hass, resolved_target)
             if volume_info:
-                self._volume_level, self._is_volume_muted = volume_info
+                session.volume, session.muted = volume_info
+
+            self._cast_sessions[resolved_target] = session
+            self._active_cast_target = resolved_target
+
+            # Update entity-level state
+            self._sync_state_from_session(session)
 
             await async_cast_register_listener(
-                self.hass, resolved_target, self._on_cast_status
+                self.hass,
+                resolved_target,
+                self._make_cast_status_handler(resolved_target),
             )
-            await self._async_start_health_monitor()
+            await self._async_start_health_monitor_for(session)
 
             # Check for resume position (VOD only)
             if not is_live:
@@ -1737,7 +1831,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self.async_write_ha_state()
             _LOGGER.debug(
                 "Cast started, tracking entity: %s (target: %s)",
-                self._active_cast_entity,
+                session.entity_id,
                 resolved_target,
             )
         except MolotovCastError as err:
@@ -1807,44 +1901,42 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         return None
 
     async def _async_call_cast_service(self, service: str, **kwargs: Any) -> None:
-        """Call a media_player service on the active cast entity."""
+        """Call a media_player service on the focused cast entity."""
+        session = self._focused_session
         _LOGGER.debug(
-            "Control request: service=%s, active_entity=%s, active_target=%s",
+            "Control request: service=%s, active_target=%s",
             service,
-            self._active_cast_entity,
             self._active_cast_target,
         )
 
-        if not self._active_cast_entity:
-            if self._active_cast_target:
-                self._active_cast_entity = self._find_cast_entity(
-                    self._active_cast_target
-                )
-                _LOGGER.debug("Re-found cast entity: %s", self._active_cast_entity)
+        if not session:
+            _LOGGER.warning("No active cast session to control")
+            return
 
-            if not self._active_cast_entity:
-                _LOGGER.warning(
-                    "No active cast entity to control (target=%s)",
-                    self._active_cast_target,
-                )
-                return
+        entity_id = session.entity_id
+        if not entity_id:
+            entity_id = self._find_cast_entity(session.host)
+            session.entity_id = entity_id
+            _LOGGER.debug("Re-found cast entity: %s", entity_id)
 
-        state = self.hass.states.get(self._active_cast_entity)
+        if not entity_id:
+            _LOGGER.warning(
+                "No cast entity to control (target=%s)", session.host
+            )
+            return
+
+        state = self.hass.states.get(entity_id)
         _LOGGER.debug(
             "Cast entity state: %s (state=%s)",
-            self._active_cast_entity,
+            entity_id,
             state.state if state else "None",
         )
 
         if not state or state.state == "unavailable":
-            _LOGGER.warning("Cast entity %s is unavailable", self._active_cast_entity)
-            self._active_cast_entity = None
-            self._active_cast_target = None
-            self._attr_state = STATE_IDLE
-            self.async_write_ha_state()
+            _LOGGER.warning("Cast entity %s is unavailable", entity_id)
             return
 
-        service_data = {ATTR_ENTITY_ID: self._active_cast_entity, **kwargs}
+        service_data = {ATTR_ENTITY_ID: entity_id, **kwargs}
         _LOGGER.debug("Calling media_player.%s with data: %s", service, service_data)
         try:
             await self.hass.services.async_call("media_player", service, service_data)
@@ -1853,9 +1945,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             _LOGGER.error("Service call failed: %s", err)
 
     async def async_media_play(self) -> None:
-        """Send play command to active cast."""
-        if self._active_cast_target:
-            await async_cast_play(self.hass, self._active_cast_target)
+        """Send play command to focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_play(self.hass, session.host)
+            session.player_state = STATE_PLAYING
             self._attr_state = STATE_PLAYING
             self.async_write_ha_state()
         elif self._current_stream:
@@ -1863,9 +1957,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self.async_write_ha_state()
 
     async def async_media_pause(self) -> None:
-        """Send pause command to active cast."""
-        if self._active_cast_target:
-            await async_cast_pause(self.hass, self._active_cast_target)
+        """Send pause command to focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_pause(self.hass, session.host)
+            session.player_state = STATE_PAUSED
             self._attr_state = STATE_PAUSED
             self.async_write_ha_state()
         elif self._current_stream:
@@ -1873,106 +1969,99 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
-        """Send stop command to active cast."""
-        # Save position for resume (will be implemented with resume store)
-        if self._active_cast_target and not self._current_is_live:
-            position_data = await async_get_cast_position(
-                self.hass, self._active_cast_target
-            )
-            if position_data:
-                position, duration = position_data
-                _LOGGER.debug(
-                    "Saving position %.1f/%.1f for %s",
-                    position,
-                    duration,
-                    self._current_content_id,
+        """Stop the focused cast session."""
+        session = self._focused_session
+        if session:
+            # Save position for resume
+            if not session.is_live:
+                position_data = await async_get_cast_position(
+                    self.hass, session.host
                 )
-                await self._resume_store.async_save_position(
-                    self._current_content_id,
-                    position,
-                    duration,
-                    self._attr_media_title,
-                )
+                if position_data:
+                    position, duration = position_data
+                    _LOGGER.debug(
+                        "Saving position %.1f/%.1f for %s",
+                        position,
+                        duration,
+                        session.content_id,
+                    )
+                    await self._resume_store.async_save_position(
+                        session.content_id,
+                        position,
+                        duration,
+                        session.title,
+                    )
 
-        if self._active_cast_target:
-            await async_cast_stop(self.hass, self._active_cast_target)
-        await self._async_stop_health_monitor()
-        self._active_cast_entity = None
-        self._active_cast_target = None
-        self._current_stream = None
-        self._cast_connected = False
-        self._cast_connection_error = None
-        self._current_content_id = None
-        self._current_is_live = False
-        self._media_position = None
-        self._media_duration = None
-        self._media_position_updated_at = None
-        self._volume_level = None
-        self._is_volume_muted = False
-        self._attr_state = STATE_IDLE
-        # Release stream slot when stopping playback
-        self._release_stream_slot()
-        self.async_write_ha_state()
+            await async_cast_stop(self.hass, session.host)
+            await self._async_end_session_for_host(
+                session.host, "Stopped by user"
+            )
+        elif self._current_stream:
+            self._current_stream = None
+            self._attr_state = STATE_IDLE
+            self._release_stream_slot()
+            self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:
         """Skip forward 30 seconds."""
-        if self._active_cast_target:
-            await async_cast_skip_forward(self.hass, self._active_cast_target, 30)
+        session = self._focused_session
+        if session:
+            await async_cast_skip_forward(self.hass, session.host, 30)
 
     async def async_media_previous_track(self) -> None:
         """Restart from beginning, or skip back 30s if already at start."""
-        if self._active_cast_target:
+        session = self._focused_session
+        if session:
             # If more than 5 seconds in, restart from beginning
-            if self._media_position and self._media_position > 5:
-                await async_cast_seek(self.hass, self._active_cast_target, 0)
-                self._media_position = 0
-                self._media_position_updated_at = dt_util.utcnow()
+            if session.position and session.position > 5:
+                await async_cast_seek(self.hass, session.host, 0)
+                session.position = 0
+                session.position_updated_at = dt_util.utcnow()
                 self.async_write_ha_state()
             else:
-                # Already near start, skip back further
-                await async_cast_skip_back(self.hass, self._active_cast_target, 30)
+                await async_cast_skip_back(self.hass, session.host, 30)
 
     async def async_media_seek(self, position: float) -> None:
-        """Send seek command to active cast."""
-        if self._active_cast_target:
-            await async_cast_seek(self.hass, self._active_cast_target, position)
-            # Update local position immediately for responsive UI
-            self._media_position = position
-            self._media_position_updated_at = dt_util.utcnow()
+        """Send seek command to focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_seek(self.hass, session.host, position)
+            session.position = position
+            session.position_updated_at = dt_util.utcnow()
             self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float) -> None:
-        """Set volume level on active cast."""
-        if self._active_cast_target:
-            await async_cast_volume(self.hass, self._active_cast_target, volume)
-            # Update local state immediately for responsive UI
-            self._volume_level = volume
+        """Set volume level on focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_volume(self.hass, session.host, volume)
+            session.volume = volume
             self.async_write_ha_state()
 
     async def async_volume_up(self) -> None:
-        """Turn volume up on active cast."""
-        if self._active_cast_target:
-            await async_cast_volume_up(self.hass, self._active_cast_target)
-            # Update local state (estimate +10%)
-            if self._volume_level is not None:
-                self._volume_level = min(1.0, self._volume_level + 0.1)
+        """Turn volume up on focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_volume_up(self.hass, session.host)
+            if session.volume is not None:
+                session.volume = min(1.0, session.volume + 0.1)
                 self.async_write_ha_state()
 
     async def async_volume_down(self) -> None:
-        """Turn volume down on active cast."""
-        if self._active_cast_target:
-            await async_cast_volume_down(self.hass, self._active_cast_target)
-            # Update local state (estimate -10%)
-            if self._volume_level is not None:
-                self._volume_level = max(0.0, self._volume_level - 0.1)
+        """Turn volume down on focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_volume_down(self.hass, session.host)
+            if session.volume is not None:
+                session.volume = max(0.0, session.volume - 0.1)
                 self.async_write_ha_state()
 
     async def async_mute_volume(self, mute: bool) -> None:
-        """Mute/unmute active cast."""
-        if self._active_cast_target:
-            await async_cast_mute(self.hass, self._active_cast_target, mute)
-            # Update local state immediately for responsive UI
-            self._is_volume_muted = mute
+        """Mute/unmute focused cast."""
+        session = self._focused_session
+        if session:
+            await async_cast_mute(self.hass, session.host, mute)
+            session.muted = mute
             self.async_write_ha_state()
 
     async def async_turn_off(self) -> None:
