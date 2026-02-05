@@ -972,20 +972,58 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             _LOGGER.warning("Tonight EPG fetch failed: %s", err)
 
-        # Merge coordinator channels that have programs but aren't in EPG
-        # Use copy() to avoid mutating shared coordinator objects
-        channels: list[EpgChannel] = list(epg_channels_by_id.values())
-        coordinator_added = 0
+        # Build initial channel set from EPG + coordinator
+        channels_by_id: dict[str, EpgChannel] = dict(epg_channels_by_id)
         for ch in data.channels:
-            if ch.channel_id not in epg_channels_by_id and ch.programs:
-                channels.append(copy(ch))
-                coordinator_added += 1
+            if ch.channel_id not in channels_by_id and ch.programs:
+                channels_by_id[ch.channel_id] = copy(ch)
 
         _LOGGER.debug(
-            "Tonight EPG sources: %d from EPG feed, %d from coordinator",
+            "Tonight EPG initial: %d from EPG feed, %d total with coordinator",
             len(epg_channels_by_id),
-            coordinator_added,
+            len(channels_by_id),
         )
+
+        # Fetch tonight's programs for channels not yet covered
+        from_ts = int(tonight_start_utc.timestamp() * 1000)
+        to_ts = int(tonight_end_utc.timestamp() * 1000)
+        missing_ids = [
+            ch.channel_id for ch in data.channels
+            if ch.channel_id not in channels_by_id
+        ]
+
+        if missing_ids:
+            sem = asyncio.Semaphore(10)
+
+            async def fetch_channel(channel_id: str) -> tuple[str, list[EpgProgram]]:
+                async with sem:
+                    try:
+                        raw = await self._api.async_get_channel_programs_range(
+                            channel_id, from_ts, to_ts,
+                        )
+                        return channel_id, parse_remote_programs(raw, channel_id)
+                    except MolotovApiError:
+                        return channel_id, []
+
+            results = await asyncio.gather(
+                *(fetch_channel(cid) for cid in missing_ids)
+            )
+            fetched = 0
+            for channel_id, programs in results:
+                if programs:
+                    ch = find_channel(data, channel_id)
+                    if ch:
+                        ch = copy(ch)
+                        ch.programs = programs
+                        channels_by_id[channel_id] = ch
+                        fetched += 1
+            _LOGGER.debug(
+                "Tonight EPG bulk fetch: %d channels queried, %d returned programs",
+                len(missing_ids),
+                fetched,
+            )
+
+        channels = list(channels_by_id.values())
 
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
