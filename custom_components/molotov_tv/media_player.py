@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
@@ -121,6 +122,7 @@ from .const import (
     CUSTOM_RECEIVER_APP_ID,
 )
 from .coordinator import (
+    EpgChannel,
     EpgData,
     EpgProgram,
     MolotovEpgCoordinator,
@@ -966,16 +968,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Fetch EPG data independently (not from coordinator) to avoid
-        # mutating shared coordinator objects that the Direct tab relies on
+        # Fetch EPG feed (has full schedules for ~30 channels)
+        epg_channels_by_id: dict[str, EpgChannel] = {}
         try:
             epg_raw = await self._api.async_get_epg()
             epg_data = _parse_epg(epg_raw)
+            for ch in epg_data.channels:
+                epg_channels_by_id[ch.channel_id] = ch
         except MolotovApiError as err:
             _LOGGER.warning("Tonight EPG fetch failed: %s", err)
-            epg_data = data
 
-        channels = epg_data.channels
+        # Merge coordinator channels that have programs but aren't in EPG
+        # Use copy() to avoid mutating shared coordinator objects
+        channels: list[EpgChannel] = list(epg_channels_by_id.values())
+        coordinator_added = 0
+        for ch in data.channels:
+            if ch.channel_id not in epg_channels_by_id and ch.programs:
+                channels.append(copy(ch))
+                coordinator_added += 1
+
+        _LOGGER.debug(
+            "Tonight EPG sources: %d from EPG feed, %d from coordinator",
+            len(epg_channels_by_id),
+            coordinator_added,
+        )
 
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
