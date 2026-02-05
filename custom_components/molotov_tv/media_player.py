@@ -122,11 +122,9 @@ from .const import (
     CUSTOM_RECEIVER_APP_ID,
 )
 from .coordinator import (
-    EpgChannel,
     EpgData,
     EpgProgram,
     MolotovEpgCoordinator,
-    _parse_epg,
 )
 from .helpers import (
     decode_asset_payload_from_media_id,
@@ -968,29 +966,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Fetch EPG feed (has full schedules for ~30 channels)
-        epg_channels_by_id: dict[str, EpgChannel] = {}
-        try:
-            epg_raw = await self._api.async_get_epg()
-            epg_data = _parse_epg(epg_raw)
-            for ch in epg_data.channels:
-                epg_channels_by_id[ch.channel_id] = ch
-        except MolotovApiError as err:
-            _LOGGER.warning("Tonight EPG fetch failed: %s", err)
-
-        # Merge coordinator channels that have programs but aren't in EPG
-        # Use copy() to avoid mutating shared coordinator objects
-        channels: list[EpgChannel] = list(epg_channels_by_id.values())
-        coordinator_added = 0
-        for ch in data.channels:
-            if ch.channel_id not in epg_channels_by_id and ch.programs:
-                channels.append(copy(ch))
-                coordinator_added += 1
+        # Use coordinator data directly (already has EPG merged in)
+        # Copy to avoid mutating shared coordinator objects
+        channels = [copy(ch) for ch in data.channels if ch.programs]
 
         _LOGGER.debug(
-            "Tonight EPG sources: %d from EPG feed, %d from coordinator",
-            len(epg_channels_by_id),
-            coordinator_added,
+            "Tonight EPG: using %d channels from coordinator",
+            len(channels),
         )
 
         children: list[BrowseMedia] = []
@@ -1241,40 +1223,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if channel is None:
             raise HomeAssistantError("Channel was not found in the EPG")
 
+        # Check cache first, then coordinator data, then per-channel fetch
         programs = self._get_cached_programs(channel_id)
-        if programs is None and not channel.programs:
-            # Try full EPG first (cached), then fall back to per-channel fetch
-            try:
-                epg_raw = await self._api.async_get_epg()
-                epg_data = _parse_epg(epg_raw)
-                for epg_channel in epg_data.channels:
-                    if epg_channel.channel_id == channel_id:
-                        programs = epg_channel.programs
-                        if programs:
-                            self._set_cached_programs(channel_id, programs)
-                        break
-            except MolotovApiError as err:
-                _LOGGER.debug("Full EPG fetch failed for programs: %s", err)
+        if programs is None:
+            programs = channel.programs  # From coordinator (already has EPG merged)
 
-            # Fallback to per-channel fetch if EPG didn't have programs
-            if not programs:
-                try:
-                    raw = await self._api.async_get_channel_programs(channel_id)
-                except MolotovApiError as err:
-                    if channel.programs:
-                        _LOGGER.warning(
-                            "Failed to refresh programs for channel %s: %s",
-                            channel_id,
-                            err,
-                        )
-                        programs = channel.programs
-                    else:
-                        raise HomeAssistantError(
-                            "Failed to fetch channel programs"
-                        ) from err
-                else:
-                    programs = parse_remote_programs(raw, channel_id)
-                    self._set_cached_programs(channel_id, programs)
+        if not programs:
+            # Fallback to per-channel API fetch
+            try:
+                raw = await self._api.async_get_channel_programs(channel_id)
+                programs = parse_remote_programs(raw, channel_id)
+                self._set_cached_programs(channel_id, programs)
+            except MolotovApiError as err:
+                raise HomeAssistantError(
+                    "Failed to fetch channel programs"
+                ) from err
 
         if programs is not None:
             channel.programs = programs
