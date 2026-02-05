@@ -121,7 +121,6 @@ from .const import (
     CUSTOM_RECEIVER_APP_ID,
 )
 from .coordinator import (
-    EpgChannel,
     EpgData,
     EpgProgram,
     MolotovEpgCoordinator,
@@ -588,10 +587,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_recordings()
 
         if media_content_id == MEDIA_TONIGHT_EPG:
-            await self.coordinator.async_request_refresh()
-            data = self.coordinator.data
-            if data is None:
-                raise HomeAssistantError("EPG data is not available yet")
             return await self._async_browse_tonight_epg(data)
 
         if media_content_id.startswith(f"{MEDIA_CHANNEL_PREFIX}:"):
@@ -981,80 +976,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Fetch all channels from multiple sources for tonight view
-        channels = list(data.channels)
-        channels_by_id = {ch.channel_id: ch for ch in channels}
-        _LOGGER.debug(
-            "Tonight EPG: coordinator has %d channels", len(channels)
-        )
-
-        def _dump_keys(raw: dict[str, Any] | list, label: str) -> None:
-            """Log raw response structure for debugging."""
-            if isinstance(raw, list):
-                _LOGGER.debug("%s: raw is list with %d items", label, len(raw))
-            elif isinstance(raw, dict):
-                summary = {
-                    k: len(v) if isinstance(v, list) else type(v).__name__
-                    for k, v in raw.items()
-                }
-                _LOGGER.debug("%s: raw keys=%s", label, summary)
-                if "sections" in raw and isinstance(raw["sections"], list):
-                    for i, sec in enumerate(raw["sections"]):
-                        if isinstance(sec, dict):
-                            items = sec.get("items", [])
-                            _LOGGER.debug(
-                                "%s: section[%d] title=%s items=%d",
-                                label,
-                                i,
-                                sec.get("title", "?"),
-                                len(items) if isinstance(items, list) else 0,
-                            )
-
-        def _merge_channels(
-            parsed: list[EpgChannel], label: str,
-        ) -> None:
-            added = 0
-            for ch in parsed:
-                if ch.channel_id not in channels_by_id:
-                    channels_by_id[ch.channel_id] = ch
-                    channels.append(ch)
-                    added += 1
-                else:
-                    existing = channels_by_id[ch.channel_id]
-                    if not existing.programs and ch.programs:
-                        existing.programs = ch.programs
-                    if existing.poster is None and ch.poster is not None:
-                        existing.poster = ch.poster
-            _LOGGER.debug(
-                "Tonight EPG: %s returned %d channels (%d new), total now %d",
-                label, len(parsed), added, len(channels),
-            )
-
-        # Source 1: v2/remote/channels (all channels)
-        try:
-            raw = await self._api.async_get_all_channels()
-            _dump_keys(raw, "remote/channels")
-            _merge_channels(_parse_epg(raw).channels, "remote/channels")
-        except MolotovApiError as err:
-            _LOGGER.warning("Tonight all-channels fetch failed: %s", err)
-
-        # Source 2: v2/channels/live/sections (live home, may have more)
-        try:
-            raw = await self._api.async_get_live_home_channels()
-            _dump_keys(raw, "live/sections")
-            _merge_channels(_parse_epg(raw).channels, "live/sections")
-        except MolotovApiError as err:
-            _LOGGER.warning("Tonight live/sections fetch failed: %s", err)
-
-        # Source 3: EPG feed (program data)
+        # Fetch EPG data independently (not from coordinator) to avoid
+        # mutating shared coordinator objects that the Direct tab relies on
         try:
             epg_raw = await self._api.async_get_epg()
-            _dump_keys(epg_raw, "EPG feed")
             epg_data = _parse_epg(epg_raw)
-            merge_epg_channels(channels_by_id, epg_data.channels)
-            _merge_channels(epg_data.channels, "EPG feed")
         except MolotovApiError as err:
-            _LOGGER.warning("Tonight EPG merge failed: %s", err)
+            _LOGGER.warning("Tonight EPG fetch failed: %s", err)
+            epg_data = data
+
+        channels = epg_data.channels
 
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
