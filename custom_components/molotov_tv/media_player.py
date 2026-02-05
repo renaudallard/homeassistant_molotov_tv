@@ -1020,7 +1020,15 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         raw = await self._api.async_get_channel_programs(
                             channel_id,
                         )
-                        return channel_id, parse_remote_programs(raw, channel_id)
+                        programs = parse_remote_programs(raw, channel_id)
+                        if not programs:
+                            _LOGGER.debug(
+                                "Tonight bulk: channel %s returned 0 programs "
+                                "(keys=%s)",
+                                channel_id,
+                                list(raw.keys()) if isinstance(raw, dict) else type(raw),
+                            )
+                        return channel_id, programs
                     except MolotovApiError:
                         return channel_id, []
 
@@ -1028,18 +1036,28 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 *(fetch_channel(cid) for cid in missing_ids)
             )
             fetched = 0
+            tonight_added = 0
             for channel_id, programs in results:
                 if programs:
+                    tonight_progs = [
+                        p for p in programs
+                        if (tonight_start_utc <= p.start <= tonight_end_utc)
+                        or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
+                    ]
                     ch = find_channel(data, channel_id)
                     if ch:
                         ch = copy(ch)
                         ch.programs = programs
                         channels_by_id[channel_id] = ch
                         fetched += 1
+                        if tonight_progs:
+                            tonight_added += 1
             _LOGGER.debug(
-                "Tonight EPG bulk fetch: %d channels queried, %d returned programs",
+                "Tonight EPG bulk fetch: %d queried, %d returned programs, "
+                "%d have tonight programs",
                 len(missing_ids),
                 fetched,
+                tonight_added,
             )
 
         channels = list(channels_by_id.values())

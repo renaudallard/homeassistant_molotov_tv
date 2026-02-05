@@ -970,37 +970,24 @@ class MolotovApi:
             if now >= expires_at - 60:
                 await self.async_refresh_token()
 
-    async def async_get_epg(self) -> dict[str, Any]:
-        """Fetch the EPG JSON payload."""
-
-        await self.async_ensure_logged_in()
-        user_id = self._session_state.user_id
-        if not user_id:
-            raise MolotovApiError("Missing user id for EPG request")
-
-        # Check EPG link cache
-        link: str | None = None
-        now = time.time()
-        if self._epg_link_cache:
-            cached_time, cached_link = self._epg_link_cache
-            if now - cached_time < EPG_LINK_CACHE_TTL:
-                link = cached_link
-                _LOGGER.debug("Using cached EPG link")
-
-        # Fetch new link if not cached
-        if not link:
+    async def _fetch_epg_link(self, user_id: str, platform: str) -> str | None:
+        """Fetch EPG download link for a given platform."""
+        base = self._live_channel_api_url.rstrip("/")
+        url = f"{base}/v1/{user_id}/{platform}/download-link-epg-files"
+        try:
             link_data = await self._request(
-                "GET",
-                f"{self._live_channel_api_url.rstrip('/')}/v1/{user_id}/firestick/download-link-epg-files",
-                auth=False,
-                basic_auth=self._live_channel_auth,
+                "GET", url, auth=False, basic_auth=self._live_channel_auth,
             )
             link = link_data.get("link")
-            if not link:
-                raise MolotovApiError("EPG link not returned by live channel API")
-            # Cache the link
-            self._epg_link_cache = (now, link)
+            if isinstance(link, str) and link:
+                _LOGGER.debug("EPG link from %s platform: %s", platform, link[:80])
+                return link
+        except MolotovApiError as err:
+            _LOGGER.debug("EPG link fetch failed for platform %s: %s", platform, err)
+        return None
 
+    async def _download_epg(self, link: str) -> dict[str, Any]:
+        """Download and decode an EPG payload from a link."""
         live_channel_base = self._live_channel_api_url.rstrip("/")
         use_basic_auth = link.startswith(live_channel_base)
         epg_raw = await self._request_raw_bytes(
@@ -1011,6 +998,58 @@ class MolotovApi:
             timeout=LARGE_RESPONSE_TIMEOUT,
         )
         return _decode_epg_payload(epg_raw)
+
+    async def async_get_epg(self) -> dict[str, Any]:
+        """Fetch the EPG JSON payload, trying multiple platform variants."""
+
+        await self.async_ensure_logged_in()
+        user_id = self._session_state.user_id
+        if not user_id:
+            raise MolotovApiError("Missing user id for EPG request")
+
+        # Check EPG link cache
+        now = time.time()
+        if self._epg_link_cache:
+            cached_time, cached_link = self._epg_link_cache
+            if now - cached_time < EPG_LINK_CACHE_TTL:
+                _LOGGER.debug("Using cached EPG link")
+                return await self._download_epg(cached_link)
+
+        # Try multiple platform variants to find the richest EPG
+        platforms = ["androidtv", "firestick", "android"]
+        best_link: str | None = None
+        best_data: dict[str, Any] | None = None
+        best_count = 0
+
+        for platform in platforms:
+            link = await self._fetch_epg_link(user_id, platform)
+            if not link:
+                continue
+            try:
+                data = await self._download_epg(link)
+            except MolotovApiError as err:
+                _LOGGER.debug("EPG download failed for %s: %s", platform, err)
+                continue
+            channels = data.get("channels", [])
+            count = len(channels) if isinstance(channels, list) else 0
+            _LOGGER.debug(
+                "EPG platform %s: %d channels", platform, count,
+            )
+            if count > best_count:
+                best_count = count
+                best_data = data
+                best_link = link
+            # If we already have a good result, stop early
+            if count > 100:
+                break
+
+        if best_data is None or best_link is None:
+            raise MolotovApiError("No EPG data from any platform variant")
+
+        # Cache the best link
+        self._epg_link_cache = (now, best_link)
+        _LOGGER.debug("Best EPG: %d channels", best_count)
+        return best_data
 
     def build_headers(self, auth: bool) -> dict[str, str]:
         """Build request headers for Molotov."""
