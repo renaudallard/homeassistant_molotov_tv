@@ -1061,6 +1061,50 @@ class MolotovPanel extends LitElement {
         color: rgba(255, 255, 255, 0.7);
       }
 
+      /* Mini cast bar (shown over channel list while casting) */
+      .mini-cast-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        background: var(--card-background-color);
+        border-top: 2px solid var(--primary-color);
+        box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.2);
+        flex-shrink: 0;
+      }
+
+      .mini-cast-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .mini-cast-title {
+        font-size: 14px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .mini-cast-controls {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .mini-live-badge {
+        background: #e53935;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+      }
+
       /* Multi-cast bar */
       .multi-cast-bar {
         display: flex;
@@ -2604,7 +2648,7 @@ class MolotovPanel extends LitElement {
     if (this._playing && this._streamData) {
       return this._renderPlayer();
     }
-    if (this._castPlaying) {
+    if (this._castPlaying && !this._isMobile) {
       return this._renderCastPlayer();
     }
     return this._renderChannelList();
@@ -2667,6 +2711,7 @@ class MolotovPanel extends LitElement {
           : this._activeTab === "tonight"
           ? this._renderTonight()
           : this._renderRecordings()}
+      ${this._castPlaying ? this._renderMiniCastBar() : ""}
       </div>
     `;
   }
@@ -3024,6 +3069,28 @@ class MolotovPanel extends LitElement {
               </div>
             `
           : ""}
+      </div>
+    `;
+  }
+
+  _renderMiniCastBar() {
+    return html`
+      <div class="mini-cast-bar">
+        <div class="mini-cast-info">
+          <ha-icon icon="mdi:cast-connected" style="--mdc-icon-size: 20px; color: var(--primary-color);"></ha-icon>
+          <span class="mini-cast-title">${this._castTitle || "Chromecast"}</span>
+        </div>
+        <div class="mini-cast-controls">
+          ${this._isLive ? html`
+            <span class="mini-live-badge">DIRECT</span>
+          ` : ""}
+          <button class="icon-btn" @click=${this._toggleCastPlayPause}>
+            <ha-icon icon=${this._paused ? "mdi:play" : "mdi:pause"}></ha-icon>
+          </button>
+          <button class="icon-btn" @click=${this._stopCastPlayback}>
+            <ha-icon icon="mdi:stop"></ha-icon>
+          </button>
+        </div>
       </div>
     `;
   }
