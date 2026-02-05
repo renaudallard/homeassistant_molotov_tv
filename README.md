@@ -113,7 +113,7 @@ La lecture locale n'est **pas disponible** sur les appareils mobiles (Android/iO
 Depuis le navigateur de médias, lorsque vous sélectionnez un programme, vous verrez une liste de cibles :
 *   **Lire sur cet appareil :** Lit localement dans votre navigateur (via le panneau latéral).
 *   **📺 Récepteur Officiel :** Caste en utilisant l'application officielle Molotov. **À utiliser pour la TV en direct et le contenu crypté.**
-*   **🏰 Récepteur Arnor :** Récepteur personnalisé de secours. À utiliser uniquement si le récepteur officiel Molotov est indisponible. Ne prend pas en charge les DRM.
+*   **🏰 Récepteur Arnor :** Récepteur personnalisé de secours. À utiliser uniquement si le récepteur officiel Molotov est indisponible.
 
 ### Multi-Chromecast
 L'intégration permet de diffuser simultanément sur plusieurs Chromecasts :
@@ -173,7 +173,7 @@ npm run build
 Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-panel.js`.
 
 ### Hébergement du récepteur personnalisé
-Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Il ne prend pas en charge les DRM. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
+Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
 
 ## ⚠️ Clause de non-responsabilité
 
