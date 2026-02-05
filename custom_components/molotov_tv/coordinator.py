@@ -31,7 +31,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
 import logging
 from typing import Any
 
@@ -91,34 +90,13 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
     async def _async_update_data(self) -> EpgData:
         # Fetch all 3 sources in parallel:
         # - channels-subbed: 203 channels with posters, 0 programs
-        # - live/sections: programs for many/all channels
+        # - live/sections: currently-airing programs (items are programs, not channels)
         # - EPG feed: programs for ~30 channels (backup)
         channels_task = asyncio.create_task(self.api.async_get_channels())
         live_task = asyncio.create_task(self.api.async_get_live_home_channels())
         epg_task = asyncio.create_task(self.api.async_get_epg())
 
         channels_raw = await channels_task
-
-        # --- DEBUG: dump raw channels-subbed structure ---
-        _LOGGER.debug(
-            "DEBUG channels-subbed raw type=%s",
-            type(channels_raw).__name__,
-        )
-        if isinstance(channels_raw, dict):
-            _LOGGER.debug(
-                "DEBUG channels-subbed top-level keys=%s",
-                list(channels_raw.keys()),
-            )
-        _ch_entries = _extract_channel_entries(channels_raw)
-        _LOGGER.debug(
-            "DEBUG channels-subbed extracted %d entries, first 2:\n%s",
-            len(_ch_entries),
-            "\n---\n".join(
-                json.dumps(e, default=str)[:500] for e in _ch_entries[:2]
-            ),
-        )
-        # --- END DEBUG ---
-
         channels_data = _parse_epg(channels_raw)
 
         _LOGGER.debug(
@@ -132,77 +110,58 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
             c.channel_id: c for c in channels_data.channels
         }
 
-        # --- DEBUG: dump first 5 channel IDs from base set ---
-        _base_ids = list(channels_by_id.keys())[:5]
-        _LOGGER.debug(
-            "DEBUG channels_by_id first 5 IDs (total %d): %s",
-            len(channels_by_id),
-            _base_ids,
-        )
-        # --- END DEBUG ---
+        # Merge live/sections: items are programs grouped by channel_id
+        try:
+            live_raw = await live_task
+            live_programs = _parse_live_sections(live_raw)
+            live_matched = 0
+            live_merged = 0
+            for channel_id, programs in live_programs.items():
+                existing = channels_by_id.get(channel_id)
+                if existing is None:
+                    continue
+                live_matched += 1
+                if not existing.programs and programs:
+                    existing.programs = programs
+                    live_merged += 1
+            _LOGGER.debug(
+                "live/sections: %d channel_ids, %d matched, %d got programs",
+                len(live_programs),
+                live_matched,
+                live_merged,
+            )
+        except MolotovApiError as err:
+            _LOGGER.warning("live/sections fetch failed: %s", err)
 
-        # Merge live/sections first (likely has programs for most channels)
-        for label, task in (("live/sections", live_task), ("EPG", epg_task)):
-            try:
-                raw = await task
-
-                # --- DEBUG: dump raw source structure ---
-                _LOGGER.debug(
-                    "DEBUG %s raw type=%s",
-                    label,
-                    type(raw).__name__,
-                )
-                if isinstance(raw, dict):
-                    _LOGGER.debug(
-                        "DEBUG %s top-level keys=%s",
-                        label,
-                        list(raw.keys()),
-                    )
-                _src_entries = _extract_channel_entries(raw)
-                _LOGGER.debug(
-                    "DEBUG %s extracted %d entries, first 2:\n%s",
-                    label,
-                    len(_src_entries),
-                    "\n---\n".join(
-                        json.dumps(e, default=str)[:500]
-                        for e in _src_entries[:2]
-                    ),
-                )
-                # --- END DEBUG ---
-
-                source = _parse_epg(raw)
-
-                # --- DEBUG: dump first 3 parsed channel IDs from source ---
-                _src_ids = [c.channel_id for c in source.channels[:3]]
-                _LOGGER.debug(
-                    "DEBUG %s parsed %d channels, first 3 IDs: %s",
-                    label,
-                    len(source.channels),
-                    _src_ids,
-                )
-                matched = 0
-                merged_programs = 0
-                merged_poster = 0
-                for src_ch in source.channels:
-                    existing = channels_by_id.get(src_ch.channel_id)
-                    if existing is None:
-                        continue
-                    matched += 1
-                    if not existing.programs and src_ch.programs:
-                        existing.programs = src_ch.programs
-                        merged_programs += 1
-                    if existing.poster is None and src_ch.poster is not None:
-                        existing.poster = src_ch.poster
-                        merged_poster += 1
-                    if not existing.label and src_ch.label:
-                        existing.label = src_ch.label
-                _LOGGER.debug(
-                    "%s: %d channels, %d matched, %d got programs, %d got poster",
-                    label, len(source.channels), matched,
-                    merged_programs, merged_poster,
-                )
-            except MolotovApiError as err:
-                _LOGGER.warning("%s fetch failed: %s", label, err)
+        # Merge EPG feed (backup, ~30 channels with full schedules)
+        try:
+            epg_raw = await epg_task
+            source = _parse_epg(epg_raw)
+            epg_matched = 0
+            epg_merged_programs = 0
+            epg_merged_poster = 0
+            for src_ch in source.channels:
+                existing = channels_by_id.get(src_ch.channel_id)
+                if existing is None:
+                    continue
+                epg_matched += 1
+                if not existing.programs and src_ch.programs:
+                    existing.programs = src_ch.programs
+                    epg_merged_programs += 1
+                if existing.poster is None and src_ch.poster is not None:
+                    existing.poster = src_ch.poster
+                    epg_merged_poster += 1
+                if not existing.label and src_ch.label:
+                    existing.label = src_ch.label
+            _LOGGER.debug(
+                "EPG: %d channels, %d matched, %d got programs, %d got poster",
+                len(source.channels),
+                epg_matched,
+                epg_merged_programs,
+                epg_merged_poster,
+            )
+        except MolotovApiError as err:
+            _LOGGER.warning("EPG fetch failed: %s", err)
 
         _LOGGER.debug(
             "Final coordinator data: %d channels, %d with programs, %d with poster",
@@ -212,6 +171,88 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
         )
 
         return channels_data
+
+
+def _parse_live_sections(data: dict[str, Any]) -> dict[str, list[EpgProgram]]:
+    """Parse live/sections response where items are programs, not channels.
+
+    Returns a dict mapping channel_id -> list of EpgProgram.
+    """
+    programs_by_channel: dict[str, list[EpgProgram]] = {}
+
+    for item in _extract_channel_entries(data):
+        channel_id = _extract_live_item_channel_id(item)
+        if channel_id is None:
+            continue
+
+        # Extract timing from video object
+        video = item.get("video")
+        if isinstance(video, dict):
+            start = _parse_timestamp(video.get("start_at") or video.get("start"))
+            end = _parse_timestamp(video.get("end_at") or video.get("end"))
+        else:
+            start = _parse_timestamp(item.get("start_at") or item.get("start"))
+            end = _parse_timestamp(item.get("end_at") or item.get("end"))
+
+        if start is None or end is None:
+            continue
+
+        title = item.get("title") or item.get("name") or "Untitled"
+        episode_title = (
+            item.get("episodeTitle")
+            or item.get("episode_title")
+            or item.get("subtitle")
+        )
+        if not episode_title:
+            formatter = item.get("subtitle_formatter") or item.get("subtitleFormatter")
+            if isinstance(formatter, dict):
+                episode_title = formatter.get("format")
+
+        description = item.get("description")
+        if not description:
+            formatter = item.get("description_formatter")
+            if isinstance(formatter, dict):
+                description = formatter.get("format")
+
+        thumbnail = _extract_image_url(item)
+        poster = _extract_image_url(item, prefer_poster=True)
+
+        program = EpgProgram(
+            title=title,
+            start=start,
+            end=end,
+            description=description,
+            episode_title=episode_title,
+            thumbnail=thumbnail,
+            poster=poster,
+        )
+
+        programs_by_channel.setdefault(channel_id, []).append(program)
+
+    return programs_by_channel
+
+
+def _extract_live_item_channel_id(item: dict[str, Any]) -> str | None:
+    """Extract channel_id from a live/sections program item."""
+    video = item.get("video")
+    if isinstance(video, dict):
+        channel_id = video.get("channel_id") or video.get("channelId")
+        if channel_id is not None:
+            return str(channel_id)
+
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        channel_id = metadata.get("channel_id") or metadata.get("channelId")
+        if channel_id is not None:
+            return str(channel_id)
+
+    channel = item.get("channel")
+    if isinstance(channel, dict):
+        channel_id = channel.get("id")
+        if channel_id is not None:
+            return str(channel_id)
+
+    return None
 
 
 def _parse_epg(data: dict[str, Any]) -> EpgData:

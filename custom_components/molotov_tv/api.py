@@ -336,8 +336,6 @@ class MolotovApi:
             urls.append(session.remote_subbed_url)
         if session.remote_url and session.remote_url not in urls:
             urls.append(session.remote_url)
-        if session.live_home_url and session.live_home_url not in urls:
-            urls.append(session.live_home_url)
 
         if not urls:
             _LOGGER.warning("No channel URLs available, falling back to EPG")
