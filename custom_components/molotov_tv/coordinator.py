@@ -29,50 +29,18 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime
 import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi, MolotovApiError
 from .const import DEFAULT_SCAN_INTERVAL
+from .helpers import extract_image_from_bundle, parse_epg_programs, parse_timestamp
+from .models import EpgChannel, EpgData, EpgProgram
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class EpgProgram:
-    """Represents a single EPG program entry."""
-
-    title: str
-    start: datetime
-    end: datetime
-    description: str | None = None
-    episode_title: str | None = None
-    thumbnail: str | None = None
-    poster: str | None = None
-
-
-@dataclass(slots=True)
-class EpgChannel:
-    """Represents an EPG channel entry."""
-
-    channel_id: str
-    label: str
-    display_number: int | None = None
-    poster: str | None = None
-    programs: list[EpgProgram] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class EpgData:
-    """Container for all EPG data."""
-
-    channels: list[EpgChannel]
 
 
 class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
@@ -188,11 +156,11 @@ def _parse_live_sections(data: dict[str, Any]) -> dict[str, list[EpgProgram]]:
         # Extract timing from video object
         video = item.get("video")
         if isinstance(video, dict):
-            start = _parse_timestamp(video.get("start_at") or video.get("start"))
-            end = _parse_timestamp(video.get("end_at") or video.get("end"))
+            start = parse_timestamp(video.get("start_at") or video.get("start"))
+            end = parse_timestamp(video.get("end_at") or video.get("end"))
         else:
-            start = _parse_timestamp(item.get("start_at") or item.get("start"))
-            end = _parse_timestamp(item.get("end_at") or item.get("end"))
+            start = parse_timestamp(item.get("start_at") or item.get("start"))
+            end = parse_timestamp(item.get("end_at") or item.get("end"))
 
         if start is None or end is None:
             continue
@@ -352,7 +320,7 @@ def _parse_channel_entry(entry: dict[str, Any]) -> EpgChannel | None:
     programs_payload = channel.get("programs")
     if not isinstance(programs_payload, list):
         programs_payload = entry.get("programs")
-    programs = _parse_program_entries(programs_payload)
+    programs = parse_epg_programs(programs_payload) if isinstance(programs_payload, list) else []
 
     return EpgChannel(
         channel_id=channel_id,
@@ -361,56 +329,6 @@ def _parse_channel_entry(entry: dict[str, Any]) -> EpgChannel | None:
         poster=poster,
         programs=programs,
     )
-
-
-def _parse_program_entries(programs: Any) -> list[EpgProgram]:
-    if not isinstance(programs, list):
-        return []
-    parsed: list[EpgProgram] = []
-    for program in programs:
-        if not isinstance(program, dict):
-            continue
-        start = _parse_timestamp(
-            program.get("startUTCMillis")
-            or program.get("start_at")
-            or program.get("start")
-        )
-        end = _parse_timestamp(
-            program.get("endUTCMillis") or program.get("end_at") or program.get("end")
-        )
-        if start is None or end is None:
-            continue
-        title = program.get("title") or program.get("name") or "Untitled"
-        parsed.append(
-            EpgProgram(
-                title=title,
-                start=start,
-                end=end,
-                description=program.get("description"),
-                episode_title=program.get("episodeTitle")
-                or program.get("episode_title")
-                or program.get("subtitle"),
-                thumbnail=program.get("thumbnail")
-                or program.get("thumbnailUrl")
-                or _extract_image_url(program),
-                poster=program.get("poster")
-                or program.get("posterUrl")
-                or _extract_image_url(program, prefer_poster=True),
-            )
-        )
-    return parsed
-
-
-def _parse_timestamp(value: Any) -> datetime | None:
-    if isinstance(value, str):
-        if value.isdigit():
-            value = int(value)
-        else:
-            return None
-    if not isinstance(value, (int, float)):
-        return None
-    seconds = value / 1000 if value > 10**11 else value
-    return dt_util.utc_from_timestamp(seconds)
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -444,11 +362,11 @@ def _extract_image_url(
             "landscape",
         )
     for key in preferred:
-        url = _extract_image_from_bundle(bundle.get(key))
+        url = extract_image_from_bundle(bundle.get(key))
         if url:
             return url
     for value in bundle.values():
-        url = _extract_image_from_bundle(value)
+        url = extract_image_from_bundle(value)
         if url:
             return url
     return None
@@ -469,11 +387,11 @@ def _extract_channel_logo(channel: dict[str, Any], entry: dict[str, Any]) -> str
                 "logo_light",
                 "logo",
             ):
-                url = _extract_image_from_bundle(bundle.get(key))
+                url = extract_image_from_bundle(bundle.get(key))
                 if url:
                     return url
             for value in bundle.values():
-                url = _extract_image_from_bundle(value)
+                url = extract_image_from_bundle(value)
                 if url:
                     return url
 
@@ -495,17 +413,3 @@ def _extract_channel_logo(channel: dict[str, Any], entry: dict[str, Any]) -> str
     return None
 
 
-def _extract_image_from_bundle(value: Any) -> str | None:
-    if isinstance(value, str):
-        return value
-    if not isinstance(value, dict):
-        return None
-    for key in ("source", "small", "medium", "large"):
-        candidate = value.get(key)
-        if isinstance(candidate, dict):
-            url = candidate.get("url")
-            if isinstance(url, str) and url:
-                return url
-        elif isinstance(candidate, str) and candidate:
-            return candidate
-    return None

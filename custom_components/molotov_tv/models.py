@@ -28,8 +28,39 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+
+@dataclass(slots=True)
+class EpgProgram:
+    """Represents a single EPG program entry."""
+
+    title: str
+    start: datetime
+    end: datetime
+    description: str | None = None
+    episode_title: str | None = None
+    thumbnail: str | None = None
+    poster: str | None = None
+
+
+@dataclass(slots=True)
+class EpgChannel:
+    """Represents an EPG channel entry."""
+
+    channel_id: str
+    label: str
+    display_number: int | None = None
+    poster: str | None = None
+    programs: list[EpgProgram] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class EpgData:
+    """Container for all EPG data."""
+
+    channels: list[EpgChannel]
 
 
 @dataclass(slots=True)

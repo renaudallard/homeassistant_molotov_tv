@@ -1043,113 +1043,12 @@ class MolotovApi:
         _retry: bool = True,
         _retries: int = 0,
     ) -> dict[str, Any]:
-        url = (
-            url_or_path
-            if url_or_path.startswith("http")
-            else urljoin(self._base_api_url, url_or_path)
+        return await self._do_request(
+            method, url_or_path,
+            auth=auth, json=json, params=params, headers=headers,
+            basic_auth=basic_auth, timeout=timeout,
+            reader=self._read_json, _retry=_retry, _retries=_retries,
         )
-        req_headers = self.build_headers(auth=auth)
-        if headers:
-            req_headers.update(headers)
-
-        try:
-            async with self._session.request(
-                method,
-                url,
-                headers=req_headers,
-                params=params,
-                json=json,
-                auth=basic_auth,
-                timeout=timeout or DEFAULT_TIMEOUT,
-            ) as resp:
-                if resp.status == 401 and auth and _retry:
-                    await self.async_refresh_token()
-                    return await self._request(
-                        method,
-                        url_or_path,
-                        auth=auth,
-                        json=json,
-                        params=params,
-                        headers=headers,
-                        basic_auth=basic_auth,
-                        timeout=timeout,
-                        _retry=False,
-                        _retries=_retries,
-                    )
-                if resp.status == 401:
-                    raise MolotovAuthError("Invalid credentials")
-                # Retry on transient failures
-                if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
-                    _LOGGER.warning(
-                        "Retryable error %s for %s %s, attempt %d/%d",
-                        resp.status,
-                        method,
-                        url,
-                        _retries + 1,
-                        MAX_RETRIES,
-                    )
-                    await asyncio.sleep(
-                        RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
-                    )
-                    return await self._request(
-                        method,
-                        url_or_path,
-                        auth=auth,
-                        json=json,
-                        params=params,
-                        headers=headers,
-                        basic_auth=basic_auth,
-                        timeout=timeout,
-                        _retry=_retry,
-                        _retries=_retries + 1,
-                    )
-                if resp.status >= 400:
-                    reason = resp.reason or "unknown"
-                    error_body = await _read_error_body(resp)
-                    user_message = _extract_user_message(error_body)
-                    if error_body:
-                        _LOGGER.debug(
-                            "Molotov API error: %s %s (%s %s): %s",
-                            method,
-                            url,
-                            resp.status,
-                            reason,
-                            error_body,
-                        )
-                    else:
-                        _LOGGER.debug(
-                            "Molotov API error: %s %s (%s %s)",
-                            method,
-                            url,
-                            resp.status,
-                            reason,
-                        )
-                    raise MolotovApiError(
-                        f"Molotov API request failed: {method} {url} ({resp.status} {reason})"
-                        + (f": {error_body}" if error_body else ""),
-                        user_message=user_message,
-                    )
-                content_type = resp.headers.get("content-type", "")
-                if "json" not in content_type:
-                    raise MolotovApiError(
-                        f"Unexpected response type from Molotov: {content_type or 'unknown'}"
-                    )
-                return await resp.json()
-        except MolotovApiError:
-            raise
-        except MolotovAuthError:
-            raise
-        except ClientResponseError as err:
-            if err.status == 401:
-                raise MolotovAuthError("Invalid credentials") from err
-            raise MolotovApiError(
-                f"Molotov API request failed: {method} {url} ({err.status})"
-            ) from err
-        except Exception as err:
-            _LOGGER.exception("Molotov API request crashed: %s %s", method, url)
-            raise MolotovApiError(
-                f"Molotov API request failed: {method} {url}"
-            ) from err
 
     async def _request_raw_bytes(
         self,
@@ -1165,6 +1064,41 @@ class MolotovApi:
         _retry: bool = True,
         _retries: int = 0,
     ) -> bytes:
+        return await self._do_request(
+            method, url_or_path,
+            auth=auth, json=json, params=params, headers=headers,
+            basic_auth=basic_auth, timeout=timeout,
+            reader=self._read_bytes, _retry=_retry, _retries=_retries,
+        )
+
+    @staticmethod
+    async def _read_json(resp) -> dict[str, Any]:
+        content_type = resp.headers.get("content-type", "")
+        if "json" not in content_type:
+            raise MolotovApiError(
+                f"Unexpected response type from Molotov: {content_type or 'unknown'}"
+            )
+        return await resp.json()
+
+    @staticmethod
+    async def _read_bytes(resp) -> bytes:
+        return await resp.read()
+
+    async def _do_request(
+        self,
+        method: str,
+        url_or_path: str,
+        *,
+        auth: bool,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        basic_auth: BasicAuth | None = None,
+        timeout: ClientTimeout | None = None,
+        reader,
+        _retry: bool = True,
+        _retries: int = 0,
+    ):
         url = (
             url_or_path
             if url_or_path.startswith("http")
@@ -1186,17 +1120,11 @@ class MolotovApi:
             ) as resp:
                 if resp.status == 401 and auth and _retry:
                     await self.async_refresh_token()
-                    return await self._request_raw_bytes(
-                        method,
-                        url_or_path,
-                        auth=auth,
-                        json=json,
-                        params=params,
-                        headers=headers,
-                        basic_auth=basic_auth,
-                        timeout=timeout,
-                        _retry=False,
-                        _retries=_retries,
+                    return await self._do_request(
+                        method, url_or_path,
+                        auth=auth, json=json, params=params, headers=headers,
+                        basic_auth=basic_auth, timeout=timeout,
+                        reader=reader, _retry=False, _retries=_retries,
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
@@ -1213,17 +1141,11 @@ class MolotovApi:
                     await asyncio.sleep(
                         RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
                     )
-                    return await self._request_raw_bytes(
-                        method,
-                        url_or_path,
-                        auth=auth,
-                        json=json,
-                        params=params,
-                        headers=headers,
-                        basic_auth=basic_auth,
-                        timeout=timeout,
-                        _retry=_retry,
-                        _retries=_retries + 1,
+                    return await self._do_request(
+                        method, url_or_path,
+                        auth=auth, json=json, params=params, headers=headers,
+                        basic_auth=basic_auth, timeout=timeout,
+                        reader=reader, _retry=_retry, _retries=_retries + 1,
                     )
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"
@@ -1251,7 +1173,7 @@ class MolotovApi:
                         + (f": {error_body}" if error_body else ""),
                         user_message=user_message,
                     )
-                return await resp.read()
+                return await reader(resp)
         except MolotovApiError:
             raise
         except MolotovAuthError:

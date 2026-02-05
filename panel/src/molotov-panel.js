@@ -1624,13 +1624,7 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
     this._liveDelay = 0;
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    } else {
-      this._castLoading = true;
-    }
+    this._initPlaybackFlags();
 
     try {
       // Extract the base media ID from the recording (remove "recording:" prefix if present)
@@ -1669,23 +1663,7 @@ class MolotovPanel extends LitElement {
       });
 
       if (result && result.children) {
-        // Filter for playable episodes
-        const episodes = result.children
-          .filter((item) =>
-            item.media_content_id.startsWith("episode:") ||
-            item.media_content_id.startsWith("replay:") ||
-            item.media_content_id.startsWith("cast:") ||
-            item.can_play
-          )
-          .map((item) => {
-            const payload = decodeAssetPayload(item.media_content_id);
-            return {
-              mediaContentId: item.media_content_id,
-              title: item.title,
-              thumbnail: item.thumbnail,
-              description: payload?.desc || null,
-            };
-          });
+        const episodes = this._parseEpisodeChildren(result.children, { allowCast: true });
 
         this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: episodes };
         console.log(`[Molotov Panel] Found ${episodes.length} episodes for recording "${recording.title}"`);
@@ -1719,13 +1697,7 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
     this._liveDelay = 0;
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    } else {
-      this._castLoading = true;
-    }
+    this._initPlaybackFlags();
 
     try {
       const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
@@ -1762,6 +1734,34 @@ class MolotovPanel extends LitElement {
 
   _isLocalPlayback() {
     return this._selectedTarget === "local";
+  }
+
+  _parseEpisodeChildren(children, { allowCast = false } = {}) {
+    return children
+      .filter((item) =>
+        item.media_content_id.startsWith("episode:") ||
+        item.media_content_id.startsWith("replay:") ||
+        (allowCast && item.media_content_id.startsWith("cast:")) ||
+        item.can_play
+      )
+      .map((item) => {
+        const payload = decodeAssetPayload(item.media_content_id);
+        return {
+          mediaContentId: item.media_content_id,
+          title: item.title,
+          thumbnail: item.thumbnail,
+          description: payload?.desc || null,
+        };
+      });
+  }
+
+  _initPlaybackFlags() {
+    if (this._isLocalPlayback()) {
+      this._localPlaybackInitiated = true;
+      this._localMinimized = false;
+    } else {
+      this._castLoading = true;
+    }
   }
 
   _parseChannel(browseItem) {
@@ -1910,13 +1910,7 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
     this._liveDelay = 0;
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    } else {
-      this._castLoading = true;
-    }
+    this._initPlaybackFlags();
 
     try {
       const mediaContentId = this._buildPlayMediaId(replay.mediaContentId);
@@ -1999,21 +1993,7 @@ class MolotovPanel extends LitElement {
         });
 
         if (browseResult && browseResult.children) {
-          const episodes = browseResult.children
-            .filter((item) =>
-              item.media_content_id.startsWith("episode:") ||
-              item.media_content_id.startsWith("replay:") ||
-              item.can_play
-            )
-            .map((item) => {
-              const payload = decodeAssetPayload(item.media_content_id);
-              return {
-                mediaContentId: item.media_content_id,
-                title: item.title,
-                thumbnail: item.thumbnail,
-                description: payload?.desc || null,
-              };
-            });
+          const episodes = this._parseEpisodeChildren(browseResult.children);
 
           if (episodes.length > 0) {
             // Cache the episodes
@@ -2091,22 +2071,7 @@ class MolotovPanel extends LitElement {
       });
 
       if (browseResult && browseResult.children) {
-        // Filter for playable episodes (episode: prefix) or cast targets (play_local available)
-        const episodes = browseResult.children
-          .filter((item) =>
-            item.media_content_id.startsWith("episode:") ||
-            item.media_content_id.startsWith("replay:") ||
-            item.can_play
-          )
-          .map((item) => {
-            const payload = decodeAssetPayload(item.media_content_id);
-            return {
-              mediaContentId: item.media_content_id,
-              title: item.title,
-              thumbnail: item.thumbnail,
-              description: payload?.desc || null,
-            };
-          });
+        const episodes = this._parseEpisodeChildren(browseResult.children);
 
         this._resultEpisodes = { ...this._resultEpisodes, [resultId]: episodes };
         console.log(`[Molotov Panel] Found ${episodes.length} episodes for "${result.title}"`);
@@ -2140,11 +2105,7 @@ class MolotovPanel extends LitElement {
     this._programEnd = null;
     this._liveDelay = 0;
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    }
+    this._initPlaybackFlags();
 
     try {
       const mediaContentId = this._buildPlayMediaId(episode.mediaContentId);
@@ -2262,13 +2223,7 @@ class MolotovPanel extends LitElement {
     this._selectedChannel = channel;
     this._playerError = null;
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    } else {
-      this._castLoading = true;
-    }
+    this._initPlaybackFlags();
 
     // Set program times for progress bar (only for local playback)
     if (this._isLocalPlayback() && channel.currentProgram?.start && channel.currentProgram?.end) {
@@ -2639,30 +2594,19 @@ class MolotovPanel extends LitElement {
     }
   }
 
-  _localSeekBeginning() {
+  _localSeek(delta) {
     const video = this.shadowRoot.querySelector("video");
-    if (video) video.currentTime = 0;
+    if (!video) return;
+    if (delta === null) { video.currentTime = 0; return; }
+    const target = video.currentTime + delta;
+    video.currentTime = Math.max(0, Math.min(video.duration || Infinity, target));
   }
 
-  _localSkipBack30() {
-    const video = this.shadowRoot.querySelector("video");
-    if (video) video.currentTime = Math.max(0, video.currentTime - 30);
-  }
-
-  _localSkipBack10() {
-    const video = this.shadowRoot.querySelector("video");
-    if (video) video.currentTime = Math.max(0, video.currentTime - 10);
-  }
-
-  _localSkipForward30() {
-    const video = this.shadowRoot.querySelector("video");
-    if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 30);
-  }
-
-  _localSkipPubs() {
-    const video = this.shadowRoot.querySelector("video");
-    if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 480);
-  }
+  _localSeekBeginning() { this._localSeek(null); }
+  _localSkipBack30() { this._localSeek(-30); }
+  _localSkipBack10() { this._localSeek(-10); }
+  _localSkipForward30() { this._localSeek(30); }
+  _localSkipPubs() { this._localSeek(480); }
 
   _handleProgressClick(e) {
     const progressBar = e.currentTarget;
@@ -3049,13 +2993,7 @@ class MolotovPanel extends LitElement {
       this._programEnd = null;
     }
 
-    // Track if this session initiated local playback
-    if (this._isLocalPlayback()) {
-      this._localPlaybackInitiated = true;
-      this._localMinimized = false;
-    } else {
-      this._castLoading = true;
-    }
+    this._initPlaybackFlags();
 
     try {
       const mediaContentId = this._buildPlayMediaId(program.mediaContentId);
@@ -3740,67 +3678,35 @@ class MolotovPanel extends LitElement {
     this._castPositionUpdatedAt = Date.now() / 1000;
   }
 
-  async _castSeekBeginning() {
+  async _castSeek(position) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
     try {
       await this.hass.callService("media_player", "media_seek", {
         entity_id: entityId,
-        seek_position: 0,
+        seek_position: position,
       });
-      this._setCastPosition(0);
+      this._setCastPosition(position);
     } catch (err) {
-      console.error("[Molotov Panel] Seek to beginning failed:", err);
+      console.error("[Molotov Panel] Cast seek failed:", err);
     }
+  }
+
+  async _castSeekBeginning() {
+    await this._castSeek(0);
   }
 
   async _castSkipBack30() {
-    const entityId = this._findMolotovEntity();
-    if (!entityId) return;
-
-    try {
-      const position = Math.max(0, this._currentTime - 30);
-      await this.hass.callService("media_player", "media_seek", {
-        entity_id: entityId,
-        seek_position: position,
-      });
-      this._setCastPosition(position);
-    } catch (err) {
-      console.error("[Molotov Panel] Skip back 30 failed:", err);
-    }
+    await this._castSeek(Math.max(0, this._currentTime - 30));
   }
 
   async _castSkipBack10() {
-    const entityId = this._findMolotovEntity();
-    if (!entityId) return;
-
-    try {
-      const position = Math.max(0, this._currentTime - 10);
-      await this.hass.callService("media_player", "media_seek", {
-        entity_id: entityId,
-        seek_position: position,
-      });
-      this._setCastPosition(position);
-    } catch (err) {
-      console.error("[Molotov Panel] Skip back 10 failed:", err);
-    }
+    await this._castSeek(Math.max(0, this._currentTime - 10));
   }
 
   async _castSkipPubs() {
-    const entityId = this._findMolotovEntity();
-    if (!entityId) return;
-
-    try {
-      const position = Math.min(this._duration || Infinity, this._currentTime + 480);
-      await this.hass.callService("media_player", "media_seek", {
-        entity_id: entityId,
-        seek_position: position,
-      });
-      this._setCastPosition(position);
-    } catch (err) {
-      console.error("[Molotov Panel] Skip pubs failed:", err);
-    }
+    await this._castSeek(Math.min(this._duration || Infinity, this._currentTime + 480));
   }
 
   async _handleCastSeek(e) {

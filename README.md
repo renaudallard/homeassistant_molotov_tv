@@ -159,6 +159,17 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 *   **Stockage sécurisé :** Les identifiants sont stockés via le système de configuration chiffré de Home Assistant.
 *   **Tokens en mémoire :** Les tokens d'accès et de rafraîchissement sont conservés uniquement en mémoire et ne sont pas persistés sur le disque.
 
+## 🏗️ Architecture
+
+Le code suit une structure modulaire :
+*   **`models.py`** : Dataclasses partagées (`EpgProgram`, `EpgChannel`, `EpgData`, `BrowseAsset`).
+*   **`coordinator.py`** : Coordinateur HA pour les mises à jour EPG, parsing des données brutes.
+*   **`helpers.py`** : Fonctions utilitaires de parsing (timestamps, images, programmes EPG, assets).
+*   **`browse.py`** : Construction de l'arborescence du navigateur de médias.
+*   **`api.py`** : Client HTTP Molotov avec retry automatique et gestion des tokens.
+*   **`media_player.py`** : Entité media player HA, casting, lecture locale.
+*   **`panel/src/molotov-panel.js`** : Panneau LitElement frontend.
+
 ## 🛠️ Avancé
 
 ### Développement du panneau

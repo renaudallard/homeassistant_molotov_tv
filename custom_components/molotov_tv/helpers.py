@@ -40,8 +40,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi
-from .coordinator import EpgChannel, EpgData, EpgProgram
-from .models import BrowseAsset
+from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram
 
 _LOGGER = logging.getLogger(__name__)
 

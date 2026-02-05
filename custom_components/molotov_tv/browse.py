@@ -48,7 +48,7 @@ from .const import (
     MEDIA_SEARCH_PREFIX,
     MEDIA_SEARCH_RESULT_PREFIX,
 )
-from .coordinator import EpgData
+from .models import EpgData
 from .helpers import (
     encode_asset_payload,
     extract_program_episodes,

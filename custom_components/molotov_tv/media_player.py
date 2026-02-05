@@ -121,11 +121,7 @@ from .const import (
     MOLOTOV_AGENT,
     CUSTOM_RECEIVER_APP_ID,
 )
-from .coordinator import (
-    EpgData,
-    EpgProgram,
-    MolotovEpgCoordinator,
-)
+from .coordinator import MolotovEpgCoordinator
 from .helpers import (
     decode_asset_payload_from_media_id,
     discover_cast_targets_blocking,
@@ -140,7 +136,7 @@ from .helpers import (
     parse_remote_programs,
     split_manual_target,
 )
-from .models import BrowseAsset
+from .models import BrowseAsset, EpgData, EpgProgram
 from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
