@@ -975,10 +975,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if not programs:
                 continue
 
-            # Filter programs that overlap with tonight window (20:00-24:00)
+            # Filter programs for tonight:
+            # - Include if starts between 20:00 and 24:00
+            # - If starts before 20:00, only include if ends after 21:00
+            tonight_21h_utc = tonight_start_utc + timedelta(hours=1)
             tonight_programs = [
                 p for p in programs
-                if p.start <= tonight_end_utc and p.end >= tonight_start_utc
+                if (tonight_start_utc <= p.start <= tonight_end_utc)
+                or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
             ]
 
             if not tonight_programs:
