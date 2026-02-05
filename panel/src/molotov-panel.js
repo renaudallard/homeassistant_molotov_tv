@@ -76,6 +76,7 @@ class MolotovPanel extends LitElement {
       _streamData: { type: Object },
       _isFullscreen: { type: Boolean },
       _playerError: { type: String },
+      _playerLoading: { type: Boolean },
       // Player state
       _currentTime: { type: Number },
       _duration: { type: Number },
@@ -439,6 +440,36 @@ class MolotovPanel extends LitElement {
         border-radius: 8px;
         text-align: center;
         max-width: 80%;
+      }
+
+      .player-loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        z-index: 5;
+      }
+
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-top-color: var(--primary-color, #03a9f4);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .loading-text {
+        color: #fff;
+        font-size: 14px;
       }
 
       .play-overlay {
@@ -1173,6 +1204,7 @@ class MolotovPanel extends LitElement {
     this._streamData = null;
     this._isFullscreen = false;
     this._playerError = null;
+    this._playerLoading = false;
     this._player = null;
     this._entityUnsubscribe = null;
     this._showPlayOverlay = false;
@@ -2078,6 +2110,7 @@ class MolotovPanel extends LitElement {
         };
         this._playing = true;
         this._playerError = null;
+        this._playerLoading = true;
 
         // Determine if this is live content
         const channel = this._selectedChannel;
@@ -2211,12 +2244,12 @@ class MolotovPanel extends LitElement {
         debug: { logLevel: window.dashjs.Debug.LOG_LEVEL_WARNING },
         streaming: {
           buffer: {
-            stableBufferTime: 20,
-            bufferTimeAtTopQuality: 30,
-            bufferTimeAtTopQualityLongForm: 60,
+            stableBufferTime: 6,
+            bufferTimeAtTopQuality: 15,
+            bufferTimeAtTopQualityLongForm: 30,
           },
           delay: {
-            liveDelay: 4,
+            liveDelay: 3,
           },
         },
       });
@@ -2253,6 +2286,7 @@ class MolotovPanel extends LitElement {
         const errMsg = e.error?.message || e.error || "Erreur de lecture";
         console.error("[Molotov Panel] Player error:", errMsg);
         this._playerError = errMsg;
+        this._playerLoading = false;
         this.requestUpdate();
       });
 
@@ -2266,6 +2300,7 @@ class MolotovPanel extends LitElement {
       player.on(window.dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
         console.log("[Molotov Panel] Playback started");
         this._showPlayOverlay = false;
+        this._playerLoading = false;
         this._paused = false;
         this.requestUpdate();
       });
@@ -2461,6 +2496,7 @@ class MolotovPanel extends LitElement {
     this._textTracks = [];
     this._selectedAudioIndex = -1;
     this._selectedTextIndex = -1;
+    this._playerLoading = false;
   }
 
   _stopPlayback() {
@@ -3126,6 +3162,13 @@ class MolotovPanel extends LitElement {
         <div class="player-container">
           <div class="video-wrapper">
             <video playsinline></video>
+
+            ${this._playerLoading
+              ? html`<div class="player-loading">
+                  <div class="loading-spinner"></div>
+                  <div class="loading-text">Chargement...</div>
+                </div>`
+              : ""}
 
             ${this._playerError
               ? html`<div class="player-error">${this._playerError}</div>`
