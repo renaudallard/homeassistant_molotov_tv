@@ -651,6 +651,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_play_local(media_id.split(":", 1)[1])
             return
 
+        if media_id == "stop_local":
+            self._async_stop_local_stream()
+            return
+
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
             parts = media_id.split(":", 3)
 
@@ -796,8 +800,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
             self._current_stream = asset_data
-            self._attr_state = STATE_PLAYING
-            self._attr_media_title = title
+            # Only change entity state if no cast is active
+            # (cast-driven state takes priority for the entity)
+            if not self._cast_sessions:
+                self._attr_state = STATE_PLAYING
+                self._attr_media_title = title
 
             stream = asset_data.get("stream", {})
             self._attr_media_content_id = stream.get("url")
@@ -823,6 +830,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             message = err.user_message or str(err)
             raise HomeAssistantError(f"Échec de lecture: {message}") from err
+
+    def _async_stop_local_stream(self) -> None:
+        """Stop local stream without affecting cast sessions."""
+        if not self._current_stream:
+            return
+        self._current_stream = None
+        self._release_stream_slot()
+        if not self._cast_sessions:
+            self._attr_state = STATE_IDLE
+        self.async_write_ha_state()
 
     async def _async_perform_search(self, query: str) -> None:
         """Perform a search and cache results for browsing."""
@@ -1979,7 +1996,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
-        """Stop the focused cast session."""
+        """Stop the focused cast session and/or local stream."""
         session = self._focused_session
         if session:
             # Save position for resume
@@ -2006,10 +2023,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_end_session_for_host(
                 session.host, "Stopped by user"
             )
-        elif self._current_stream:
+
+        # Also stop local stream if present
+        if self._current_stream:
             self._current_stream = None
-            self._attr_state = STATE_IDLE
             self._release_stream_slot()
+            if not self._cast_sessions:
+                self._attr_state = STATE_IDLE
             self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:

@@ -2128,9 +2128,8 @@ class MolotovPanel extends LitElement {
 
     const state = this.hass.states[entityId];
 
-    // Check if we're playing with a stream URL (local playback)
-    // Only show local player if THIS session initiated it
-    if (state.state === "playing" && state.attributes.stream_url && this._localPlaybackInitiated) {
+    // Track local playback (stream URL present + this session initiated it)
+    if (state.attributes.stream_url && this._localPlaybackInitiated) {
       const streamUrl = state.attributes.stream_url;
       const drm = state.attributes.stream_drm;
       const selectedTrack = state.attributes.stream_selected_track;
@@ -2164,8 +2163,18 @@ class MolotovPanel extends LitElement {
         // Initialize player after render
         this.updateComplete.then(() => this._initDashPlayer());
       }
-    } else if (state.attributes.active_casts && Object.keys(state.attributes.active_casts).length > 0) {
-      // Multi-cast: track all active casts
+    } else if (this._playing) {
+      // Stream URL gone but we were playing locally — stopped
+      this._cleanupPlayer();
+      this._playing = false;
+      this._streamData = null;
+      this._currentStreamUrl = null;
+      this._localPlaybackInitiated = false;
+      this._localMinimized = false;
+    }
+
+    // Track cast playback independently
+    if (state.attributes.active_casts && Object.keys(state.attributes.active_casts).length > 0) {
       const activeCasts = state.attributes.active_casts;
       const castTarget = state.attributes.cast_target;
 
@@ -2178,8 +2187,6 @@ class MolotovPanel extends LitElement {
         this._castLoading = false;
         this._castTarget = castTarget;
         this._castTitle = state.attributes.media_title || "En cours de lecture";
-        this._playing = false;
-        this._cleanupPlayer();
         this._startCastProgressUpdate();
         console.log("[Molotov Panel] Cast playback detected:", castTarget, "total casts:", Object.keys(activeCasts).length);
       }
@@ -2194,26 +2201,16 @@ class MolotovPanel extends LitElement {
       this._paused = state.state === "paused";
       this._castTitle = state.attributes.media_title || this._castTitle;
       this._isLive = state.attributes.is_live || false;
-    } else if ((this._playing || this._castPlaying) && state.state !== "playing" && state.state !== "paused") {
-      // Stopped playing (both local and cast)
-      this._cleanupPlayer();
-      this._playing = false;
-      this._streamData = null;
-      this._currentStreamUrl = null;
+    } else if (this._castPlaying) {
+      // No active casts but we were casting — stopped
       this._castPlaying = false;
       this._castTarget = null;
       this._castTitle = null;
-      this._isLive = false;
-      this._localPlaybackInitiated = false;
-      this._localMinimized = false;
       this._castMinimized = false;
       this._castLoading = false;
       this._activeCasts = {};
       this._focusedCastHost = null;
       this._stopCastProgressUpdate();
-    } else if (this._castPlaying && state.state === "paused") {
-      // Cast paused
-      this._paused = true;
     }
   }
 
@@ -2549,13 +2546,21 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
 
     if (entityId && this.hass) {
-      this.hass.callService("media_player", "media_stop", {
-        entity_id: entityId,
-      });
+      if (this._castPlaying) {
+        // Cast is active — only stop local stream, don't kill the cast
+        this.hass.callService("media_player", "play_media", {
+          entity_id: entityId,
+          media_content_id: "stop_local",
+          media_content_type: "video",
+        });
+      } else {
+        this.hass.callService("media_player", "media_stop", {
+          entity_id: entityId,
+        });
+      }
     }
 
     this._cleanupPlayer();
-    this._stopCastProgressUpdate();
     this._playing = false;
     this._streamData = null;
     this._selectedChannel = null;

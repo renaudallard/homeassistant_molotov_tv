@@ -95,6 +95,7 @@ L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre l
 *   **Onglet En cours :** Pendant la lecture, le bouton "Retour" ramène à la liste des chaînes tout en conservant le flux actif. Un onglet "En cours" apparaît pour revenir au lecteur.
 *   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
 *   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.
+*   **Lecture locale + Chromecast :** La lecture locale et le casting sur Chromecast fonctionnent simultanément et indépendamment. Arrêter la lecture locale ne coupe pas le Chromecast et inversement.
 
 ### Multi-utilisateurs
 La lecture locale est isolée par session de navigateur :
