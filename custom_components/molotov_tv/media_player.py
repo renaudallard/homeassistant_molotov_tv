@@ -1580,9 +1580,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
 
     def _make_cast_status_handler(self, host: str):
-        """Create a per-host status callback."""
+        """Create a per-host status callback (called from pychromecast thread)."""
         def handler(status: Any) -> None:
-            self._on_cast_status_for_host(host, status)
+            self.hass.loop.call_soon_threadsafe(
+                self._on_cast_status_for_host, host, status
+            )
         return handler
 
     def _on_cast_status_for_host(self, host: str, status: Any) -> None:
@@ -1654,7 +1656,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if host == self._active_cast_target:
             self._sync_state_from_session(session)
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
     async def _async_cast_media(
         self,

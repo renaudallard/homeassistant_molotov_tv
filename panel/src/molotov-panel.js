@@ -1175,6 +1175,9 @@ class MolotovPanel extends LitElement {
     // Multi-cast state
     this._activeCasts = {};
     this._focusedCastHost = null;
+    this._castProgressInterval = null;
+    this._castBasePosition = 0;
+    this._castPositionUpdatedAt = null;
     // Track if this session initiated local playback
     this._localPlaybackInitiated = false;
     // Tonight EPG
@@ -2060,10 +2063,14 @@ class MolotovPanel extends LitElement {
         this._castTitle = state.attributes.media_title || "En cours de lecture";
         this._playing = false;
         this._cleanupPlayer();
+        this._startCastProgressUpdate();
         console.log("[Molotov Panel] Cast playback detected:", castTarget, "total casts:", Object.keys(activeCasts).length);
       }
       // Update playback state from entity (focused cast)
-      this._currentTime = state.attributes.media_position || 0;
+      this._castPositionUpdatedAt = state.attributes.media_position_updated_at
+        ? new Date(state.attributes.media_position_updated_at).getTime() / 1000
+        : null;
+      this._castBasePosition = state.attributes.media_position || 0;
       this._duration = state.attributes.media_duration || 0;
       this._volume = state.attributes.volume_level ?? 0.5;
       this._muted = state.attributes.is_volume_muted || false;
@@ -2083,6 +2090,7 @@ class MolotovPanel extends LitElement {
       this._localPlaybackInitiated = false;
       this._activeCasts = {};
       this._focusedCastHost = null;
+      this._stopCastProgressUpdate();
     } else if (this._castPlaying && state.state === "paused") {
       // Cast paused
       this._paused = true;
@@ -2263,6 +2271,36 @@ class MolotovPanel extends LitElement {
     this._duration = video.duration || 0;
     this._paused = video.paused;
 
+    this.requestUpdate();
+  }
+
+  _startCastProgressUpdate() {
+    this._stopCastProgressUpdate();
+    this._castProgressInterval = setInterval(() => {
+      this._updateCastProgress();
+    }, 1000);
+  }
+
+  _stopCastProgressUpdate() {
+    if (this._castProgressInterval) {
+      clearInterval(this._castProgressInterval);
+      this._castProgressInterval = null;
+    }
+  }
+
+  _updateCastProgress() {
+    if (!this._castPlaying) {
+      this._stopCastProgressUpdate();
+      return;
+    }
+    // Interpolate position from last known position + elapsed time
+    if (this._castBasePosition != null && this._castPositionUpdatedAt && !this._paused) {
+      const now = Date.now() / 1000;
+      const elapsed = now - this._castPositionUpdatedAt;
+      this._currentTime = this._castBasePosition + elapsed;
+    } else {
+      this._currentTime = this._castBasePosition || 0;
+    }
     this.requestUpdate();
   }
 
@@ -3360,6 +3398,7 @@ class MolotovPanel extends LitElement {
     this._castTitle = null;
     this._activeCasts = {};
     this._focusedCastHost = null;
+    this._stopCastProgressUpdate();
   }
 
   async _toggleCastPlayPause() {
