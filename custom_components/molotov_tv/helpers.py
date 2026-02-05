@@ -1155,6 +1155,18 @@ def extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
             if not is_rec_section and not is_recording:
                 continue
 
+            # Exclude replay/VOD items that sneak in via recording sections
+            video = payload.get("video")
+            if isinstance(video, dict):
+                video_type = video.get("type", "")
+                if video_type in ("vod", "broadcast"):
+                    _LOGGER.debug(
+                        "Skipping non-recording item in recording section: %s (video.type=%s)",
+                        payload.get("title", "unknown")[:30],
+                        video_type,
+                    )
+                    continue
+
             asset = parse_asset_item(item, api)
             if asset:
                 _LOGGER.debug(
