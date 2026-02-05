@@ -987,6 +987,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             epg_raw = await self._api.async_get_epg()
             epg_data = _parse_epg(epg_raw)
             merge_epg_channels(channels_by_id, epg_data.channels)
+            # Add channels from full EPG not present in coordinator data
+            for epg_ch in epg_data.channels:
+                if epg_ch.channel_id not in channels_by_id:
+                    channels_by_id[epg_ch.channel_id] = epg_ch
+                    channels.append(epg_ch)
         except MolotovApiError as err:
             _LOGGER.warning("Tonight EPG merge failed: %s", err)
 
