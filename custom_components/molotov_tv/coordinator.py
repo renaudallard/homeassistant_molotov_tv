@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import logging
 from typing import Any
 
@@ -97,6 +98,27 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
         epg_task = asyncio.create_task(self.api.async_get_epg())
 
         channels_raw = await channels_task
+
+        # --- DEBUG: dump raw channels-subbed structure ---
+        _LOGGER.debug(
+            "DEBUG channels-subbed raw type=%s",
+            type(channels_raw).__name__,
+        )
+        if isinstance(channels_raw, dict):
+            _LOGGER.debug(
+                "DEBUG channels-subbed top-level keys=%s",
+                list(channels_raw.keys()),
+            )
+        _ch_entries = _extract_channel_entries(channels_raw)
+        _LOGGER.debug(
+            "DEBUG channels-subbed extracted %d entries, first 2:\n%s",
+            len(_ch_entries),
+            "\n---\n".join(
+                json.dumps(e, default=str)[:500] for e in _ch_entries[:2]
+            ),
+        )
+        # --- END DEBUG ---
+
         channels_data = _parse_epg(channels_raw)
 
         _LOGGER.debug(
@@ -110,11 +132,54 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
             c.channel_id: c for c in channels_data.channels
         }
 
+        # --- DEBUG: dump first 5 channel IDs from base set ---
+        _base_ids = list(channels_by_id.keys())[:5]
+        _LOGGER.debug(
+            "DEBUG channels_by_id first 5 IDs (total %d): %s",
+            len(channels_by_id),
+            _base_ids,
+        )
+        # --- END DEBUG ---
+
         # Merge live/sections first (likely has programs for most channels)
         for label, task in (("live/sections", live_task), ("EPG", epg_task)):
             try:
                 raw = await task
+
+                # --- DEBUG: dump raw source structure ---
+                _LOGGER.debug(
+                    "DEBUG %s raw type=%s",
+                    label,
+                    type(raw).__name__,
+                )
+                if isinstance(raw, dict):
+                    _LOGGER.debug(
+                        "DEBUG %s top-level keys=%s",
+                        label,
+                        list(raw.keys()),
+                    )
+                _src_entries = _extract_channel_entries(raw)
+                _LOGGER.debug(
+                    "DEBUG %s extracted %d entries, first 2:\n%s",
+                    label,
+                    len(_src_entries),
+                    "\n---\n".join(
+                        json.dumps(e, default=str)[:500]
+                        for e in _src_entries[:2]
+                    ),
+                )
+                # --- END DEBUG ---
+
                 source = _parse_epg(raw)
+
+                # --- DEBUG: dump first 3 parsed channel IDs from source ---
+                _src_ids = [c.channel_id for c in source.channels[:3]]
+                _LOGGER.debug(
+                    "DEBUG %s parsed %d channels, first 3 IDs: %s",
+                    label,
+                    len(source.channels),
+                    _src_ids,
+                )
                 matched = 0
                 merged_programs = 0
                 merged_poster = 0
