@@ -1196,6 +1196,7 @@ class MolotovPanel extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._cleanupPlayer();
+    this._stopCastProgressUpdate();
     document.removeEventListener("fullscreenchange", this._onFullscreenChange.bind(this));
     document.removeEventListener("click", this._onDocumentClick.bind(this));
     if (this._entityUnsubscribe) {
@@ -2296,7 +2297,7 @@ class MolotovPanel extends LitElement {
     // Interpolate position from last known position + elapsed time
     if (this._castBasePosition != null && this._castPositionUpdatedAt && !this._paused) {
       const now = Date.now() / 1000;
-      const elapsed = now - this._castPositionUpdatedAt;
+      const elapsed = Math.max(0, now - this._castPositionUpdatedAt);
       this._currentTime = this._castBasePosition + elapsed;
     } else {
       this._currentTime = this._castBasePosition || 0;
@@ -2428,6 +2429,7 @@ class MolotovPanel extends LitElement {
     }
 
     this._cleanupPlayer();
+    this._stopCastProgressUpdate();
     this._playing = false;
     this._streamData = null;
     this._selectedChannel = null;

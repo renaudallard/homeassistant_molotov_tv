@@ -307,20 +307,25 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def async_added_to_hass(self) -> None:
         """Called when entity is added to hass."""
         await super().async_added_to_hass()
-        # Register for cast connection status updates
-        register_connection_callback(self._on_cast_connection_change)
+        # Register for cast connection status updates (from pychromecast thread)
+        def _connection_handler(host: str, connected: bool) -> None:
+            self.hass.loop.call_soon_threadsafe(
+                self._on_cast_connection_change, host, connected
+            )
+        self._connection_handler = _connection_handler
+        register_connection_callback(_connection_handler)
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from hass."""
         await super().async_will_remove_from_hass()
         # Unregister callback
-        unregister_connection_callback(self._on_cast_connection_change)
+        unregister_connection_callback(self._connection_handler)
         # Stop all health monitors
         for session in list(self._cast_sessions.values()):
             await self._async_stop_health_monitor_for(session)
 
     def _on_cast_connection_change(self, host: str, connected: bool) -> None:
-        """Handle cast connection status changes from chromecast module."""
+        """Handle cast connection status changes (runs in event loop)."""
         session = self._cast_sessions.get(host)
         if not session:
             return
@@ -337,8 +342,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if host == self._active_cast_target:
             self._sync_state_from_session(session)
 
-        # Schedule state update (callback may be called from executor thread)
-        self.hass.loop.call_soon_threadsafe(self.async_schedule_update_ha_state)
+        self.async_write_ha_state()
 
     async def _async_end_session_for_host(
         self, host: str, reason: str
