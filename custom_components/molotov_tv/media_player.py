@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
@@ -861,7 +862,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             raise HomeAssistantError(f"La recherche a échoué: {err}") from err
 
     async def _async_browse_now_playing(self, data: EpgData) -> BrowseMedia:
-        channels = list(data.channels)
+        channels = [copy(ch) for ch in data.channels]
         if not channels:
             return BrowseMedia(
                 title="En direct",
