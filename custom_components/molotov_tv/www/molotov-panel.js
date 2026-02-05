@@ -1509,35 +1509,29 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
 
             <!-- Cast controls -->
             <div class="custom-controls">
-              ${this._isLive?l`
-                <div class="progress-container">
+              <div class="progress-container">
+                ${this._isLive?l`
                   <span class="live-badge" style="background: #e53935; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">EN DIRECT</span>
-                </div>
-              `:l`
-                <div class="progress-container">
+                `:l`
                   <span>${this._formatTime(this._currentTime)}</span>
-                  <div class="progress-bar" @click=${this._handleCastSeek}>
-                    <div class="progress-filled" style="width: ${e}%"></div>
-                  </div>
-                  <span>${this._formatTime(this._duration)}</span>
+                `}
+                <div class="progress-bar" @click=${this._handleCastSeek}>
+                  <div class="progress-filled" style="width: ${e}%"></div>
                 </div>
-              `}
+                <span>${this._formatTime(this._duration)}</span>
+              </div>
 
               <div class="controls-row">
                 <div class="controls-left">
-                  ${this._isLive?"":l`
-                    <button class="icon-btn" @click=${this._castSkipBack}>
-                      <ha-icon icon="mdi:rewind-30"></ha-icon>
-                    </button>
-                  `}
+                  <button class="icon-btn" @click=${this._castSkipBack}>
+                    <ha-icon icon="mdi:rewind-30"></ha-icon>
+                  </button>
                   <button class="icon-btn" @click=${this._toggleCastPlayPause}>
                     <ha-icon icon=${this._paused?"mdi:play":"mdi:pause"}></ha-icon>
                   </button>
-                  ${this._isLive?"":l`
-                    <button class="icon-btn" @click=${this._castSkipForward}>
-                      <ha-icon icon="mdi:fast-forward-30"></ha-icon>
-                    </button>
-                  `}
+                  <button class="icon-btn" @click=${this._castSkipForward}>
+                    <ha-icon icon="mdi:fast-forward-30"></ha-icon>
+                  </button>
 
                   <div class="volume-container">
                     <button class="icon-btn" @click=${this._toggleCastMute}>
