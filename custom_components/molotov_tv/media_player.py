@@ -121,7 +121,7 @@ from .const import (
     MOLOTOV_AGENT,
     CUSTOM_RECEIVER_APP_ID,
 )
-from .coordinator import MolotovEpgCoordinator
+from .coordinator import MolotovEpgCoordinator, _parse_epg
 from .helpers import (
     decode_asset_payload_from_media_id,
     discover_cast_targets_blocking,
@@ -136,7 +136,7 @@ from .helpers import (
     parse_remote_programs,
     split_manual_target,
 )
-from .models import BrowseAsset, EpgData, EpgProgram
+from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram
 from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -962,13 +962,29 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tonight_end_utc.isoformat(),
         )
 
-        # Use coordinator data directly (already has EPG merged in)
-        # Copy to avoid mutating shared coordinator objects
-        channels = [copy(ch) for ch in data.channels if ch.programs]
+        # Fetch EPG feed (has full schedules for ~30 channels)
+        epg_channels_by_id: dict[str, EpgChannel] = {}
+        try:
+            epg_raw = await self._api.async_get_epg()
+            epg_data = _parse_epg(epg_raw)
+            for ch in epg_data.channels:
+                epg_channels_by_id[ch.channel_id] = ch
+        except MolotovApiError as err:
+            _LOGGER.warning("Tonight EPG fetch failed: %s", err)
+
+        # Merge coordinator channels that have programs but aren't in EPG
+        # Use copy() to avoid mutating shared coordinator objects
+        channels: list[EpgChannel] = list(epg_channels_by_id.values())
+        coordinator_added = 0
+        for ch in data.channels:
+            if ch.channel_id not in epg_channels_by_id and ch.programs:
+                channels.append(copy(ch))
+                coordinator_added += 1
 
         _LOGGER.debug(
-            "Tonight EPG: using %d channels from coordinator",
-            len(channels),
+            "Tonight EPG sources: %d from EPG feed, %d from coordinator",
+            len(epg_channels_by_id),
+            coordinator_added,
         )
 
         children: list[BrowseMedia] = []
