@@ -1272,6 +1272,8 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+    this._liveDelay = 0;
+    this._liveDelay = 0;
     this._showAudioMenu = false;
     this._showTextMenu = false;
     this._updateInterval = null;
@@ -1620,6 +1622,7 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+    this._liveDelay = 0;
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
@@ -1714,6 +1717,7 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+    this._liveDelay = 0;
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
@@ -1904,6 +1908,7 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+    this._liveDelay = 0;
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
@@ -2133,6 +2138,7 @@ class MolotovPanel extends LitElement {
     this._isLive = false;
     this._programStart = null;
     this._programEnd = null;
+    this._liveDelay = 0;
 
     // Track if this session initiated local playback
     if (this._isLocalPlayback()) {
@@ -2424,6 +2430,12 @@ class MolotovPanel extends LitElement {
     this._currentTime = video.currentTime;
     this._duration = video.duration || 0;
     this._paused = video.paused;
+
+    // Track how far behind the live edge we are
+    if (this._isLive && video.seekable && video.seekable.length > 0) {
+      const liveEdge = video.seekable.end(video.seekable.length - 1);
+      this._liveDelay = Math.max(0, (liveEdge - video.currentTime) * 1000);
+    }
 
     this.requestUpdate();
   }
@@ -2790,14 +2802,14 @@ class MolotovPanel extends LitElement {
 
   _getProgressPercent() {
     if (this._isLive && this._programStart && this._programEnd) {
-      // For live TV, show progress within current program
-      const now = Date.now();
+      // For live TV, show progress based on actual playback position
+      const playbackTime = Date.now() - (this._liveDelay || 0);
       const programDuration = this._programEnd - this._programStart;
       if (programDuration <= 0) return 100;
 
-      const elapsed = now - this._programStart;
+      const elapsed = playbackTime - this._programStart;
       return Math.min(100, Math.max(0, (elapsed / programDuration) * 100));
-    } else if (this._duration > 0) {
+    } else if (this._duration > 0 && isFinite(this._duration)) {
       // For VOD, show playback progress
       return (this._currentTime / this._duration) * 100;
     }
@@ -3341,7 +3353,7 @@ class MolotovPanel extends LitElement {
             <div class="custom-controls ${this._paused ? "" : "autohide"}">
               <div class="progress-container">
                 ${this._isLive && this._programStart
-                  ? html`<span>${this._formatClockTime(this._programStart)}</span>`
+                  ? html`<span>${this._formatClockTime(Date.now() - (this._liveDelay || 0))}</span>`
                   : html`<span>${this._formatTime(this._currentTime)}</span>`}
                 <div class="progress-bar" @click=${this._handleProgressClick}>
                   <div class="progress-filled" style="width: ${progressPercent}%"></div>
@@ -3483,7 +3495,7 @@ class MolotovPanel extends LitElement {
   }
 
   _renderCastPlayer() {
-    const progressPercent = this._duration > 0 ? (this._currentTime / this._duration) * 100 : 0;
+    const progressPercent = this._getProgressPercent();
 
     return html`
       <div class="player-view">
@@ -3514,15 +3526,15 @@ class MolotovPanel extends LitElement {
             <!-- Cast controls -->
             <div class="custom-controls">
               <div class="progress-container">
-                ${this._isLive ? html`
-                  <span class="live-badge" style="background: #e53935; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">EN DIRECT</span>
-                ` : html`
-                  <span>${this._formatTime(this._currentTime)}</span>
-                `}
+                ${this._isLive && this._programStart
+                  ? html`<span>${this._formatClockTime(Date.now() - (this._liveDelay || 0))}</span>`
+                  : html`<span>${this._formatTime(this._currentTime)}</span>`}
                 <div class="progress-bar" @click=${this._handleCastSeek}>
                   <div class="progress-filled" style="width: ${progressPercent}%"></div>
                 </div>
-                <span>${this._formatTime(this._duration)}</span>
+                ${this._isLive && this._programEnd
+                  ? html`<span>${this._formatClockTime(this._programEnd)}</span>`
+                  : html`<span>${this._formatTime(this._duration)}</span>`}
               </div>
 
               <div class="controls-row">
