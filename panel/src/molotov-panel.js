@@ -3722,6 +3722,12 @@ class MolotovPanel extends LitElement {
     }
   }
 
+  _setCastPosition(position) {
+    this._currentTime = position;
+    this._castBasePosition = position;
+    this._castPositionUpdatedAt = Date.now() / 1000;
+  }
+
   async _castSeekBeginning() {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
@@ -3731,7 +3737,7 @@ class MolotovPanel extends LitElement {
         entity_id: entityId,
         seek_position: 0,
       });
-      this._currentTime = 0;
+      this._setCastPosition(0);
     } catch (err) {
       console.error("[Molotov Panel] Seek to beginning failed:", err);
     }
@@ -3747,7 +3753,7 @@ class MolotovPanel extends LitElement {
         entity_id: entityId,
         seek_position: position,
       });
-      this._currentTime = position;
+      this._setCastPosition(position);
     } catch (err) {
       console.error("[Molotov Panel] Skip back 30 failed:", err);
     }
@@ -3763,7 +3769,7 @@ class MolotovPanel extends LitElement {
         entity_id: entityId,
         seek_position: position,
       });
-      this._currentTime = position;
+      this._setCastPosition(position);
     } catch (err) {
       console.error("[Molotov Panel] Skip back 10 failed:", err);
     }
@@ -3779,7 +3785,7 @@ class MolotovPanel extends LitElement {
         entity_id: entityId,
         seek_position: position,
       });
-      this._currentTime = position;
+      this._setCastPosition(position);
     } catch (err) {
       console.error("[Molotov Panel] Skip pubs failed:", err);
     }
@@ -3799,7 +3805,7 @@ class MolotovPanel extends LitElement {
         entity_id: entityId,
         seek_position: position,
       });
-      this._currentTime = position;
+      this._setCastPosition(position);
     } catch (err) {
       console.error("[Molotov Panel] Seek failed:", err);
     }
