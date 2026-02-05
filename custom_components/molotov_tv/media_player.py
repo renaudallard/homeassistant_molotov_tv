@@ -987,7 +987,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         children: list[BrowseMedia] = []
         now_utc = dt_util.utcnow()
 
-        for channel in epg_data.channels[:30]:
+        for channel in epg_data.channels:
             programs = channel.programs
             if not programs:
                 continue
