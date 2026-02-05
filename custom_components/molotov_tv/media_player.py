@@ -983,19 +983,29 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Fetch all channels (not just subscribed) for tonight view
         channels = list(data.channels)
         channels_by_id = {ch.channel_id: ch for ch in channels}
+        _LOGGER.debug(
+            "Tonight EPG: coordinator has %d channels", len(channels)
+        )
         try:
             all_channels_raw = await self._api.async_get_all_channels()
             all_channels_data = _parse_epg(all_channels_raw)
+            added = 0
             for ch in all_channels_data.channels:
                 if ch.channel_id not in channels_by_id:
                     channels_by_id[ch.channel_id] = ch
                     channels.append(ch)
+                    added += 1
                 else:
                     existing = channels_by_id[ch.channel_id]
                     if not existing.programs and ch.programs:
                         existing.programs = ch.programs
                     if existing.poster is None and ch.poster is not None:
                         existing.poster = ch.poster
+            _LOGGER.debug(
+                "Tonight EPG: remote/channels returned %d channels (%d new)",
+                len(all_channels_data.channels),
+                added,
+            )
         except MolotovApiError as err:
             _LOGGER.warning("Tonight all-channels fetch failed: %s", err)
 
@@ -1004,10 +1014,18 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             epg_raw = await self._api.async_get_epg()
             epg_data = _parse_epg(epg_raw)
             merge_epg_channels(channels_by_id, epg_data.channels)
+            epg_added = 0
             for epg_ch in epg_data.channels:
                 if epg_ch.channel_id not in channels_by_id:
                     channels_by_id[epg_ch.channel_id] = epg_ch
                     channels.append(epg_ch)
+                    epg_added += 1
+            _LOGGER.debug(
+                "Tonight EPG: EPG feed returned %d channels (%d new), total %d",
+                len(epg_data.channels),
+                epg_added,
+                len(channels),
+            )
         except MolotovApiError as err:
             _LOGGER.warning("Tonight EPG merge failed: %s", err)
 
@@ -1071,6 +1089,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         thumbnail=program.thumbnail or program.poster,
                     )
                 )
+        _LOGGER.debug(
+            "Tonight EPG: %d programs for tonight from %d total channels",
+            len(children),
+            len(channels),
+        )
         if not children:
             children.append(
                 BrowseMedia(
