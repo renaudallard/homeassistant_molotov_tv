@@ -121,6 +121,7 @@ class MolotovPanel extends LitElement {
       _localPlaybackInitiated: { type: Boolean },
       _localMinimized: { type: Boolean },
       _castMinimized: { type: Boolean },
+      _castLoading: { type: Boolean },
       // Tonight EPG
       _tonightChannels: { type: Array },
       _loadingTonight: { type: Boolean },
@@ -472,6 +473,23 @@ class MolotovPanel extends LitElement {
       .loading-text {
         color: #fff;
         font-size: 14px;
+      }
+
+      .cast-loading-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: var(--primary-color);
+        color: #fff;
+        font-size: 14px;
+      }
+
+      .cast-loading-banner .loading-spinner {
+        width: 20px;
+        height: 20px;
+        border-width: 2px;
+        flex-shrink: 0;
       }
 
       .play-overlay {
@@ -1260,6 +1278,7 @@ class MolotovPanel extends LitElement {
     this._localPlaybackInitiated = false;
     this._localMinimized = false;
     this._castMinimized = false;
+    this._castLoading = false;
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
@@ -1575,6 +1594,8 @@ class MolotovPanel extends LitElement {
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
       this._localMinimized = false;
+    } else {
+      this._castLoading = true;
     }
 
     try {
@@ -1592,6 +1613,7 @@ class MolotovPanel extends LitElement {
     } catch (err) {
       console.error("[Molotov Panel] Play recording failed:", err);
       this._playerError = err.message || "Erreur de lecture";
+      this._castLoading = false;
     }
   }
 
@@ -1666,6 +1688,8 @@ class MolotovPanel extends LitElement {
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
       this._localMinimized = false;
+    } else {
+      this._castLoading = true;
     }
 
     try {
@@ -1678,6 +1702,7 @@ class MolotovPanel extends LitElement {
     } catch (err) {
       console.error("[Molotov Panel] Play recording episode failed:", err);
       this._playerError = err.message || "Erreur de lecture";
+      this._castLoading = false;
     }
   }
 
@@ -1853,6 +1878,8 @@ class MolotovPanel extends LitElement {
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
       this._localMinimized = false;
+    } else {
+      this._castLoading = true;
     }
 
     try {
@@ -1865,6 +1892,7 @@ class MolotovPanel extends LitElement {
     } catch (err) {
       console.error("[Molotov Panel] Play replay failed:", err);
       this._playerError = err.message || "Erreur de lecture";
+      this._castLoading = false;
     }
   }
 
@@ -2147,6 +2175,7 @@ class MolotovPanel extends LitElement {
       if (!this._castPlaying || this._castTarget !== castTarget) {
         this._castPlaying = true;
         this._castMinimized = false;
+        this._castLoading = false;
         this._castTarget = castTarget;
         this._castTitle = state.attributes.media_title || "En cours de lecture";
         this._playing = false;
@@ -2178,6 +2207,7 @@ class MolotovPanel extends LitElement {
       this._localPlaybackInitiated = false;
       this._localMinimized = false;
       this._castMinimized = false;
+      this._castLoading = false;
       this._activeCasts = {};
       this._focusedCastHost = null;
       this._stopCastProgressUpdate();
@@ -2202,6 +2232,8 @@ class MolotovPanel extends LitElement {
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
       this._localMinimized = false;
+    } else {
+      this._castLoading = true;
     }
 
     // Set program times for progress bar (only for local playback)
@@ -2221,6 +2253,7 @@ class MolotovPanel extends LitElement {
     } catch (err) {
       console.error("[Molotov Panel] Play failed:", err);
       this._playerError = err.message || "Erreur de lecture";
+      this._castLoading = false;
     }
   }
 
@@ -2750,6 +2783,13 @@ class MolotovPanel extends LitElement {
           </div>
         </div>
 
+        ${this._castLoading ? html`
+          <div class="cast-loading-banner">
+            <div class="loading-spinner"></div>
+            Lancement sur Chromecast...
+          </div>
+        ` : ''}
+
         <div class="tabs">
           <button class="tab ${this._activeTab === "live" ? "active" : ""}" @click=${() => this._switchTab("live")}>
             <ha-icon icon="mdi:television-play"></ha-icon>
@@ -2935,6 +2975,8 @@ class MolotovPanel extends LitElement {
     if (this._isLocalPlayback()) {
       this._localPlaybackInitiated = true;
       this._localMinimized = false;
+    } else {
+      this._castLoading = true;
     }
 
     try {
@@ -2947,6 +2989,7 @@ class MolotovPanel extends LitElement {
     } catch (err) {
       console.error("[Molotov Panel] Play tonight program failed:", err);
       this._playerError = err.message || "Erreur de lecture";
+      this._castLoading = false;
     }
   }
 
@@ -3558,6 +3601,7 @@ class MolotovPanel extends LitElement {
     this._focusedCastHost = null;
     this._stopCastProgressUpdate();
     this._castMinimized = false;
+    this._castLoading = false;
   }
 
   async _toggleCastPlayPause() {
