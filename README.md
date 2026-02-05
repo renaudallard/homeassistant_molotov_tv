@@ -150,6 +150,13 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 *   **Expiration :** Les positions sont automatiquement supprimées après 30 jours.
 *   **TV en direct :** La reprise ne s'applique pas au contenu en direct.
 
+## 🔒 Sécurité
+
+*   **Encodage des entrées :** Les requêtes de recherche sont correctement encodées (URL-encoding) avant d'être envoyées à l'API pour éviter toute injection de paramètres.
+*   **HTTPS uniquement :** Toutes les communications avec l'API Molotov utilisent HTTPS.
+*   **Stockage sécurisé :** Les identifiants sont stockés via le système de configuration chiffré de Home Assistant.
+*   **Tokens en mémoire :** Les tokens d'accès et de rafraîchissement sont conservés uniquement en mémoire et ne sont pas persistés sur le disque.
+
 ## 🛠️ Avancé
 
 ### Développement du panneau
