@@ -873,24 +873,107 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=True,
                 children=[],
             )
+
+        # Debug: coordinator data state
         probe_now = dt_util.utcnow()
+        has_programs = sum(1 for ch in channels if ch.programs)
+        has_poster = sum(1 for ch in channels if ch.poster)
+        has_current = count_channels_with_current(channels, probe_now)
+        _LOGGER.debug(
+            "Now playing: coordinator gave %d channels, "
+            "%d have programs, %d have poster, %d have current program",
+            len(channels), has_programs, has_poster, has_current,
+        )
+        for ch in channels[:5]:
+            _LOGGER.debug(
+                "  coord ch %s (%s): programs=%d poster=%s",
+                ch.channel_id, ch.label, len(ch.programs),
+                "yes" if ch.poster else "no",
+            )
+            if ch.programs:
+                for p in ch.programs[:2]:
+                    _LOGGER.debug(
+                        "    prog: %s start=%s end=%s desc=%s thumb=%s",
+                        p.title, p.start.isoformat(), p.end.isoformat(),
+                        "yes" if p.description else "no",
+                        "yes" if p.thumbnail else "no",
+                    )
+
         channels_by_id = {channel.channel_id: channel for channel in channels}
-        if count_channels_with_current(channels, probe_now) < len(channels):
+        if has_current < len(channels):
             # Fetch full EPG (cached) and merge with channel data
             try:
                 epg_raw = await self._api.async_get_epg()
                 epg_data = _parse_epg(epg_raw)
-                merge_epg_channels(channels_by_id, epg_data.channels)
                 _LOGGER.debug(
-                    "Now playing: merged full EPG data for %d channels",
+                    "Now playing: EPG feed returned %d channels",
                     len(epg_data.channels),
                 )
+                epg_has_programs = sum(
+                    1 for ch in epg_data.channels if ch.programs
+                )
+                epg_has_poster = sum(
+                    1 for ch in epg_data.channels if ch.poster
+                )
+                _LOGGER.debug(
+                    "Now playing: EPG feed: %d have programs, %d have poster",
+                    epg_has_programs, epg_has_poster,
+                )
+                for ch in epg_data.channels[:5]:
+                    _LOGGER.debug(
+                        "  epg ch %s (%s): programs=%d poster=%s",
+                        ch.channel_id, ch.label, len(ch.programs),
+                        "yes" if ch.poster else "no",
+                    )
+                    if ch.programs:
+                        for p in ch.programs[:2]:
+                            _LOGGER.debug(
+                                "    prog: %s start=%s end=%s desc=%s thumb=%s",
+                                p.title, p.start.isoformat(),
+                                p.end.isoformat(),
+                                "yes" if p.description else "no",
+                                "yes" if p.thumbnail else "no",
+                            )
+
+                # Debug: check merge preconditions
+                matched = 0
+                would_merge_programs = 0
+                would_merge_poster = 0
+                epg_not_in_coord = 0
+                for epg_ch in epg_data.channels:
+                    existing = channels_by_id.get(epg_ch.channel_id)
+                    if existing is None:
+                        epg_not_in_coord += 1
+                        continue
+                    matched += 1
+                    if not existing.programs and epg_ch.programs:
+                        would_merge_programs += 1
+                    if existing.poster is None and epg_ch.poster is not None:
+                        would_merge_poster += 1
+                _LOGGER.debug(
+                    "Now playing: merge preview: %d matched, "
+                    "%d would get programs, %d would get poster, "
+                    "%d epg channels not in coordinator",
+                    matched, would_merge_programs, would_merge_poster,
+                    epg_not_in_coord,
+                )
+
+                merge_epg_channels(channels_by_id, epg_data.channels)
             except MolotovApiError as err:
                 _LOGGER.warning("Full EPG fetch failed: %s", err)
                 # Fall back to original data - channels already have some programs
 
+        # Debug: state after merge
         now = dt_util.utcnow()
+        post_has_programs = sum(1 for ch in channels if ch.programs)
+        post_has_current = count_channels_with_current(channels, now)
+        _LOGGER.debug(
+            "Now playing: after merge: %d have programs, %d have current",
+            post_has_programs, post_has_current,
+        )
+
         children: list[BrowseMedia] = []
+        no_program_channels: list[str] = []
 
         for channel in channels:
             current_program = find_current_program(channel, now)
@@ -920,6 +1003,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     or channel.poster
                 )
             else:
+                no_program_channels.append(
+                    f"{channel.channel_id}({channel.label},"
+                    f"progs={len(channel.programs)})"
+                )
                 display_title = f"{channel.label} - Direct"
                 media_id = f"{MEDIA_LIVE_PREFIX}:{channel.channel_id}"
                 media_class = MediaClass.CHANNEL
@@ -935,6 +1022,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     can_expand=True,
                     thumbnail=thumb,
                 )
+            )
+
+        if no_program_channels:
+            _LOGGER.debug(
+                "Now playing: %d/%d channels have no current program: %s",
+                len(no_program_channels), len(channels),
+                ", ".join(no_program_channels[:20]),
             )
 
         return BrowseMedia(
