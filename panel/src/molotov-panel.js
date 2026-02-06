@@ -1360,16 +1360,6 @@ class MolotovPanel extends LitElement {
       }
       this._syncWithEntity();
     }
-    // Auto-scroll tab bar to reveal "En cours" when playback is minimized
-    if (changedProperties.has("_localMinimized") || changedProperties.has("_castMinimized")) {
-      const showEnCours = (this._playing && this._localMinimized) || this._castMinimized;
-      if (showEnCours) {
-        requestAnimationFrame(() => {
-          const tabs = this.shadowRoot?.querySelector(".tabs");
-          if (tabs) tabs.scrollLeft = tabs.scrollWidth;
-        });
-      }
-    }
   }
 
   async _loadChannels() {
@@ -2835,12 +2825,10 @@ class MolotovPanel extends LitElement {
             <ha-icon icon="mdi:bookmark"></ha-icon>
             Enregistrements
           </button>
-          ${(this._playing && this._localMinimized) || this._castMinimized ? html`
-            <button class="tab" @click=${this._expandCurrentPlayback}>
-              <ha-icon icon="mdi:play-circle"></ha-icon>
-              En cours
-            </button>
-          ` : ''}
+          <button class="tab" @click=${this._expandCurrentPlayback}>
+            <ha-icon icon="mdi:play-circle"></ha-icon>
+            En cours
+          </button>
         </div>
 
         <div class="search-bar">
