@@ -1330,6 +1330,7 @@ class MolotovPanel extends LitElement {
     this._episodePlaylist = [];
     this._episodeIndex = -1;
     this._episodeParentTitle = "";
+    this._episodeIsRecording = false;
   }
 
   connectedCallback() {
@@ -1708,7 +1709,7 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
-    this._setEpisodePlaylist(episode, parentTitle, this._recordingEpisodes);
+    this._setEpisodePlaylist(episode, parentTitle, this._recordingEpisodes, true);
 
     this._selectedChannel = {
       name: "",
@@ -2117,13 +2118,14 @@ class MolotovPanel extends LitElement {
     this.requestUpdate();
   }
 
-  _setEpisodePlaylist(episode, parentTitle, episodeMaps) {
+  _setEpisodePlaylist(episode, parentTitle, episodeMaps, isRecording) {
     for (const episodes of Object.values(episodeMaps)) {
       const idx = episodes.findIndex(ep => ep.mediaContentId === episode.mediaContentId);
       if (idx !== -1) {
         this._episodePlaylist = episodes;
         this._episodeIndex = idx;
         this._episodeParentTitle = parentTitle;
+        this._episodeIsRecording = isRecording;
         return;
       }
     }
@@ -2136,7 +2138,7 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
-    this._setEpisodePlaylist(episode, parentTitle, this._resultEpisodes);
+    this._setEpisodePlaylist(episode, parentTitle, this._resultEpisodes, false);
 
     this._selectedChannel = {
       name: "",
@@ -2639,9 +2641,7 @@ class MolotovPanel extends LitElement {
     this._episodeIndex = nextIndex;
     console.log(`[Molotov Panel] Auto-playing next episode: ${nextEpisode.title}`);
 
-    // Determine which play method to use based on mediaContentId prefix
-    if (nextEpisode.mediaContentId.startsWith("cast:") ||
-        nextEpisode.mediaContentId.startsWith("replay:")) {
+    if (this._episodeIsRecording) {
       this._playRecordingEpisode(nextEpisode, this._episodeParentTitle);
     } else {
       this._playEpisode(nextEpisode, this._episodeParentTitle);
