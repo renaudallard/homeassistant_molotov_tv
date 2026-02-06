@@ -121,7 +121,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register sidebar panel with content-hash cache busting
     panel_file = Path(path) / "molotov-panel.js"
     try:
-        panel_hash = hashlib.md5(panel_file.read_bytes()).hexdigest()[:8]
+        content = await hass.async_add_executor_job(panel_file.read_bytes)
+        panel_hash = hashlib.md5(content).hexdigest()[:8]
     except OSError:
         panel_hash = "0"
     try:
