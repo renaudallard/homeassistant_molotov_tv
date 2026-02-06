@@ -125,6 +125,9 @@ class MolotovPanel extends LitElement {
       // Tonight EPG
       _tonightChannels: { type: Array },
       _loadingTonight: { type: Boolean },
+      // Episode auto-play
+      _episodePlaylist: { type: Array },
+      _episodeIndex: { type: Number },
     };
   }
 
@@ -1323,6 +1326,10 @@ class MolotovPanel extends LitElement {
     // Tonight EPG
     this._tonightChannels = [];
     this._loadingTonight = false;
+    // Episode auto-play
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+    this._episodeParentTitle = "";
   }
 
   connectedCallback() {
@@ -1625,6 +1632,9 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+
     this._selectedChannel = {
       name: "",
       currentProgram: {
@@ -1697,6 +1707,8 @@ class MolotovPanel extends LitElement {
   async _playRecordingEpisode(episode, parentTitle) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
+
+    this._setEpisodePlaylist(episode, parentTitle, this._recordingEpisodes);
 
     this._selectedChannel = {
       name: "",
@@ -2102,9 +2114,26 @@ class MolotovPanel extends LitElement {
     this.requestUpdate();
   }
 
+  _setEpisodePlaylist(episode, parentTitle, episodeMaps) {
+    for (const episodes of Object.values(episodeMaps)) {
+      const idx = episodes.findIndex(ep => ep.mediaContentId === episode.mediaContentId);
+      if (idx !== -1) {
+        this._episodePlaylist = episodes;
+        this._episodeIndex = idx;
+        this._episodeParentTitle = parentTitle;
+        return;
+      }
+    }
+    // Not found in any list — no auto-play
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+  }
+
   async _playEpisode(episode, parentTitle) {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
+
+    this._setEpisodePlaylist(episode, parentTitle, this._resultEpisodes);
 
     this._selectedChannel = {
       name: "",
@@ -2215,7 +2244,8 @@ class MolotovPanel extends LitElement {
       this._castTitle = state.attributes.media_title || this._castTitle;
       this._isLive = state.attributes.is_live || false;
     } else if (this._castPlaying) {
-      // No active casts but we were casting — stopped
+      // No active casts but we were casting — check for next episode
+      this._onPlaybackEnded();
       this._castPlaying = false;
       this._castTarget = null;
       this._castTitle = null;
@@ -2237,6 +2267,8 @@ class MolotovPanel extends LitElement {
 
     this._selectedChannel = channel;
     this._playerError = null;
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
 
     this._initPlaybackFlags();
 
@@ -2363,6 +2395,11 @@ class MolotovPanel extends LitElement {
       player.on(window.dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
         this._paused = false;
         this.requestUpdate();
+      });
+
+      player.on(window.dashjs.MediaPlayer.events.PLAYBACK_ENDED, () => {
+        console.log("[Molotov Panel] Playback ended");
+        this._onPlaybackEnded();
       });
 
       // Set initial volume
@@ -2580,6 +2617,32 @@ class MolotovPanel extends LitElement {
     this._currentStreamUrl = null;
     this._localPlaybackInitiated = false;
     this._localMinimized = false;
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+  }
+
+  _onPlaybackEnded() {
+    if (this._episodePlaylist.length === 0 || this._episodeIndex < 0) return;
+
+    const nextIndex = this._episodeIndex + 1;
+    if (nextIndex >= this._episodePlaylist.length) {
+      // Last episode — clear playlist
+      this._episodePlaylist = [];
+      this._episodeIndex = -1;
+      return;
+    }
+
+    const nextEpisode = this._episodePlaylist[nextIndex];
+    this._episodeIndex = nextIndex;
+    console.log(`[Molotov Panel] Auto-playing next episode: ${nextEpisode.title}`);
+
+    // Determine which play method to use based on mediaContentId prefix
+    if (nextEpisode.mediaContentId.startsWith("cast:") ||
+        nextEpisode.mediaContentId.startsWith("replay:")) {
+      this._playRecordingEpisode(nextEpisode, this._episodeParentTitle);
+    } else {
+      this._playEpisode(nextEpisode, this._episodeParentTitle);
+    }
   }
 
   _goBackFromPlayer() {
