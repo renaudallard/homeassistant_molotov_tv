@@ -1132,46 +1132,98 @@ def extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     sections = extract_sections(data)
     _LOGGER.debug("Extracting recordings from %d sections", len(sections))
 
-    for section in sections:
+    for idx, section in enumerate(sections):
         section_title = section.get("title") or section.get("slug") or "unknown"
-        is_rec_section = is_recording_section(section)
+        section_slug = section.get("slug")
+        section_context = section.get("context")
         items = extract_section_items(section)
 
+        _LOGGER.debug(
+            "RECORDING SECTION [%d/%d] title='%s' slug='%s' context=%s keys=%s items=%d",
+            idx + 1,
+            len(sections),
+            section_title[:50],
+            section_slug,
+            section_context,
+            list(section.keys()),
+            len(items),
+        )
+
+        is_rec_section = is_recording_section(section)
+        is_rep_section = is_replay_section(section)
+
         # Skip sections that are explicitly replay/catchup content
-        if is_replay_section(section):
+        if is_rep_section:
             _LOGGER.debug(
-                "Skipping replay section '%s' (%d items)",
+                "RECORDING SECTION [%d] SKIPPED (replay) '%s' (%d items)",
+                idx + 1,
                 section_title[:30],
                 len(items),
             )
             continue
 
         _LOGGER.debug(
-            "Section '%s': is_recording=%s, %d items",
+            "RECORDING SECTION [%d] PROCESSING '%s': is_recording_section=%s, %d items",
+            idx + 1,
             section_title[:30],
             is_rec_section,
             len(items),
         )
 
-        for item in items:
+        for item_idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
 
             # Require positive recording identification on the item itself
             payload = extract_item_payload(item)
-            is_recording = is_recording_item(item) or is_recording_item(payload)
+            item_title = payload.get("title") or item.get("title") or "unknown"
+            item_type = item.get("type")
+            payload_type = payload.get("type")
+            video = payload.get("video") or item.get("video")
+            video_type = video.get("type") if isinstance(video, dict) else None
+            bookmark_style = (
+                item.get("bookmark_style")
+                or item.get("bookmarkStyle")
+                or payload.get("bookmark_style")
+                or payload.get("bookmarkStyle")
+            )
+
+            _LOGGER.debug(
+                "RECORDING ITEM [%d][%d/%d] title='%s' item.type='%s' payload.type='%s' "
+                "video.type='%s' bookmark_style='%s' item.keys=%s payload.keys=%s",
+                idx + 1,
+                item_idx + 1,
+                len(items),
+                str(item_title)[:40],
+                item_type,
+                payload_type,
+                video_type,
+                bookmark_style,
+                list(item.keys())[:10],
+                list(payload.keys())[:10],
+            )
+
+            is_recording_on_item = is_recording_item(item)
+            is_recording_on_payload = is_recording_item(payload)
+            is_recording = is_recording_on_item or is_recording_on_payload
+
+            _LOGGER.debug(
+                "RECORDING ITEM [%d][%d] '%s' is_recording_item=%s is_recording_payload=%s => %s",
+                idx + 1,
+                item_idx + 1,
+                str(item_title)[:30],
+                is_recording_on_item,
+                is_recording_on_payload,
+                "KEEP" if is_recording else "SKIP",
+            )
 
             if not is_recording:
-                _LOGGER.debug(
-                    "Skipping non-recording item: %s",
-                    (payload.get("title") or "unknown")[:30],
-                )
                 continue
 
             asset = parse_asset_item(item, api)
             if asset:
                 _LOGGER.debug(
-                    "Found recording: %s (url=%s)",
+                    "RECORDING ASSET ADDED: '%s' url=%s",
                     asset.title[:30] if asset.title else "untitled",
                     asset.asset_url[:50] if asset.asset_url else "no url",
                 )
@@ -1189,13 +1241,26 @@ def is_replay_section(section: dict[str, Any]) -> bool:
     context = section.get("context")
     if isinstance(context, dict):
         if context.get("is_catchup") or context.get("is_replay"):
+            _LOGGER.debug(
+                "is_replay_section: YES (context flags) slug=%s title=%s",
+                section.get("slug"),
+                section.get("title"),
+            )
             return True
     slug = section.get("slug")
     title = section.get("title")
     text = f"{slug or ''} {title or ''}".casefold()
-    return any(
+    result = any(
         keyword in text for keyword in ("replay", "catchup", "rattrapage", "revoir")
     )
+    _LOGGER.debug(
+        "is_replay_section: %s slug=%s title=%s text='%s'",
+        result,
+        slug,
+        title,
+        text,
+    )
+    return result
 
 
 def is_recording_section(section: dict[str, Any]) -> bool:
@@ -1203,33 +1268,74 @@ def is_recording_section(section: dict[str, Any]) -> bool:
     slug = section.get("slug")
     title = section.get("title")
     text = f"{slug or ''} {title or ''}".casefold()
-    return "record" in text or "enregistr" in text
+    result = "record" in text or "enregistr" in text
+    _LOGGER.debug(
+        "is_recording_section: %s slug=%s title=%s text='%s'",
+        result,
+        slug,
+        title,
+        text,
+    )
+    return result
 
 
 def is_recording_item(item: dict[str, Any]) -> bool:
     """Check if an item is a recording."""
+    item_title = item.get("title", "unknown")
+
     # Check video.type = "record"
     video = item.get("video")
     if isinstance(video, dict):
         video_type = video.get("type", "")
+        _LOGGER.debug(
+            "is_recording_item: '%s' video.type='%s'",
+            str(item_title)[:30],
+            video_type,
+        )
         if video_type == "record":
             return True
+    else:
+        _LOGGER.debug(
+            "is_recording_item: '%s' no video dict",
+            str(item_title)[:30],
+        )
 
     # Check item type
     item_type = item.get("type") or item.get("item_type")
+    _LOGGER.debug(
+        "is_recording_item: '%s' type='%s' item_type='%s'",
+        str(item_title)[:30],
+        item.get("type"),
+        item.get("item_type"),
+    )
     if isinstance(item_type, str) and "record" in item_type.casefold():
         return True
 
     # Check bookmark style
     bookmark_style = item.get("bookmark_style") or item.get("bookmarkStyle")
+    _LOGGER.debug(
+        "is_recording_item: '%s' bookmark_style='%s' bookmarkStyle='%s'",
+        str(item_title)[:30],
+        item.get("bookmark_style"),
+        item.get("bookmarkStyle"),
+    )
     if isinstance(bookmark_style, str) and "record" in bookmark_style.casefold():
         return True
 
     # Check nested data
     data = item.get("data")
     if isinstance(data, dict):
+        _LOGGER.debug(
+            "is_recording_item: '%s' recursing into nested data",
+            str(item_title)[:30],
+        )
         return is_recording_item(data)
 
+    _LOGGER.debug(
+        "is_recording_item: '%s' => NOT a recording (keys: %s)",
+        str(item_title)[:30],
+        list(item.keys())[:15],
+    )
     return False
 
 

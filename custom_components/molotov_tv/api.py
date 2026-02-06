@@ -861,7 +861,25 @@ class MolotovApi:
         try:
             data = await self.async_get_bookmarks()
             if isinstance(data, dict) and "sections" in data:
-                all_sections.extend(data.get("sections", []))
+                sections = data.get("sections", [])
+                _LOGGER.debug(
+                    "RECORDINGS API bookmarks: %d sections",
+                    len(sections),
+                )
+                for i, sec in enumerate(sections):
+                    if isinstance(sec, dict):
+                        items = sec.get("items", [])
+                        _LOGGER.debug(
+                            "RECORDINGS API bookmarks section[%d] title='%s' slug='%s' "
+                            "context=%s items=%d keys=%s",
+                            i,
+                            sec.get("title"),
+                            sec.get("slug"),
+                            sec.get("context"),
+                            len(items) if isinstance(items, list) else 0,
+                            list(sec.keys()),
+                        )
+                all_sections.extend(sections)
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch bookmarks: %s", err)
 
@@ -870,10 +888,32 @@ class MolotovApi:
             url = urljoin(self._base_api_url, "v3/me/follow/sections")
             data = await self._request("GET", url, auth=True)
             if isinstance(data, dict) and "sections" in data:
-                all_sections.extend(data.get("sections", []))
+                sections = data.get("sections", [])
+                _LOGGER.debug(
+                    "RECORDINGS API follow: %d sections",
+                    len(sections),
+                )
+                for i, sec in enumerate(sections):
+                    if isinstance(sec, dict):
+                        items = sec.get("items", [])
+                        _LOGGER.debug(
+                            "RECORDINGS API follow section[%d] title='%s' slug='%s' "
+                            "context=%s items=%d keys=%s",
+                            i,
+                            sec.get("title"),
+                            sec.get("slug"),
+                            sec.get("context"),
+                            len(items) if isinstance(items, list) else 0,
+                            list(sec.keys()),
+                        )
+                all_sections.extend(sections)
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch follow sections: %s", err)
 
+        _LOGGER.debug(
+            "RECORDINGS API total: %d sections",
+            len(all_sections),
+        )
         return all_sections
 
     async def async_refresh_token(self) -> None:
