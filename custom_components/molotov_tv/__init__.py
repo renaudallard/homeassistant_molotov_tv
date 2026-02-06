@@ -124,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             webcomponent_name="molotov-panel",
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
-            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.15",
+            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.16",
             embed_iframe=False,
             require_admin=False,
             config={
