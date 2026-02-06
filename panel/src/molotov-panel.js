@@ -1360,6 +1360,16 @@ class MolotovPanel extends LitElement {
       }
       this._syncWithEntity();
     }
+    // Auto-scroll tab bar to reveal "En cours" when playback is minimized
+    if (changedProperties.has("_localMinimized") || changedProperties.has("_castMinimized")) {
+      const showEnCours = (this._playing && this._localMinimized) || this._castMinimized;
+      if (showEnCours) {
+        requestAnimationFrame(() => {
+          const tabs = this.shadowRoot?.querySelector(".tabs");
+          if (tabs) tabs.scrollLeft = tabs.scrollWidth;
+        });
+      }
+    }
   }
 
   async _loadChannels() {
