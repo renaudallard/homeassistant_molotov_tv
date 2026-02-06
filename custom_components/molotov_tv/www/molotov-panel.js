@@ -43,7 +43,10 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
         color: var(--primary-text-color);
         font-size: 14px;
         cursor: pointer;
-        min-width: 150px;
+        min-width: 100px;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .cast-select:focus {
@@ -1130,16 +1133,16 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
         <div class="header">
           <h1>Molotov TV</h1>
           <div class="header-actions">
+            <button @click=${this._handleRefresh}>
+              <ha-icon icon="mdi:refresh"></ha-icon>
+              Actualiser
+            </button>
             <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
               <option value="local">Cet appareil</option>
               ${this._castTargets.map(e=>l`
                   <option value=${e.mediaContentId}>${e.title}</option>
                 `)}
             </select>
-            <button @click=${this._handleRefresh}>
-              <ha-icon icon="mdi:refresh"></ha-icon>
-              Actualiser
-            </button>
           </div>
         </div>
 
