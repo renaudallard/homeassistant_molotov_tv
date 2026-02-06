@@ -1137,6 +1137,15 @@ def extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
         is_rec_section = is_recording_section(section)
         items = extract_section_items(section)
 
+        # Skip sections that are explicitly replay/catchup content
+        if is_replay_section(section):
+            _LOGGER.debug(
+                "Skipping replay section '%s' (%d items)",
+                section_title[:30],
+                len(items),
+            )
+            continue
+
         _LOGGER.debug(
             "Section '%s': is_recording=%s, %d items",
             section_title[:30],
@@ -1148,24 +1157,16 @@ def extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
             if not isinstance(item, dict):
                 continue
 
-            # Check both item and its payload for recording type
+            # Require positive recording identification on the item itself
             payload = extract_item_payload(item)
             is_recording = is_recording_item(item) or is_recording_item(payload)
 
-            if not is_rec_section and not is_recording:
+            if not is_recording:
+                _LOGGER.debug(
+                    "Skipping non-recording item: %s",
+                    (payload.get("title") or "unknown")[:30],
+                )
                 continue
-
-            # Exclude replay/VOD items that sneak in via recording sections
-            video = payload.get("video")
-            if isinstance(video, dict):
-                video_type = video.get("type", "")
-                if video_type in ("vod", "broadcast"):
-                    _LOGGER.debug(
-                        "Skipping non-recording item in recording section: %s (video.type=%s)",
-                        payload.get("title", "unknown")[:30],
-                        video_type,
-                    )
-                    continue
 
             asset = parse_asset_item(item, api)
             if asset:
