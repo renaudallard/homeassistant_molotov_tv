@@ -1426,6 +1426,10 @@ class MolotovPanel extends LitElement {
           }));
 
         this._castTargets = targets;
+        // On mobile, auto-select first cast target (local playback unavailable)
+        if (this._isMobile && targets.length > 0 && (!this._selectedTarget || this._selectedTarget === "local")) {
+          this._selectedTarget = targets[0].mediaContentId;
+        }
         console.log(`[Molotov Panel] Found ${targets.length} cast targets`);
       }
     } catch (err) {
@@ -1435,7 +1439,10 @@ class MolotovPanel extends LitElement {
   }
 
   _handleTargetChange(e) {
-    this._selectedTarget = e.target.value;
+    const value = e.target.value;
+    // Prevent selecting local on mobile
+    if (this._isMobile && value === "local") return;
+    this._selectedTarget = value;
     console.log(`[Molotov Panel] Selected target: ${this._selectedTarget}`);
   }
 
