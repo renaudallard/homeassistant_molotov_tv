@@ -2196,7 +2196,7 @@ class MolotovPanel extends LitElement {
 
       if (!this._castPlaying || this._castTarget !== castTarget) {
         this._castPlaying = true;
-        this._castMinimized = false;
+        this._castMinimized = this._isMobile;
         this._castLoading = false;
         this._castTarget = castTarget;
         this._castTitle = state.attributes.media_title || "En cours de lecture";
