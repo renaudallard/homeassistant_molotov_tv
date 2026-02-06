@@ -2844,7 +2844,7 @@ class MolotovPanel extends LitElement {
   render() {
     const localActive = this._playing && this._streamData;
     const showFullLocal = localActive && !this._localMinimized;
-    const showFullCast = this._castPlaying && !this._isMobile && !this._castMinimized;
+    const showFullCast = this._castPlaying && !this._castMinimized;
     const showList = !showFullLocal && !showFullCast;
 
     return html`
