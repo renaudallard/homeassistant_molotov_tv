@@ -1923,6 +1923,9 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+
     this._selectedChannel = {
       name: replay.channelName,
       currentProgram: {
@@ -3045,6 +3048,9 @@ class MolotovPanel extends LitElement {
     const entityId = this._findMolotovEntity();
     if (!entityId) return;
 
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
+
     this._selectedChannel = {
       id: channel.id,
       name: channel.name,
@@ -3714,6 +3720,8 @@ class MolotovPanel extends LitElement {
     this._stopCastProgressUpdate();
     this._castMinimized = false;
     this._castLoading = false;
+    this._episodePlaylist = [];
+    this._episodeIndex = -1;
   }
 
   async _toggleCastPlayPause() {
