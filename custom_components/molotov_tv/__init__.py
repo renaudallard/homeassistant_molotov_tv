@@ -28,8 +28,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import logging
+from pathlib import Path
 
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
@@ -116,7 +118,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         [StaticPathConfig("/molotov_tv/www", path, cache_headers=True)]
     )
 
-    # Register sidebar panel
+    # Register sidebar panel with content-hash cache busting
+    panel_file = Path(path) / "molotov-panel.js"
+    try:
+        panel_hash = hashlib.md5(panel_file.read_bytes()).hexdigest()[:8]
+    except OSError:
+        panel_hash = "0"
     try:
         await async_register_panel(
             hass,
@@ -124,7 +131,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             webcomponent_name="molotov-panel",
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
-            module_url="/molotov_tv/www/molotov-panel.js?v=0.1.16",
+            module_url=f"/molotov_tv/www/molotov-panel.js?v={panel_hash}",
             embed_iframe=False,
             require_admin=False,
             config={
