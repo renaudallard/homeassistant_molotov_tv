@@ -186,12 +186,17 @@ class MolotovPanel extends LitElement {
         display: flex;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
         background: var(--card-background-color);
         border-bottom: 1px solid var(--divider-color);
       }
 
+      .tabs::-webkit-scrollbar {
+        display: none;
+      }
+
       .tab {
-        flex: 1 0 auto;
+        flex: 0 0 auto;
         padding: 12px 16px;
         white-space: nowrap;
         background: transparent;
