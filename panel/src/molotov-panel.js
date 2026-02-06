@@ -1258,6 +1258,8 @@ class MolotovPanel extends LitElement {
 
   constructor() {
     super();
+    this._boundOnFullscreenChange = this._onFullscreenChange.bind(this);
+    this._boundOnDocumentClick = this._onDocumentClick.bind(this);
     this._channels = [];
     this._loading = true;
     this._error = null;
@@ -1337,16 +1339,16 @@ class MolotovPanel extends LitElement {
     super.connectedCallback();
     console.log(`[Molotov Panel] Connected - v${VERSION}`);
     this._hasLoadedChannels = false;
-    document.addEventListener("fullscreenchange", this._onFullscreenChange.bind(this));
-    document.addEventListener("click", this._onDocumentClick.bind(this));
+    document.addEventListener("fullscreenchange", this._boundOnFullscreenChange);
+    document.addEventListener("click", this._boundOnDocumentClick);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this._cleanupPlayer();
     this._stopCastProgressUpdate();
-    document.removeEventListener("fullscreenchange", this._onFullscreenChange.bind(this));
-    document.removeEventListener("click", this._onDocumentClick.bind(this));
+    document.removeEventListener("fullscreenchange", this._boundOnFullscreenChange);
+    document.removeEventListener("click", this._boundOnDocumentClick);
     if (this._entityUnsubscribe) {
       this._entityUnsubscribe();
       this._entityUnsubscribe = null;
@@ -3004,6 +3006,7 @@ class MolotovPanel extends LitElement {
             class="tonight-channel-logo"
             src=${channel.thumbnail || ""}
             alt=${channel.name}
+            loading="lazy"
             @error=${(e) => (e.target.style.display = "none")}
           />
           <div class="tonight-channel-name">${channel.name}</div>
@@ -3028,7 +3031,7 @@ class MolotovPanel extends LitElement {
         @click=${() => this._playTonightProgram(program, channel)}
       >
         ${program.thumbnail
-          ? html`<img class="tonight-program-thumb" src=${program.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+          ? html`<img class="tonight-program-thumb" src=${program.thumbnail} loading="lazy" @error=${(e) => (e.target.style.display = "none")} />`
           : ""}
         <div class="tonight-program-info">
           <div class="tonight-program-time">
@@ -3108,6 +3111,7 @@ class MolotovPanel extends LitElement {
             ? html`<img
                 class="recording-thumb"
                 src=${recording.thumbnail}
+                loading="lazy"
                 @error=${(e) => (e.target.style.display = "none")}
               />`
             : html`<div class="recording-thumb"></div>`}
@@ -3128,7 +3132,7 @@ class MolotovPanel extends LitElement {
                       (episode) => html`
                         <div class="episode-item" @click=${() => this._playRecordingEpisode(episode, recording.title)}>
                           ${episode.thumbnail
-                            ? html`<img class="episode-thumb" src=${episode.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            ? html`<img class="episode-thumb" src=${episode.thumbnail} loading="lazy" @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
                           <div class="episode-info">
                             <div class="episode-title">${episode.title}</div>
@@ -3188,7 +3192,7 @@ class MolotovPanel extends LitElement {
             icon="mdi:chevron-right"
           ></ha-icon>
           ${result.thumbnail
-            ? html`<img class="search-result-thumb" src=${result.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+            ? html`<img class="search-result-thumb" src=${result.thumbnail} loading="lazy" @error=${(e) => (e.target.style.display = "none")} />`
             : ""}
           <div class="search-result-info">
             <div class="search-result-title">${result.title}</div>
@@ -3207,7 +3211,7 @@ class MolotovPanel extends LitElement {
                       (episode) => html`
                         <div class="episode-item" @click=${() => this._playEpisode(episode, result.title)}>
                           ${episode.thumbnail
-                            ? html`<img class="episode-thumb" src=${episode.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            ? html`<img class="episode-thumb" src=${episode.thumbnail} loading="lazy" @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
                           <div class="episode-info">
                             <div class="episode-title">${episode.title}</div>
@@ -3242,6 +3246,7 @@ class MolotovPanel extends LitElement {
             class="channel-logo"
             src=${channel.thumbnail || ""}
             alt=${channel.name}
+            loading="lazy"
             @error=${(e) => (e.target.style.display = "none")}
             @click=${() => this._playChannel(channel)}
           />
@@ -3277,7 +3282,7 @@ class MolotovPanel extends LitElement {
                       (replay) => html`
                         <div class="replay-item" @click=${() => this._playReplay(replay)}>
                           ${replay.thumbnail
-                            ? html`<img class="replay-thumb" src=${replay.thumbnail} @error=${(e) => (e.target.style.display = "none")} />`
+                            ? html`<img class="replay-thumb" src=${replay.thumbnail} loading="lazy" @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
                           <div class="replay-item-info">
                             <span class="replay-item-title">${replay.title}</span>

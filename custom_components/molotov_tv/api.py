@@ -438,59 +438,69 @@ class MolotovApi:
             ]
         )
 
+        def _validate_search_result(
+            result: Any, endpoint: str
+        ) -> dict[str, Any] | None:
+            """Return a normalised result dict if useful, else None."""
+            if isinstance(result, dict):
+                if result.get("sections") or result.get("items") or result.get("results"):
+                    return result
+            elif isinstance(result, list):
+                _LOGGER.debug("Got list response with %d items from %s", len(result), endpoint)
+                return {
+                    "sections": [
+                        {
+                            "title": "Results",
+                            "items": result,
+                            "type": "search_results",
+                        }
+                    ],
+                    "query": query,
+                }
+            return None
+
+        async def _try_search(
+            method: str, endpoint: str, body: dict[str, Any] | None
+        ) -> tuple[str, dict[str, Any]]:
+            url = (
+                endpoint
+                if endpoint.startswith("http")
+                else urljoin(self._base_api_url, endpoint)
+            )
+            _LOGGER.debug("Trying search endpoint: %s %s", method, url)
+            if method == "POST" and body:
+                result = await self._request(method, url, auth=True, json=body)
+            else:
+                result = await self._request(method, url, auth=True)
+            validated = _validate_search_result(result, endpoint)
+            if validated is None:
+                raise MolotovApiError(f"No useful results from {endpoint}")
+            return endpoint, validated
+
+        # Race all endpoints concurrently - return first success
+        tasks = [
+            asyncio.create_task(_try_search(m, ep, b))
+            for m, ep, b in endpoints
+        ]
         last_error: MolotovApiError | None = None
-        for method, endpoint, body in endpoints:
+
+        for coro in asyncio.as_completed(tasks):
             try:
-                url = (
-                    endpoint
-                    if endpoint.startswith("http")
-                    else urljoin(self._base_api_url, endpoint)
-                )
-                _LOGGER.debug("Trying search endpoint: %s %s", method, url)
-
-                if method == "POST" and body:
-                    result = await self._request(method, url, auth=True, json=body)
-                else:
-                    result = await self._request(method, url, auth=True)
-
-                _LOGGER.debug(
-                    "Search response keys: %s",
-                    list(result.keys()) if isinstance(result, dict) else type(result),
-                )
-
-                # Check if we got useful results
-                if isinstance(result, dict):
-                    has_sections = bool(result.get("sections"))
-                    has_items = bool(result.get("items"))
-                    has_results = bool(result.get("results"))
-
-                    if has_sections or has_items or has_results:
-                        return result
-
-                elif isinstance(result, list):
-                    # Global search returns a list of items directly
-                    # Wrap it in a section for compatibility
-                    _LOGGER.debug("Got list response with %d items", len(result))
-                    return {
-                        "sections": [
-                            {
-                                "title": "Results",
-                                "items": result,
-                                "type": "search_results",
-                            }
-                        ],
-                        "query": query,
-                    }
-
+                endpoint, result = await coro
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                _LOGGER.debug("Search succeeded from %s", endpoint)
+                return result
             except MolotovApiError as err:
-                _LOGGER.debug("Search endpoint %s failed: %s", endpoint, err)
                 last_error = err
+                _LOGGER.debug("Search endpoint failed: %s", err)
+            except asyncio.CancelledError:
+                pass
 
-        # Raise error if all endpoints failed
         if last_error:
             _LOGGER.warning("All search endpoints failed: %s", last_error)
             raise MolotovApiError(f"Search failed: {last_error}") from last_error
-        # No error but no results found
         return {"sections": [], "query": query}
 
     async def async_get_search_home(self) -> dict[str, Any]:
