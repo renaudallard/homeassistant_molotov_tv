@@ -2798,7 +2798,7 @@ class MolotovPanel extends LitElement {
               Actualiser
             </button>
             <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
-              <option value="local">Cet appareil</option>
+              ${this._isMobile ? '' : html`<option value="local">Cet appareil</option>`}
               ${this._castTargets.map(
                 (target) => html`
                   <option value=${target.mediaContentId}>${target.title}</option>

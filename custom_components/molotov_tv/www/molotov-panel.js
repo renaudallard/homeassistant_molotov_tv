@@ -1138,7 +1138,7 @@ var X=typeof window<"u"&&window.customElements!=null&&window.customElements.poly
               Actualiser
             </button>
             <select class="cast-select" @change=${this._handleTargetChange} .value=${this._selectedTarget}>
-              <option value="local">Cet appareil</option>
+              ${this._isMobile?"":l`<option value="local">Cet appareil</option>`}
               ${this._castTargets.map(e=>l`
                   <option value=${e.mediaContentId}>${e.title}</option>
                 `)}
