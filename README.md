@@ -85,7 +85,7 @@ Une entité `text.molotov_tv_recherche` (ou similaire selon le nom de votre conf
 ### Panneau latéral Molotov TV
 L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre latérale de Home Assistant. Ce panneau offre :
 *   **Onglet Direct :** Liste des chaînes avec le programme en cours et les horaires (EPG).
-*   **Onglet Ce soir :** Guide des programmes de la soirée par chaîne avec indicateur de direct. Affiche les programmes commençant entre 20h et minuit, ainsi que ceux commençant avant 20h s'ils se terminent après 21h. Récupère automatiquement les programmes de toutes les chaînes abonnées (EPG complet + récupération par chaîne pour celles non couvertes par l'EPG).
+*   **Onglet Ce soir :** Guide des programmes de la soirée par chaîne avec indicateur de direct. Affiche les programmes commençant entre 20h et minuit, ainsi que ceux commençant avant 20h s'ils se terminent après 21h. En journée, affiche les ~30 chaînes couvertes par l'EPG. Pendant le prime time (à partir de 20h), les programmes en cours de toutes les chaînes abonnées s'ajoutent automatiquement.
 *   **Onglet Enregistrements :** Accédez à vos bookmarks avec affichage de tous les épisodes disponibles pour chaque émission.
 *   **Replay par chaîne :** Cliquez sur le bouton "Replay" d'une chaîne pour voir et lire les programmes disponibles en replay.
 *   **Recherche intégrée :** Barre de recherche pour trouver du contenu avec affichage des épisodes disponibles.

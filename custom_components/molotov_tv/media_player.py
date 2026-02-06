@@ -984,81 +984,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             len(channels_by_id),
         )
 
-        # Determine which channels already have tonight programs
+        # Note: per-channel endpoint (v3.1/remote/programs/from-channel) returns
+        # replay/VOD content, not EPG schedules. Only the EPG feed (~30 channels)
+        # and live/sections (current program) provide tonight data.
+        # During prime time (20:00+), live/sections data from the coordinator
+        # will match the tonight filter, adding ~150 more channels automatically.
         tonight_21h_utc = tonight_start_utc + timedelta(hours=1)
-
-        def _has_tonight_programs(ch: EpgChannel) -> bool:
-            return any(
-                (tonight_start_utc <= p.start <= tonight_end_utc)
-                or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
-                for p in ch.programs
-            )
-
-        covered_ids = {
-            cid for cid, ch in channels_by_id.items()
-            if _has_tonight_programs(ch)
-        }
-
-        # Fetch programs for all channels that don't have tonight data yet
-        missing_ids = [
-            ch.channel_id for ch in data.channels
-            if ch.channel_id not in covered_ids
-        ]
-
-        _LOGGER.debug(
-            "Tonight EPG: %d channels already covered, %d need fetching",
-            len(covered_ids),
-            len(missing_ids),
-        )
-
-        if missing_ids:
-            sem = asyncio.Semaphore(10)
-
-            async def fetch_channel(channel_id: str) -> tuple[str, list[EpgProgram]]:
-                async with sem:
-                    try:
-                        raw = await self._api.async_get_channel_programs(
-                            channel_id,
-                        )
-                        programs = parse_remote_programs(raw, channel_id)
-                        if not programs:
-                            _LOGGER.debug(
-                                "Tonight bulk: channel %s returned 0 programs "
-                                "(keys=%s)",
-                                channel_id,
-                                list(raw.keys()) if isinstance(raw, dict) else type(raw),
-                            )
-                        return channel_id, programs
-                    except MolotovApiError:
-                        return channel_id, []
-
-            results = await asyncio.gather(
-                *(fetch_channel(cid) for cid in missing_ids)
-            )
-            fetched = 0
-            tonight_added = 0
-            for channel_id, programs in results:
-                if programs:
-                    tonight_progs = [
-                        p for p in programs
-                        if (tonight_start_utc <= p.start <= tonight_end_utc)
-                        or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
-                    ]
-                    ch = find_channel(data, channel_id)
-                    if ch:
-                        ch = copy(ch)
-                        ch.programs = programs
-                        channels_by_id[channel_id] = ch
-                        fetched += 1
-                        if tonight_progs:
-                            tonight_added += 1
-            _LOGGER.debug(
-                "Tonight EPG bulk fetch: %d queried, %d returned programs, "
-                "%d have tonight programs",
-                len(missing_ids),
-                fetched,
-                tonight_added,
-            )
 
         channels = list(channels_by_id.values())
 
