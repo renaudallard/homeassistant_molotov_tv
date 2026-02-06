@@ -92,7 +92,7 @@ L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre l
 *   **Sélecteur Chromecast :** Choisissez la cible de lecture (cet appareil ou un Chromecast) directement depuis l'en-tête.
 *   **Lecture intégrée :** Cliquez sur une chaîne pour lancer la lecture directement dans le panneau.
 *   **Contrôles de lecture :** En lecture locale ou Chromecast, le panneau affiche les contrôles complets : début, retour 30s, retour 10s, play/pause, avance 30s, saut de publicité (8 min), barre de progression et volume. Une bannière de chargement s'affiche lors du lancement d'un cast.
-*   **Onglet En cours :** Pendant la lecture, le bouton "Retour" ramène à la liste des chaînes tout en conservant le flux actif. Un onglet "En cours" apparaît pour revenir au lecteur. La barre d'onglets est défilable horizontalement pour rester accessible sur mobile.
+*   **Onglet En cours :** L'onglet "En cours" est toujours visible dans la barre d'onglets. Pendant la lecture, le bouton "Retour" ramène à la liste des chaînes tout en conservant le flux actif ; cliquez sur "En cours" pour revenir au lecteur. La barre d'onglets est défilable horizontalement pour rester accessible sur mobile.
 *   **Mode plein écran :** Utilisez le bouton plein écran pour une expérience immersive (la barre latérale se masque automatiquement).
 *   **Navigation libre :** Vous pouvez naviguer dans Home Assistant pendant la lecture ; le panneau conserve la vidéo.
 *   **Lecture locale + Chromecast :** La lecture locale et le casting sur Chromecast fonctionnent simultanément et indépendamment. Arrêter la lecture locale ne coupe pas le Chromecast et inversement.
@@ -181,7 +181,7 @@ npm install
 npm run build
 ```
 
-Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-panel.js`.
+Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-panel.js`. Le cache du navigateur est invalidé automatiquement à chaque rebuild grâce à un hash du contenu du fichier.
 
 ### Hébergement du récepteur personnalisé
 Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
