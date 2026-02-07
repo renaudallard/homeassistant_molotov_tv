@@ -243,8 +243,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     def _get_active_streams(self) -> set[str]:
         """Get the set of active stream IDs for this account."""
-        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        return data.get("active_streams", set())
+        domain_data = self.hass.data.get(DOMAIN)
+        if not isinstance(domain_data, dict):
+            return set()
+        entry_data = domain_data.get(self._entry.entry_id)
+        if not isinstance(entry_data, dict):
+            return set()
+        streams = entry_data.get("active_streams")
+        if not isinstance(streams, set):
+            streams = set()
+            entry_data["active_streams"] = streams
+        return streams
 
     def _acquire_stream_slot(self) -> str:
         """Acquire a stream slot. Raises if limit reached."""
