@@ -321,8 +321,18 @@ def _attempt_reconnect(host: str) -> bool:
                 except Exception as err:
                     _LOGGER.debug("Failed to re-register listener: %s", err)
 
-            # Update connection
+            # Update connection only if it's still registered
             with _cast_lock:
+                if _active_casts.get(host) is not conn:
+                    _LOGGER.info(
+                        "Cast connection for %s was replaced/removed during reconnect, aborting",
+                        host,
+                    )
+                    try:
+                        cast.disconnect()
+                    except Exception:
+                        pass
+                    return False
                 conn.cast = cast
                 conn.timestamp = time.time()
 
