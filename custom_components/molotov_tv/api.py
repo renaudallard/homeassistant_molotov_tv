@@ -209,7 +209,7 @@ class MolotovApi:
             remote_subbed_url=urljoin(self._base_api_url, "v2/remote/channels-subbed"),
             live_home_url=urljoin(self._base_api_url, "v2/channels/live/sections"),
             home_url=urljoin(self._base_api_url, "v3/me/home/sections"),
-            bookmark_url=urljoin(self._base_api_url, "v2/me/bookmarks/sections"),
+            bookmark_url=urljoin(self._base_api_url, "v4/me/bookmarks/sections"),
         )
         self._language = language
         self._lock = asyncio.Lock()
@@ -443,10 +443,16 @@ class MolotovApi:
         ) -> dict[str, Any] | None:
             """Return a normalised result dict if useful, else None."""
             if isinstance(result, dict):
-                if result.get("sections") or result.get("items") or result.get("results"):
+                if (
+                    result.get("sections")
+                    or result.get("items")
+                    or result.get("results")
+                ):
                     return result
             elif isinstance(result, list):
-                _LOGGER.debug("Got list response with %d items from %s", len(result), endpoint)
+                _LOGGER.debug(
+                    "Got list response with %d items from %s", len(result), endpoint
+                )
                 return {
                     "sections": [
                         {
@@ -478,10 +484,7 @@ class MolotovApi:
             return endpoint, validated
 
         # Race all endpoints concurrently - return first success
-        tasks = [
-            asyncio.create_task(_try_search(m, ep, b))
-            for m, ep, b in endpoints
-        ]
+        tasks = [asyncio.create_task(_try_search(m, ep, b)) for m, ep, b in endpoints]
         last_error: MolotovApiError | None = None
 
         for coro in asyncio.as_completed(tasks):
@@ -655,17 +658,20 @@ class MolotovApi:
 
         await self.async_ensure_logged_in()
 
-        # Try multiple endpoints - v3 for TV, v4 for mobile, v2 as fallback
-        endpoints = [
+        # Prefer v4 (same as official app), fall back to v3 then v2
+        seen: set[str] = set()
+        endpoints: list[str] = []
+        for u in [
             self._session_state.bookmark_url,
-            urljoin(self._base_api_url, "v3/me/bookmarks/sections"),
             urljoin(self._base_api_url, "v4/me/bookmarks/sections"),
+            urljoin(self._base_api_url, "v3/me/bookmarks/sections"),
             urljoin(self._base_api_url, "v2/me/bookmarks/sections"),
-        ]
+        ]:
+            if u and u not in seen:
+                seen.add(u)
+                endpoints.append(u)
 
         for url in endpoints:
-            if not url:
-                continue
             try:
                 result = await self._request("GET", url, auth=True)
                 if isinstance(result, dict):
@@ -852,68 +858,20 @@ class MolotovApi:
         return {"programs": []}
 
     async def async_get_all_recordings(self) -> list[dict[str, Any]]:
-        """Fetch all recordings with pagination."""
+        """Fetch all recordings from bookmarks."""
 
         await self.async_ensure_logged_in()
         all_sections: list[dict[str, Any]] = []
 
-        # First get bookmarks
         try:
             data = await self.async_get_bookmarks()
             if isinstance(data, dict) and "sections" in data:
                 sections = data.get("sections", [])
-                _LOGGER.debug(
-                    "RECORDINGS API bookmarks: %d sections",
-                    len(sections),
-                )
-                for i, sec in enumerate(sections):
-                    if isinstance(sec, dict):
-                        items = sec.get("items", [])
-                        _LOGGER.debug(
-                            "RECORDINGS API bookmarks section[%d] title='%s' slug='%s' "
-                            "context=%s items=%d keys=%s",
-                            i,
-                            sec.get("title"),
-                            sec.get("slug"),
-                            sec.get("context"),
-                            len(items) if isinstance(items, list) else 0,
-                            list(sec.keys()),
-                        )
+                _LOGGER.debug("Bookmarks returned %d sections", len(sections))
                 all_sections.extend(sections)
         except MolotovApiError as err:
             _LOGGER.debug("Failed to fetch bookmarks: %s", err)
 
-        # Also try follow sections which may have recordings
-        try:
-            url = urljoin(self._base_api_url, "v3/me/follow/sections")
-            data = await self._request("GET", url, auth=True)
-            if isinstance(data, dict) and "sections" in data:
-                sections = data.get("sections", [])
-                _LOGGER.debug(
-                    "RECORDINGS API follow: %d sections",
-                    len(sections),
-                )
-                for i, sec in enumerate(sections):
-                    if isinstance(sec, dict):
-                        items = sec.get("items", [])
-                        _LOGGER.debug(
-                            "RECORDINGS API follow section[%d] title='%s' slug='%s' "
-                            "context=%s items=%d keys=%s",
-                            i,
-                            sec.get("title"),
-                            sec.get("slug"),
-                            sec.get("context"),
-                            len(items) if isinstance(items, list) else 0,
-                            list(sec.keys()),
-                        )
-                all_sections.extend(sections)
-        except MolotovApiError as err:
-            _LOGGER.debug("Failed to fetch follow sections: %s", err)
-
-        _LOGGER.debug(
-            "RECORDINGS API total: %d sections",
-            len(all_sections),
-        )
         return all_sections
 
     async def async_refresh_token(self) -> None:
@@ -1025,10 +983,17 @@ class MolotovApi:
         _retries: int = 0,
     ) -> dict[str, Any]:
         return await self._do_request(
-            method, url_or_path,
-            auth=auth, json=json, params=params, headers=headers,
-            basic_auth=basic_auth, timeout=timeout,
-            reader=self._read_json, _retry=_retry, _retries=_retries,
+            method,
+            url_or_path,
+            auth=auth,
+            json=json,
+            params=params,
+            headers=headers,
+            basic_auth=basic_auth,
+            timeout=timeout,
+            reader=self._read_json,
+            _retry=_retry,
+            _retries=_retries,
         )
 
     async def _request_raw_bytes(
@@ -1046,10 +1011,17 @@ class MolotovApi:
         _retries: int = 0,
     ) -> bytes:
         return await self._do_request(
-            method, url_or_path,
-            auth=auth, json=json, params=params, headers=headers,
-            basic_auth=basic_auth, timeout=timeout,
-            reader=self._read_bytes, _retry=_retry, _retries=_retries,
+            method,
+            url_or_path,
+            auth=auth,
+            json=json,
+            params=params,
+            headers=headers,
+            basic_auth=basic_auth,
+            timeout=timeout,
+            reader=self._read_bytes,
+            _retry=_retry,
+            _retries=_retries,
         )
 
     @staticmethod
@@ -1102,10 +1074,17 @@ class MolotovApi:
                 if resp.status == 401 and auth and _retry:
                     await self.async_refresh_token()
                     return await self._do_request(
-                        method, url_or_path,
-                        auth=auth, json=json, params=params, headers=headers,
-                        basic_auth=basic_auth, timeout=timeout,
-                        reader=reader, _retry=False, _retries=_retries,
+                        method,
+                        url_or_path,
+                        auth=auth,
+                        json=json,
+                        params=params,
+                        headers=headers,
+                        basic_auth=basic_auth,
+                        timeout=timeout,
+                        reader=reader,
+                        _retry=False,
+                        _retries=_retries,
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
@@ -1123,10 +1102,17 @@ class MolotovApi:
                         RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
                     )
                     return await self._do_request(
-                        method, url_or_path,
-                        auth=auth, json=json, params=params, headers=headers,
-                        basic_auth=basic_auth, timeout=timeout,
-                        reader=reader, _retry=_retry, _retries=_retries + 1,
+                        method,
+                        url_or_path,
+                        auth=auth,
+                        json=json,
+                        params=params,
+                        headers=headers,
+                        basic_auth=basic_auth,
+                        timeout=timeout,
+                        reader=reader,
+                        _retry=_retry,
+                        _retries=_retries + 1,
                     )
                 if resp.status >= 400:
                     reason = resp.reason or "unknown"

@@ -310,11 +310,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def async_added_to_hass(self) -> None:
         """Called when entity is added to hass."""
         await super().async_added_to_hass()
+
         # Register for cast connection status updates (from pychromecast thread)
         def _connection_handler(host: str, connected: bool) -> None:
             self.hass.loop.call_soon_threadsafe(
                 self._on_cast_connection_change, host, connected
             )
+
         self._connection_handler = _connection_handler
         register_connection_callback(_connection_handler)
 
@@ -347,9 +349,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         self.async_write_ha_state()
 
-    async def _async_end_session_for_host(
-        self, host: str, reason: str
-    ) -> None:
+    async def _async_end_session_for_host(self, host: str, reason: str) -> None:
         """End a specific cast session and clean up."""
         session = self._cast_sessions.get(host)
         if not session:
@@ -393,9 +393,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         self.async_write_ha_state()
 
-    async def _async_start_health_monitor_for(
-        self, session: CastSessionState
-    ) -> None:
+    async def _async_start_health_monitor_for(self, session: CastSessionState) -> None:
         """Start periodic cast health monitoring for a session."""
         if session.health_unsub is not None:
             return
@@ -412,9 +410,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             CAST_HEALTH_CHECK_INTERVAL,
         )
 
-    async def _async_stop_health_monitor_for(
-        self, session: CastSessionState
-    ) -> None:
+    async def _async_stop_health_monitor_for(self, session: CastSessionState) -> None:
         """Stop health monitoring for a session."""
         if session.health_unsub is not None:
             _LOGGER.debug("Stopping cast health monitor for %s", session.host)
@@ -446,9 +442,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 return
 
             # Connection lost - try to reconnect
-            _LOGGER.warning(
-                "Cast connection lost to %s, attempting reconnect", host
-            )
+            _LOGGER.warning("Cast connection lost to %s, attempting reconnect", host)
             session.connected = False
             session.error = "Connection lost - reconnecting..."
             self.async_write_ha_state()
@@ -612,7 +606,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_cast_targets(data, media_content_id)
 
         if media_content_id.startswith(f"{MEDIA_RECORDING_PREFIX}:"):
-            return await self._async_browse_replay_or_episodes(data, media_content_id)
+            return await self._async_browse_replay_or_episodes(
+                data, media_content_id, recordings_only=True
+            )
 
         if media_content_id.startswith(f"{MEDIA_SEARCH_INPUT_PREFIX}:"):
             buffer = media_content_id.split(":", 1)[1]
@@ -898,9 +894,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 if current_program.description:
                     import base64
 
-                    desc_encoded = base64.urlsafe_b64encode(
-                        current_program.description.encode("utf-8")
-                    ).decode("ascii").rstrip("=")
+                    desc_encoded = (
+                        base64.urlsafe_b64encode(
+                            current_program.description.encode("utf-8")
+                        )
+                        .decode("ascii")
+                        .rstrip("=")
+                    )
                     media_id = f"{media_id}|{desc_encoded}"
                 media_class = MediaClass.TV_SHOW
                 thumb = (
@@ -928,7 +928,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         _LOGGER.debug(
             "Now playing: %d/%d channels have current program",
-            with_current, len(channels),
+            with_current,
+            len(channels),
         )
 
         return BrowseMedia(
@@ -1014,7 +1015,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # - Include if starts between 20:00 and 24:00
             # - If starts before 20:00, only include if ends after 21:00
             tonight_programs = [
-                p for p in programs
+                p
+                for p in programs
                 if (tonight_start_utc <= p.start <= tonight_end_utc)
                 or (p.start < tonight_start_utc and p.end > tonight_21h_utc)
             ]
@@ -1040,7 +1042,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 # Format time in local timezone
                 start_local = program.start.astimezone(now.tzinfo)
                 end_local = program.end.astimezone(now.tzinfo)
-                time_str = f"{start_local.strftime('%H:%M')}-{end_local.strftime('%H:%M')}"
+                time_str = (
+                    f"{start_local.strftime('%H:%M')}-{end_local.strftime('%H:%M')}"
+                )
 
                 # Flat structure: encode channel and program info in media_content_id
                 # Format: tonight_program:channel_id:channel_name:channel_thumb:start_ts:end_ts:description
@@ -1184,7 +1188,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
     async def _async_browse_replay_or_episodes(
-        self, data: EpgData, media_content_id: str
+        self,
+        data: EpgData,
+        media_content_id: str,
+        *,
+        recordings_only: bool = False,
     ) -> BrowseMedia:
         """Browse replay - show episodes if program_id available, else cast targets."""
         payload = decode_asset_payload_from_media_id(media_content_id)
@@ -1216,6 +1224,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     program_id,
                     payload.get("title"),
                     payload.get("thumb"),
+                    recordings_only=recordings_only,
                 )
             else:
                 _LOGGER.debug(
@@ -1261,9 +1270,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 programs = parse_remote_programs(raw, channel_id)
                 self._set_cached_programs(channel_id, programs)
             except MolotovApiError as err:
-                raise HomeAssistantError(
-                    "Failed to fetch channel programs"
-                ) from err
+                raise HomeAssistantError("Failed to fetch channel programs") from err
 
         if programs is not None:
             channel.programs = programs
@@ -1603,16 +1610,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if session:
             info = session.tracks.get(sound_mode)
             if info is not None:
-                await async_cast_select_track(
-                    self.hass, session.host, info["id"]
-                )
+                await async_cast_select_track(self.hass, session.host, info["id"])
 
     def _make_cast_status_handler(self, host: str):
         """Create a per-host status callback (called from pychromecast thread)."""
+
         def handler(status: Any) -> None:
             self.hass.loop.call_soon_threadsafe(
                 self._on_cast_status_for_host, host, status
             )
+
         return handler
 
     def _on_cast_status_for_host(self, host: str, status: Any) -> None:
@@ -1950,9 +1957,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             _LOGGER.debug("Re-found cast entity: %s", entity_id)
 
         if not entity_id:
-            _LOGGER.warning(
-                "No cast entity to control (target=%s)", session.host
-            )
+            _LOGGER.warning("No cast entity to control (target=%s)", session.host)
             return
 
         state = self.hass.states.get(entity_id)
@@ -2004,9 +2009,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if session:
             # Save position for resume
             if not session.is_live:
-                position_data = await async_get_cast_position(
-                    self.hass, session.host
-                )
+                position_data = await async_get_cast_position(self.hass, session.host)
                 if position_data:
                     position, duration = position_data
                     _LOGGER.debug(
@@ -2023,9 +2026,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     )
 
             await async_cast_stop(self.hass, session.host)
-            await self._async_end_session_for_host(
-                session.host, "Stopped by user"
-            )
+            await self._async_end_session_for_host(session.host, "Stopped by user")
 
         # Also stop local stream if present
         if self._current_stream:

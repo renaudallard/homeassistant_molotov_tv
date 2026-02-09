@@ -509,39 +509,16 @@ async def async_fetch_channel_replays(
 
 
 async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
-    """Fetch all recordings."""
+    """Fetch all recordings from bookmarks."""
     assets: list[BrowseAsset] = []
-    seen_urls: set[str] = set()
 
-    # Get all recordings from bookmarks API
     try:
-        all_sections = await api.async_get_all_recordings()
-        _LOGGER.debug("Got %d sections from recordings API", len(all_sections))
-        for section in all_sections:
-            section_assets = extract_recording_assets({"sections": [section]}, api)
-            for asset in section_assets:
-                if asset.asset_url not in seen_urls:
-                    seen_urls.add(asset.asset_url)
-                    assets.append(asset)
-        _LOGGER.debug("Found %d recordings from bookmarks API", len(assets))
+        sections = await api.async_get_all_recordings()
+        assets = extract_recording_assets({"sections": sections}, api)
     except MolotovApiError as err:
-        _LOGGER.debug("Failed to fetch all recordings: %s", err)
+        _LOGGER.debug("Failed to fetch recordings: %s", err)
 
-    # Also try home sections as fallback
-    if not assets:
-        _LOGGER.debug("No recordings from bookmarks, trying home sections")
-        try:
-            data = await api.async_get_home_sections()
-            home_assets = extract_recording_assets(data, api)
-            for asset in home_assets:
-                if asset.asset_url not in seen_urls:
-                    seen_urls.add(asset.asset_url)
-                    assets.append(asset)
-            _LOGGER.debug("Found %d recordings from home sections", len(assets))
-        except MolotovApiError as err:
-            _LOGGER.warning("Failed to fetch recordings from home: %s", err)
-
-    _LOGGER.debug("Found %d total recordings", len(assets))
+    _LOGGER.debug("Found %d recordings", len(assets))
     return sort_assets(assets)
 
 
@@ -551,13 +528,17 @@ async def async_fetch_program_episodes(
     program_id: str,
     title: str | None,
     thumbnail: str | None,
+    *,
+    recordings_only: bool = False,
 ) -> BrowseMedia:
     """Fetch and display all episodes for a program."""
     children: list[BrowseMedia] = []
 
     try:
         data = await api.async_get_program_details(channel_id, program_id)
-        episodes = extract_program_episodes(data, api, program_id)
+        episodes = extract_program_episodes(
+            data, api, program_id, recordings_only=recordings_only
+        )
         _LOGGER.debug(
             "Found %d episodes for program %s on channel %s",
             len(episodes),
