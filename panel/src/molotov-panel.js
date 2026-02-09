@@ -1507,6 +1507,14 @@ class MolotovPanel extends LitElement {
 
     this._loadingRecordings = false;
     this.requestUpdate();
+
+    // Pre-fetch episodes for all recordings in parallel so we know counts
+    if (this._recordings.length > 0) {
+      await Promise.all(
+        this._recordings.map((rec) => this._fetchRecordingEpisodes(rec))
+      );
+      this.requestUpdate();
+    }
   }
 
   async _loadTonight() {
@@ -3099,14 +3107,18 @@ class MolotovPanel extends LitElement {
     const isExpanded = this._expandedRecordings[recordingId];
     const episodes = this._recordingEpisodes[recordingId] || [];
     const isLoadingEpisodes = this._loadingRecordingEpisodes[recordingId];
+    const hasFetched = this._recordingEpisodes[recordingId] !== undefined;
+    const isSingleEpisode = hasFetched && episodes.length <= 1;
 
     return html`
       <div class="search-result-row">
         <div class="search-result-main" @click=${(e) => this._toggleRecordingExpand(e, recording)}>
-          <ha-icon
-            class="expand-icon ${isExpanded ? "expanded" : ""}"
-            icon="mdi:chevron-right"
-          ></ha-icon>
+          ${isSingleEpisode
+            ? html`<ha-icon class="expand-icon" icon="mdi:play-circle-outline"></ha-icon>`
+            : html`<ha-icon
+                class="expand-icon ${isExpanded ? "expanded" : ""}"
+                icon="mdi:chevron-right"
+              ></ha-icon>`}
           ${recording.thumbnail
             ? html`<img
                 class="recording-thumb"
