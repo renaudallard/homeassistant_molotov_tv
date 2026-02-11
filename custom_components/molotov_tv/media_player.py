@@ -225,8 +225,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Multi-cast session tracking
         self._cast_sessions: dict[str, CastSessionState] = {}
         self._active_cast_target: str | None = None  # Focused cast
-        self._current_stream: dict[str, Any] | None = None
-        # Stream slot tracking
+        # Per-session local streams (session_id → asset_data)
+        self._local_streams: dict[str, dict[str, Any]] = {}
+        # Legacy single stream ID for cast-initiated slots
         self._stream_id: str | None = None
 
     @property
@@ -255,14 +256,17 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             entry_data["active_streams"] = streams
         return streams
 
-    def _acquire_stream_slot(self) -> str:
+    def _acquire_stream_slot(self, session_id: str | None = None) -> str:
         """Acquire a stream slot. Raises if limit reached."""
         import uuid
 
         active_streams = self._get_active_streams()
 
-        # Release any existing stream for this player first
-        if self._stream_id and self._stream_id in active_streams:
+        # If a session_id is provided, release its existing slot first
+        if session_id and session_id in active_streams:
+            active_streams.discard(session_id)
+        # Legacy: release single stream_id slot
+        elif not session_id and self._stream_id and self._stream_id in active_streams:
             active_streams.discard(self._stream_id)
 
         if len(active_streams) >= MAX_CONCURRENT_STREAMS:
@@ -271,31 +275,34 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 "Arrêtez un autre flux avant d'en démarrer un nouveau."
             )
 
-        stream_id = str(uuid.uuid4())
-        active_streams.add(stream_id)
-        self._stream_id = stream_id
+        slot_id = session_id or str(uuid.uuid4())
+        active_streams.add(slot_id)
+        if not session_id:
+            self._stream_id = slot_id
         _LOGGER.debug(
             "Acquired stream slot %s (%d/%d active)",
-            stream_id[:8],
+            slot_id[:8],
             len(active_streams),
             MAX_CONCURRENT_STREAMS,
         )
-        return stream_id
+        return slot_id
 
-    def _release_stream_slot(self) -> None:
-        """Release the current stream slot."""
-        if not self._stream_id:
+    def _release_stream_slot(self, session_id: str | None = None) -> None:
+        """Release a stream slot by session_id or the legacy single slot."""
+        slot_id = session_id or self._stream_id
+        if not slot_id:
             return
 
         active_streams = self._get_active_streams()
-        active_streams.discard(self._stream_id)
+        active_streams.discard(slot_id)
         _LOGGER.debug(
             "Released stream slot %s (%d/%d active)",
-            self._stream_id[:8],
+            slot_id[:8],
             len(active_streams),
             MAX_CONCURRENT_STREAMS,
         )
-        self._stream_id = None
+        if not session_id:
+            self._stream_id = None
 
     @property
     def device_info(self):
@@ -472,49 +479,56 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             session.error = None
             self.async_write_ha_state()
 
+    @staticmethod
+    def _extract_stream_attrs(asset_data: dict[str, Any]) -> dict[str, Any]:
+        """Extract stream URL, DRM, and track info from asset data."""
+        result: dict[str, Any] = {}
+        stream = asset_data.get("stream", {})
+        url = stream.get("url")
+        if url:
+            result["url"] = url
+
+        drm = asset_data.get("drm")
+        up_drm = asset_data.get("up_drm")
+
+        if up_drm:
+            wv = up_drm.get("key_systems", {}).get("Widevine", {})
+            license_data = wv.get("license", {})
+            if license_data:
+                license_url = license_data.get("url")
+                if query_params := license_data.get("query_params"):
+                    from urllib.parse import urlencode
+
+                    if "?" in license_url:
+                        license_url = f"{license_url}&{urlencode(query_params)}"
+                    else:
+                        license_url = f"{license_url}?{urlencode(query_params)}"
+
+                result["drm"] = {
+                    "type": "widevine",
+                    "license_url": license_url,
+                    "headers": license_data.get("http_headers", {}),
+                }
+        elif drm:
+            result["drm"] = drm
+
+        config = asset_data.get("config", {})
+        selected_track = config.get("selected_track", {})
+        if selected_track:
+            result["selected_track"] = selected_track
+
+        return result
+
     @property
     def extra_state_attributes(self):
         """Return entity specific state attributes."""
         attrs = {}
-        if self._current_stream:
-            stream = self._current_stream.get("stream", {})
-            url = stream.get("url")
-            _LOGGER.debug(
-                "extra_state_attributes: stream keys=%s, url present=%s",
-                list(stream.keys()) if stream else None,
-                bool(url),
-            )
-            if url:
-                attrs["stream_url"] = url
-
-            drm = self._current_stream.get("drm")
-            up_drm = self._current_stream.get("up_drm")
-
-            if up_drm:
-                wv = up_drm.get("key_systems", {}).get("Widevine", {})
-                license_data = wv.get("license", {})
-                if license_data:
-                    license_url = license_data.get("url")
-                    if query_params := license_data.get("query_params"):
-                        from urllib.parse import urlencode
-
-                        if "?" in license_url:
-                            license_url = f"{license_url}&{urlencode(query_params)}"
-                        else:
-                            license_url = f"{license_url}?{urlencode(query_params)}"
-
-                    attrs["stream_drm"] = {
-                        "type": "widevine",
-                        "license_url": license_url,
-                        "headers": license_data.get("http_headers", {}),
-                    }
-            elif drm:
-                attrs["stream_drm"] = drm
-
-            config = self._current_stream.get("config", {})
-            selected_track = config.get("selected_track", {})
-            if selected_track:
-                attrs["stream_selected_track"] = selected_track
+        # Per-session local streams
+        if self._local_streams:
+            local_streams = {}
+            for session_id, asset_data in self._local_streams.items():
+                local_streams[session_id] = self._extract_stream_attrs(asset_data)
+            attrs["local_streams"] = local_streams
 
         # Multi-cast session status
         if self._cast_sessions:
@@ -647,11 +661,31 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return
 
         if media_id.startswith("play_local:"):
-            await self._async_play_local(media_id.split(":", 1)[1])
+            rest = media_id.split(":", 1)[1]
+            # Format: play_local:SESSION_ID:media_id or play_local:media_id
+            parts = rest.split(":", 1)
+            if len(parts) == 2 and not parts[0].startswith(
+                (
+                    MEDIA_PROGRAM_PREFIX,
+                    MEDIA_LIVE_PREFIX,
+                    MEDIA_REPLAY_PREFIX,
+                    MEDIA_RECORDING_PREFIX,
+                    MEDIA_EPISODE_PREFIX,
+                    MEDIA_SEARCH_RESULT_PREFIX,
+                    MEDIA_CHANNEL_PREFIX,
+                )
+            ):
+                session_id, actual_media_id = parts
+                await self._async_play_local(actual_media_id, session_id)
+            else:
+                await self._async_play_local(rest)
             return
 
-        if media_id == "stop_local":
-            self._async_stop_local_stream()
+        if media_id.startswith("stop_local"):
+            # Format: stop_local:SESSION_ID or stop_local
+            parts = media_id.split(":", 1)
+            session_id = parts[1] if len(parts) > 1 else None
+            self._async_stop_local_stream(session_id)
             return
 
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
@@ -785,20 +819,29 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         return False
 
-    async def _async_play_local(self, media_id: str) -> None:
+    async def _async_play_local(
+        self, media_id: str, session_id: str | None = None
+    ) -> None:
         """Play media locally by resolving stream URL."""
         # Acquire stream slot before starting playback
-        self._acquire_stream_slot()
+        self._acquire_stream_slot(session_id)
 
         try:
             asset_url, title, is_live = self._build_cast_request(media_id)
             asset_data = await self._api.async_get_asset_stream(asset_url)
 
             _LOGGER.debug(
-                "Local play asset data: %s", json.dumps(asset_data, default=str)
+                "Local play asset data (session=%s): %s",
+                session_id and session_id[:8],
+                json.dumps(asset_data, default=str),
             )
 
-            self._current_stream = asset_data
+            if session_id:
+                self._local_streams[session_id] = asset_data
+            else:
+                # Legacy: no session, use single-stream behavior
+                self._local_streams["_default"] = asset_data
+
             # Only change entity state if no cast is active
             # (cast-driven state takes priority for the entity)
             if not self._cast_sessions:
@@ -816,12 +859,16 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._attr_media_content_type = video_format or "application/dash+xml"
 
             self.async_write_ha_state()
-            _LOGGER.info("Molotov playing locally: %s", title)
+            _LOGGER.info(
+                "Molotov playing locally (session=%s): %s",
+                session_id and session_id[:8],
+                title,
+            )
 
         except MolotovApiError as err:
-            self._attr_state = STATE_IDLE
-            self._current_stream = None
-            self._release_stream_slot()
+            if not self._local_streams and not self._cast_sessions:
+                self._attr_state = STATE_IDLE
+            self._release_stream_slot(session_id)
             _LOGGER.debug(
                 "MolotovApiError caught: user_message=%r, str=%s",
                 err.user_message,
@@ -830,13 +877,23 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             message = err.user_message or str(err)
             raise HomeAssistantError(f"Échec de lecture: {message}") from err
 
-    def _async_stop_local_stream(self) -> None:
-        """Stop local stream without affecting cast sessions."""
-        if not self._current_stream:
-            return
-        self._current_stream = None
-        self._release_stream_slot()
-        if not self._cast_sessions:
+    def _async_stop_local_stream(self, session_id: str | None = None) -> None:
+        """Stop local stream(s) without affecting cast sessions."""
+        if session_id:
+            # Stop specific session
+            if session_id not in self._local_streams:
+                return
+            del self._local_streams[session_id]
+            self._release_stream_slot(session_id)
+        else:
+            # Stop all local streams
+            if not self._local_streams:
+                return
+            for sid in list(self._local_streams):
+                self._release_stream_slot(sid)
+            self._local_streams.clear()
+
+        if not self._local_streams and not self._cast_sessions:
             self._attr_state = STATE_IDLE
         self.async_write_ha_state()
 
@@ -1987,7 +2044,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             session.player_state = STATE_PLAYING
             self._attr_state = STATE_PLAYING
             self.async_write_ha_state()
-        elif self._current_stream:
+        elif self._local_streams:
             self._attr_state = STATE_PLAYING
             self.async_write_ha_state()
 
@@ -1999,7 +2056,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             session.player_state = STATE_PAUSED
             self._attr_state = STATE_PAUSED
             self.async_write_ha_state()
-        elif self._current_stream:
+        elif self._local_streams:
             self._attr_state = STATE_PAUSED
             self.async_write_ha_state()
 
@@ -2028,10 +2085,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await async_cast_stop(self.hass, session.host)
             await self._async_end_session_for_host(session.host, "Stopped by user")
 
-        # Also stop local stream if present
-        if self._current_stream:
-            self._current_stream = None
-            self._release_stream_slot()
+        # Also stop all local streams if present
+        if self._local_streams:
+            for sid in list(self._local_streams):
+                self._release_stream_slot(sid)
+            self._local_streams.clear()
             if not self._cast_sessions:
                 self._attr_state = STATE_IDLE
             self.async_write_ha_state()

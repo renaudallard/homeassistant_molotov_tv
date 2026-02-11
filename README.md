@@ -99,10 +99,11 @@ L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre l
 *   **Lecture automatique :** Lors de la lecture d'un épisode de série (enregistrements ou résultats de recherche), l'épisode suivant se lance automatiquement à la fin du précédent.
 
 ### Multi-utilisateurs
-La lecture locale est isolée par session de navigateur :
-*   **Lecture privée :** Lorsqu'un utilisateur lance une lecture locale, seul son navigateur/appareil affiche le lecteur vidéo.
-*   **Pas d'interférence :** Les autres utilisateurs connectés à Home Assistant ne voient pas la lecture en cours des autres.
+La lecture locale est isolée par session de navigateur grâce à un identifiant de session unique :
+*   **Lecture privée :** Chaque onglet/navigateur génère un identifiant de session unique. La lecture locale n'affecte que la session qui l'a initiée.
+*   **Pas d'interférence :** Plusieurs utilisateurs peuvent lire simultanément des contenus différents en local sans conflit, chacun avec son propre flux.
 *   **Chromecast partagé :** La lecture sur Chromecast reste visible par tous les utilisateurs (le Chromecast étant un appareil partagé).
+*   **Multi-comptes :** Si plusieurs comptes Molotov sont configurés, un sélecteur d'entité apparaît dans l'en-tête du panneau pour choisir le compte à utiliser.
 
 ### Limitations sur mobile
 La lecture locale n'est **pas disponible** sur les appareils mobiles (Android/iOS) via l'application Home Assistant Companion :

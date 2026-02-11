@@ -74,9 +74,7 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
             sum(1 for c in channels_data.channels if c.poster),
         )
 
-        channels_by_id = {
-            c.channel_id: c for c in channels_data.channels
-        }
+        channels_by_id = {c.channel_id: c for c in channels_data.channels}
 
         # Merge live/sections: items are programs grouped by channel_id
         try:
@@ -320,7 +318,11 @@ def _parse_channel_entry(entry: dict[str, Any]) -> EpgChannel | None:
     programs_payload = channel.get("programs")
     if not isinstance(programs_payload, list):
         programs_payload = entry.get("programs")
-    programs = parse_epg_programs(programs_payload) if isinstance(programs_payload, list) else []
+    programs = (
+        parse_epg_programs(programs_payload)
+        if isinstance(programs_payload, list)
+        else []
+    )
 
     return EpgChannel(
         channel_id=channel_id,
@@ -411,5 +413,3 @@ def _extract_channel_logo(channel: dict[str, Any], entry: dict[str, Any]) -> str
                 return url
 
     return None
-
-

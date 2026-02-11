@@ -118,30 +118,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         [StaticPathConfig("/molotov_tv/www", path, cache_headers=True)]
     )
 
-    # Register sidebar panel with content-hash cache busting
-    panel_file = Path(path) / "molotov-panel.js"
-    try:
-        content = await hass.async_add_executor_job(panel_file.read_bytes)
-        panel_hash = hashlib.md5(content).hexdigest()[:8]
-    except OSError:
-        panel_hash = "0"
-    try:
-        await async_register_panel(
-            hass,
-            frontend_url_path=PANEL_URL_PATH,
-            webcomponent_name="molotov-panel",
-            sidebar_title=PANEL_TITLE,
-            sidebar_icon=PANEL_ICON,
-            module_url=f"/molotov_tv/www/molotov-panel.js?v={panel_hash}",
-            embed_iframe=False,
-            require_admin=False,
-            config={
-                "domain": DOMAIN,
-            },
-        )
-        _LOGGER.info("Molotov TV sidebar panel registered")
-    except Exception as err:
-        _LOGGER.warning("Failed to register sidebar panel: %s", err)
+    # Register sidebar panel once (skip if already registered by another entry)
+    if "frontend_panels" not in hass.data or PANEL_URL_PATH not in hass.data.get(
+        "frontend_panels", {}
+    ):
+        panel_file = Path(path) / "molotov-panel.js"
+        try:
+            content = await hass.async_add_executor_job(panel_file.read_bytes)
+            panel_hash = hashlib.md5(content).hexdigest()[:8]
+        except OSError:
+            panel_hash = "0"
+        try:
+            await async_register_panel(
+                hass,
+                frontend_url_path=PANEL_URL_PATH,
+                webcomponent_name="molotov-panel",
+                sidebar_title=PANEL_TITLE,
+                sidebar_icon=PANEL_ICON,
+                module_url=f"/molotov_tv/www/molotov-panel.js?v={panel_hash}",
+                embed_iframe=False,
+                require_admin=False,
+                config={
+                    "domain": DOMAIN,
+                },
+            )
+            _LOGGER.info("Molotov TV sidebar panel registered")
+        except Exception as err:
+            _LOGGER.warning("Failed to register sidebar panel: %s", err)
 
     # Pre-import platform modules in executor to avoid blocking the event loop
     for platform in PLATFORMS:
@@ -158,7 +161,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unregister sidebar panel
     try:
         # Remove panel from frontend_panels registry
-        if "frontend_panels" in hass.data and PANEL_URL_PATH in hass.data["frontend_panels"]:
+        if (
+            "frontend_panels" in hass.data
+            and PANEL_URL_PATH in hass.data["frontend_panels"]
+        ):
             hass.data["frontend_panels"].pop(PANEL_URL_PATH, None)
     except Exception:
         pass

@@ -5,7 +5,7 @@
 
 import { LitElement, html, css } from "lit-element";
 
-const VERSION = "0.1.21";
+const VERSION = "0.1.22";
 
 // Detect mobile/WebView where Widevine DRM doesn't work
 function isMobileOrWebView() {
@@ -128,6 +128,8 @@ class MolotovPanel extends LitElement {
       // Episode auto-play
       _episodePlaylist: { type: Array },
       _episodeIndex: { type: Number },
+      // Entity selector for multi-account
+      _selectedEntityId: { type: String },
     };
   }
 
@@ -1333,6 +1335,10 @@ class MolotovPanel extends LitElement {
     this._episodeIndex = -1;
     this._episodeParentTitle = "";
     this._episodeIsRecording = false;
+    // Unique session ID for local playback isolation between HA users
+    this._sessionId = crypto.randomUUID();
+    // Entity selector for multi-account support
+    this._selectedEntityId = localStorage.getItem("molotov_selected_entity") || "";
   }
 
   connectedCallback() {
@@ -1345,6 +1351,17 @@ class MolotovPanel extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    // Release local stream slot on disconnect
+    if (this._playing) {
+      const entityId = this._getEntityId();
+      if (entityId && this.hass) {
+        this.hass.callService("media_player", "play_media", {
+          entity_id: entityId,
+          media_content_id: `stop_local:${this._sessionId}`,
+          media_content_type: "video",
+        });
+      }
+    }
     this._cleanupPlayer();
     this._stopCastProgressUpdate();
     document.removeEventListener("fullscreenchange", this._boundOnFullscreenChange);
@@ -1380,7 +1397,7 @@ class MolotovPanel extends LitElement {
     this._error = null;
 
     try {
-      const entityId = this._findMolotovEntity();
+      const entityId = this._getEntityId();
 
       if (!entityId) {
         throw new Error("Entite Molotov TV introuvable");
@@ -1468,7 +1485,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _loadRecordings() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._loadingRecordings = true;
@@ -1518,7 +1535,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _loadTonight() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._loadingTonight = true;
@@ -1640,7 +1657,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playRecordingDirectly(recording) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._episodePlaylist = [];
@@ -1682,7 +1699,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _fetchRecordingEpisodes(recording) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     const recordingId = recording.mediaContentId;
@@ -1716,7 +1733,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playRecordingEpisode(episode, parentTitle) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._setEpisodePlaylist(episode, parentTitle, this._recordingEpisodes, true);
@@ -1753,7 +1770,7 @@ class MolotovPanel extends LitElement {
 
   _buildPlayMediaId(baseMediaId) {
     if (this._selectedTarget === "local") {
-      return `play_local:${baseMediaId}`;
+      return `play_local:${this._sessionId}:${baseMediaId}`;
     }
     // For cast targets, extract the encoded target and build cast media ID
     // Cast target format: cast:{encoded_target}:native:{base_media_id} or cast:{encoded_target}:{base_media_id}
@@ -1854,14 +1871,31 @@ class MolotovPanel extends LitElement {
     };
   }
 
-  _findMolotovEntity() {
-    if (!this.hass || !this.hass.states) return null;
-    for (const entityId in this.hass.states) {
-      if (entityId.startsWith("media_player.molotov")) {
-        return entityId;
-      }
+  _getMolotovEntities() {
+    if (!this.hass || !this.hass.states) return [];
+    return Object.keys(this.hass.states)
+      .filter((id) => id.startsWith("media_player.molotov"))
+      .sort();
+  }
+
+  _getEntityId() {
+    const entities = this._getMolotovEntities();
+    if (entities.length === 0) return null;
+    if (entities.length === 1) return entities[0];
+    if (this._selectedEntityId && entities.includes(this._selectedEntityId)) {
+      return this._selectedEntityId;
     }
-    return null;
+    return entities[0];
+  }
+
+  _handleEntityChange(e) {
+    this._selectedEntityId = e.target.value;
+    localStorage.setItem("molotov_selected_entity", this._selectedEntityId);
+    this._hasLoadedChannels = false;
+    this._channels = [];
+    this._recordings = [];
+    this._tonightChannels = [];
+    this._loadChannels();
   }
 
   async _toggleChannelExpand(e, channel) {
@@ -1886,7 +1920,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _fetchChannelPrograms(channel) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     const channelId = channel.id;
@@ -1931,7 +1965,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playReplay(replay) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._episodePlaylist = [];
@@ -1981,7 +2015,7 @@ class MolotovPanel extends LitElement {
     const query = this._searchQuery.trim();
     if (!query) return;
 
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._searching = true;
@@ -2095,7 +2129,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _fetchResultEpisodes(result) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     const resultId = result.mediaContentId;
@@ -2145,7 +2179,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playEpisode(episode, parentTitle) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._setEpisodePlaylist(episode, parentTitle, this._resultEpisodes, false);
@@ -2180,16 +2214,19 @@ class MolotovPanel extends LitElement {
   }
 
   _syncWithEntity() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId || !this.hass?.states?.[entityId]) return;
 
     const state = this.hass.states[entityId];
 
-    // Track local playback (stream URL present + this session initiated it)
-    if (state.attributes.stream_url && this._localPlaybackInitiated) {
-      const streamUrl = state.attributes.stream_url;
-      const drm = state.attributes.stream_drm;
-      const selectedTrack = state.attributes.stream_selected_track;
+    // Track local playback from our session only
+    const localStreams = state.attributes.local_streams || {};
+    const myStream = localStreams[this._sessionId];
+
+    if (myStream && myStream.url && this._localPlaybackInitiated) {
+      const streamUrl = myStream.url;
+      const drm = myStream.drm;
+      const selectedTrack = myStream.selected_track;
 
       // Only reinitialize if stream changed
       if (!this._playing || this._currentStreamUrl !== streamUrl) {
@@ -2221,7 +2258,7 @@ class MolotovPanel extends LitElement {
         this.updateComplete.then(() => this._initDashPlayer());
       }
     } else if (this._playing) {
-      // Stream URL gone but we were playing locally — stopped
+      // Our session's stream gone but we were playing locally — stopped
       this._cleanupPlayer();
       this._playing = false;
       this._streamData = null;
@@ -2273,7 +2310,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playChannel(channel) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
 
     if (!entityId) {
       console.error("[Molotov Panel] No entity found");
@@ -2608,21 +2645,15 @@ class MolotovPanel extends LitElement {
   }
 
   _stopPlayback() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
 
     if (entityId && this.hass) {
-      if (this._castPlaying) {
-        // Cast is active — only stop local stream, don't kill the cast
-        this.hass.callService("media_player", "play_media", {
-          entity_id: entityId,
-          media_content_id: "stop_local",
-          media_content_type: "video",
-        });
-      } else {
-        this.hass.callService("media_player", "media_stop", {
-          entity_id: entityId,
-        });
-      }
+      // Always send session-scoped stop for local stream
+      this.hass.callService("media_player", "play_media", {
+        entity_id: entityId,
+        media_content_id: `stop_local:${this._sessionId}`,
+        media_content_type: "video",
+      });
     }
 
     this._cleanupPlayer();
@@ -2876,6 +2907,17 @@ class MolotovPanel extends LitElement {
         <div class="header">
           <h1>Molotov TV</h1>
           <div class="header-actions">
+            ${this._getMolotovEntities().length > 1 ? html`
+              <select class="cast-select" @change=${this._handleEntityChange} .value=${this._getEntityId()}>
+                ${this._getMolotovEntities().map(
+                  (id) => html`
+                    <option value=${id}>
+                      ${this.hass.states[id]?.attributes?.friendly_name || id}
+                    </option>
+                  `
+                )}
+              </select>
+            ` : ""}
             <button @click=${this._handleRefresh}>
               <ha-icon icon="mdi:refresh"></ha-icon>
               Actualiser
@@ -3056,7 +3098,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _playTonightProgram(program, channel) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     this._episodePlaylist = [];
@@ -3670,7 +3712,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _focusCast(host) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     const info = this._activeCasts[host];
@@ -3693,7 +3735,7 @@ class MolotovPanel extends LitElement {
 
   async _stopSpecificCast(e, host) {
     e.stopPropagation();
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     // First focus the cast to stop, then stop it
@@ -3718,7 +3760,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _stopCastPlayback() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     try {
@@ -3742,7 +3784,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _toggleCastPlayPause() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     try {
@@ -3761,7 +3803,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _castSkipForward() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     try {
@@ -3780,7 +3822,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _castSeek(position) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     try {
@@ -3811,7 +3853,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _handleCastSeek(e) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId || !this._duration) return;
 
     const progressBar = e.currentTarget;
@@ -3831,7 +3873,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _handleCastVolumeChange(e) {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     const volume = parseFloat(e.target.value);
@@ -3848,7 +3890,7 @@ class MolotovPanel extends LitElement {
   }
 
   async _toggleCastMute() {
-    const entityId = this._findMolotovEntity();
+    const entityId = this._getEntityId();
     if (!entityId) return;
 
     try {
