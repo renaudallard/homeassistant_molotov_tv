@@ -868,7 +868,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             if not self._local_streams and not self._cast_sessions:
                 self._attr_state = STATE_IDLE
-            self._release_stream_slot(session_id)
             _LOGGER.debug(
                 "MolotovApiError caught: user_message=%r, str=%s",
                 err.user_message,
@@ -876,6 +875,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             message = err.user_message or str(err)
             raise HomeAssistantError(f"Échec de lecture: {message}") from err
+        finally:
+            if not self._local_streams.get(session_id or "_default"):
+                self._release_stream_slot(session_id)
 
     def _async_stop_local_stream(self, session_id: str | None = None) -> None:
         """Stop local stream(s) without affecting cast sessions."""
@@ -1758,37 +1760,37 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     ) -> None:
         # Acquire stream slot before starting playback
         self._acquire_stream_slot()
+        slot_transferred = False
 
-        await self._api.async_ensure_logged_in()
+        try:
+            await self._api.async_ensure_logged_in()
 
-        cast_target = cast_target_override
-        if not cast_target:
-            targets = await self._async_get_cast_targets()
-            if len(targets) == 1:
-                cast_target = targets[0]
-        resolved_target = self._resolve_cast_target(cast_target)
-        if not resolved_target:
-            self._release_stream_slot()
-            if cast_target:
+            cast_target = cast_target_override
+            if not cast_target:
+                targets = await self._async_get_cast_targets()
+                if len(targets) == 1:
+                    cast_target = targets[0]
+            resolved_target = self._resolve_cast_target(cast_target)
+            if not resolved_target:
+                if cast_target:
+                    raise HomeAssistantError(
+                        "Chromecast host was not available for the selected target"
+                    )
                 raise HomeAssistantError(
-                    "Chromecast host was not available for the selected target"
+                    "No Chromecast target configured in Molotov TV options"
                 )
-            raise HomeAssistantError(
-                "No Chromecast target configured in Molotov TV options"
+
+            asset_url, title, is_live = self._build_cast_request(media_id)
+            custom_data = self._build_cast_custom_data(asset_url)
+
+            use_custom = (receiver_type == "custom") and (
+                CUSTOM_RECEIVER_APP_ID is not None
             )
 
-        asset_url, title, is_live = self._build_cast_request(media_id)
-        custom_data = self._build_cast_custom_data(asset_url)
+            if use_custom:
+                _LOGGER.debug("Using custom receiver: %s", CUSTOM_RECEIVER_APP_ID)
+                app_id = CUSTOM_RECEIVER_APP_ID
 
-        use_custom = (receiver_type == "custom") and (
-            CUSTOM_RECEIVER_APP_ID is not None
-        )
-
-        if use_custom:
-            _LOGGER.debug("Using custom receiver: %s", CUSTOM_RECEIVER_APP_ID)
-            app_id = CUSTOM_RECEIVER_APP_ID
-
-            try:
                 _LOGGER.debug("Resolving asset stream locally for custom receiver...")
                 asset_data = await self._api.async_get_asset_stream(asset_url)
 
@@ -1829,37 +1831,26 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 elif video_format == "HLS":
                     custom_data["content_type"] = "application/x-mpegurl"
 
-            except MolotovApiError as err:
-                self._release_stream_slot()
-                _LOGGER.error("Failed to resolve stream for custom receiver: %s", err)
-                message = err.user_message or str(err)
-                raise HomeAssistantError(f"Échec de lecture: {message}") from err
-            except Exception as err:
-                self._release_stream_slot()
-                _LOGGER.error("Failed to resolve stream for custom receiver: %s", err)
-                raise HomeAssistantError(f"Échec de lecture: {err}") from err
-        else:
-            app_id = self._api.session_state.cast_app_id
-            if not app_id:
-                self._release_stream_slot()
-                raise HomeAssistantError("Molotov cast app id is not available")
+            else:
+                app_id = self._api.session_state.cast_app_id
+                if not app_id:
+                    raise HomeAssistantError("Molotov cast app id is not available")
 
-        content_type = (
-            custom_data.get("content_type") or self._api.stream_content_type()
-        )
+            content_type = (
+                custom_data.get("content_type") or self._api.stream_content_type()
+            )
 
-        _LOGGER.debug(
-            "Casting to %s: app_id=%s, asset_url=%s, content_type=%s, title=%s, is_live=%s",
-            resolved_target,
-            app_id,
-            asset_url[:100],
-            content_type,
-            title,
-            is_live,
-        )
-        _LOGGER.debug("Cast custom_data keys: %s", list(custom_data.keys()))
+            _LOGGER.debug(
+                "Casting to %s: app_id=%s, asset_url=%s, content_type=%s, title=%s, is_live=%s",
+                resolved_target,
+                app_id,
+                asset_url[:100],
+                content_type,
+                title,
+                is_live,
+            )
+            _LOGGER.debug("Cast custom_data keys: %s", list(custom_data.keys()))
 
-        try:
             await async_cast_media(
                 self.hass,
                 cast_target=resolved_target,
@@ -1886,6 +1877,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             # Stop reusing the entity-level stream_id for this session
             self._stream_id = None
+            slot_transferred = True
 
             # Get initial volume from Chromecast
             volume_info = await async_get_cast_volume(self.hass, resolved_target)
@@ -1929,8 +1921,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 resolved_target,
             )
         except MolotovCastError as err:
-            self._release_stream_slot()
             raise HomeAssistantError(str(err)) from err
+        except MolotovApiError as err:
+            _LOGGER.error("Failed to resolve stream: %s", err)
+            message = err.user_message or str(err)
+            raise HomeAssistantError(f"Échec de lecture: {message}") from err
+        finally:
+            if not slot_transferred:
+                self._release_stream_slot()
 
     def _find_cast_entity(self, host: str) -> str | None:
         """Find the media_player entity ID for a Chromecast host."""
