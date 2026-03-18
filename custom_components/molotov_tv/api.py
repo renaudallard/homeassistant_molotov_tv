@@ -1143,8 +1143,6 @@ class MolotovApi:
                 return await reader(resp)
         except MolotovApiError:
             raise
-        except MolotovAuthError:
-            raise
         except ClientResponseError as err:
             if err.status == 401:
                 raise MolotovAuthError("Invalid credentials") from err
