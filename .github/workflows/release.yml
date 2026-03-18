@@ -1,0 +1,35 @@
+name: Release on version bump
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'custom_components/molotov_tv/manifest.json'
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for version change
+        id: version
+        run: |
+          new=$(jq -r .version custom_components/molotov_tv/manifest.json)
+          old=$(git show HEAD~1:custom_components/molotov_tv/manifest.json | jq -r .version)
+          echo "old=$old"
+          echo "new=$new"
+          if [ "$new" != "$old" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "tag=v$new" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
