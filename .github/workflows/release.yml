@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  tag:
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -36,3 +36,17 @@ jobs:
         run: |
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create zip archive
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          cd custom_components/molotov_tv
+          zip -r ../../molotov_tv.zip .
+
+      - name: Create Release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: molotov_tv.zip
+          generate_release_notes: true
