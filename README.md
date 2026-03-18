@@ -168,12 +168,18 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 ## 🏗️ Architecture
 
 Le code suit une structure modulaire :
+*   **`__init__.py`** : Configuration de l'intégration, enregistrement du panneau latéral et des plateformes.
+*   **`const.py`** : Constantes, préfixes d'identifiants médias, chaîne user-agent.
 *   **`models.py`** : Dataclasses partagées (`EpgProgram`, `EpgChannel`, `EpgData`, `BrowseAsset`).
+*   **`config_flow.py`** : Flux de configuration (email/mot de passe + options).
+*   **`api.py`** : Client HTTP Molotov avec retry automatique et gestion des tokens.
 *   **`coordinator.py`** : Coordinateur HA pour les mises à jour EPG, parsing des données brutes.
 *   **`helpers.py`** : Fonctions utilitaires de parsing (timestamps, images, programmes EPG, assets).
 *   **`browse.py`** : Construction de l'arborescence du navigateur de médias.
-*   **`api.py`** : Client HTTP Molotov avec retry automatique et gestion des tokens.
 *   **`media_player.py`** : Entité media player HA, casting, lecture locale.
+*   **`text.py`** : Entité de recherche textuelle.
+*   **`chromecast.py`** : Connexion, contrôle et reconnexion Chromecast.
+*   **`storage.py`** : Stockage persistant des positions de reprise de lecture.
 *   **`panel/src/molotov-panel.js`** : Panneau LitElement frontend.
 
 ## 🛠️ Avancé
