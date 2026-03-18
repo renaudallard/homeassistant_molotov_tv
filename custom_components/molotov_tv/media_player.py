@@ -220,6 +220,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._attr_name = None
         self._attr_has_entity_name = True
         self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
+        self._replay_cache: dict[str, tuple[datetime, list[BrowseAsset]]] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         # Multi-cast session tracking
@@ -1401,7 +1402,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
-        replays = await async_fetch_channel_replays(self._api, channel_id, data)
+        replays = self._get_cached_replay(channel_id)
+        if replays is None:
+            replays = await async_fetch_channel_replays(self._api, channel_id, data)
+            self._set_cached_replay(channel_id, replays)
         if replays:
             children.append(
                 BrowseMedia(
@@ -2254,6 +2258,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             self._program_cache.pop(oldest_id, None)
         self._program_cache[channel_id] = (now, programs)
+
+    def _get_cached_replay(self, channel_id: str) -> list[BrowseAsset] | None:
+        cached = self._replay_cache.get(channel_id)
+        if not cached:
+            return None
+        fetched_at, assets = cached
+        if dt_util.utcnow() - fetched_at > ASSET_CACHE_TTL:
+            self._replay_cache.pop(channel_id, None)
+            return None
+        return assets
+
+    def _set_cached_replay(
+        self, channel_id: str, assets: list[BrowseAsset]
+    ) -> None:
+        self._replay_cache[channel_id] = (dt_util.utcnow(), assets)
 
     def _get_cached_assets(
         self, cached: tuple[datetime, list[BrowseAsset]] | None
