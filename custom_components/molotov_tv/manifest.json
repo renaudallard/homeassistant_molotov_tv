@@ -7,6 +7,6 @@
   "after_dependencies": ["http", "frontend"],
   "codeowners": [],
   "iot_class": "cloud_polling",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "min_version": "2025.10.0"
 }
