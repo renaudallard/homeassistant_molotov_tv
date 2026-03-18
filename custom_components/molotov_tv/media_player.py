@@ -2156,7 +2156,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     def _build_cast_request(self, media_id: str) -> tuple[str, str | None, bool]:
         now = dt_util.utcnow()
         if media_id.startswith(f"{MEDIA_PROGRAM_PREFIX}:"):
-            parts = media_id.split(":")
+            # Strip optional |description suffix appended by _async_browse_now_playing
+            bare_id = media_id.split("|", 1)[0]
+            parts = bare_id.split(":")
             if len(parts) != 4:
                 raise HomeAssistantError("Invalid program identifier")
             channel_id = parts[1]
