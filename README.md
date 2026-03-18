@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Molotov TV" width="120">
+</p>
+
 # Molotov TV pour Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
