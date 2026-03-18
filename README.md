@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Molotov TV" width="120">
+  <img src="logo.png" alt="Molotov TV" width="300">
 </p>
 
 # Molotov TV pour Home Assistant
