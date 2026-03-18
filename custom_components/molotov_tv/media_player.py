@@ -1334,14 +1334,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if programs is not None:
             channel.programs = programs
 
-        return await self._async_browse_programs_with_replays(data, channel_id)
+        return await self._async_browse_programs_with_replays(data, channel)
 
     async def _async_browse_programs_with_replays(
-        self, data: EpgData, channel_id: str
+        self, data: EpgData, channel: EpgChannel
     ) -> BrowseMedia:
-        channel = find_channel(data, channel_id)
-        if channel is None:
-            raise HomeAssistantError("Channel was not found in the EPG")
+        channel_id = channel.channel_id
 
         _LOGGER.debug(
             "Browsing channel %s (%s), has %d programs in EPG",
