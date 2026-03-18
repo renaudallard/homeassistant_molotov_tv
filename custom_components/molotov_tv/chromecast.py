@@ -998,11 +998,7 @@ def _cast_control(host: str, action: str, *args: Any) -> bool:
         elif action == "stop":
             mc.stop()
             _notify_connection_status(host, False)
-            # Clean up after stop
-            try:
-                cast.disconnect()
-            except Exception:
-                pass
+            # remove_active_cast disconnects and removes the connection
             remove_active_cast(host)
         elif action == "seek" and args:
             mc.seek(args[0])
