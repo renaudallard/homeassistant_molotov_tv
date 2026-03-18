@@ -1379,15 +1379,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if program.episode_title:
                 title = f"{program.title} - {program.episode_title}"
 
-            _LOGGER.debug(
-                "Program: %s, start=%s, end=%s, now=%s, status=%s",
-                title[:30],
-                program.start.isoformat(),
-                program.end.isoformat(),
-                now.isoformat(),
-                status.strip() or "future",
-            )
-
             children.append(
                 BrowseMedia(
                     title=f"{status}{title}",

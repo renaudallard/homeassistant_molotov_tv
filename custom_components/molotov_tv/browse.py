@@ -464,30 +464,13 @@ async def async_fetch_channel_replays(
     for program in channel.programs:
         # Skip programs that haven't ended yet (these are live or upcoming)
         if program.end > now:
-            _LOGGER.debug(
-                "Skipping future/live program: %s (ends %s)",
-                program.title[:30],
-                program.end.isoformat(),
-            )
             continue
         # Skip programs older than replay window
         if program.start < replay_cutoff:
-            _LOGGER.debug(
-                "Skipping old program: %s (started %s)",
-                program.title[:30],
-                program.start.isoformat(),
-            )
             continue
 
         # Build replay URL with start_over
         asset_url = api.build_asset_url("channel", channel_id, start_over=True)
-
-        _LOGGER.debug(
-            "Adding replay: %s (start=%s, end=%s)",
-            program.title[:30],
-            program.start.isoformat(),
-            program.end.isoformat(),
-        )
 
         replays.append(
             BrowseAsset(
