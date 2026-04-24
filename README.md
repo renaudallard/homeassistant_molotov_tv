@@ -38,6 +38,8 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 
 ### Option 1 : HACS (Recommandé)
 
+[![Ouvrir dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=renaudallard&repository=homeassistant_molotov.tv&category=integration)
+
 Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez l'ajouter manuellement comme dépôt personnalisé.
 
 1.  Ouvrez **HACS** dans Home Assistant.
