@@ -874,16 +874,27 @@ class MolotovApi:
 
         return all_sections
 
-    async def async_refresh_token(self) -> None:
-        """Refresh access token using the refresh token."""
+    async def async_refresh_token(self, force: bool = False) -> None:
+        """Refresh access token using the refresh token.
 
+        When force is set the unexpired-token short-circuit is skipped: the
+        server rejected a token we still believe is valid (revoked, password
+        changed elsewhere, or clock skew), so a refresh must happen anyway.
+        """
+
+        token_before = self._session_state.access_token
         async with self._lock:
             # Re-check expiration inside lock to avoid redundant refreshes
             expires_at = self._session_state.access_token_expires_at
-            if expires_at:
+            if not force and expires_at:
                 now = int(dt_util.utcnow().timestamp())
                 if now < expires_at - 60:
                     return  # Token was already refreshed by another call
+
+            # If forced but the token already changed while waiting for the
+            # lock, another caller refreshed it; do not refresh again.
+            if force and self._session_state.access_token != token_before:
+                return
 
             refresh_token = self._session_state.refresh_token
             if not refresh_token:
@@ -1072,7 +1083,7 @@ class MolotovApi:
                 timeout=timeout or DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status == 401 and auth and _retry:
-                    await self.async_refresh_token()
+                    await self.async_refresh_token(force=True)
                     return await self._do_request(
                         method,
                         url_or_path,
