@@ -580,7 +580,9 @@ async def async_fetch_program_episodes(
     return BrowseMedia(
         title=display_title,
         media_class=MediaClass.DIRECTORY,
-        media_content_id=f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{channel_id}:{program_id}",
+        media_content_id=(
+            f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{channel_id}:{program_id}:{title or ''}"
+        ),
         media_content_type="directory",
         can_play=False,
         can_expand=True,
