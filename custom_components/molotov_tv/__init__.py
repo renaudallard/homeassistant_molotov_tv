@@ -33,6 +33,7 @@ import importlib
 import logging
 from pathlib import Path
 
+from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.components.zeroconf import async_get_instance as async_get_zeroconf
@@ -158,18 +159,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Unregister sidebar panel
-    try:
-        # Remove panel from frontend_panels registry
-        if (
-            "frontend_panels" in hass.data
-            and PANEL_URL_PATH in hass.data["frontend_panels"]
-        ):
-            hass.data["frontend_panels"].pop(PANEL_URL_PATH, None)
-    except Exception:
-        pass
-
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        # The sidebar panel is shared across all entries, so only remove it
+        # once the last entry is unloaded. Use the public helper so the
+        # frontend is notified instead of poking hass.data internals.
+        if not hass.data[DOMAIN]:
+            async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
     return unload_ok
