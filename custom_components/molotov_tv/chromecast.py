@@ -110,21 +110,37 @@ def set_zeroconf_instance(zeroconf: Any) -> None:
     _LOGGER.debug("Zeroconf instance set")
 
 
-def _cleanup_stale_casts() -> None:
-    """Remove stale cast connections. Must be called with _cast_lock held."""
+def _disconnect_casts(casts: list[Any]) -> None:
+    """Disconnect cast objects, ignoring errors.
+
+    Must be called WITHOUT _cast_lock held: disconnect() is a blocking socket
+    teardown and would otherwise serialise every other cast operation.
+    """
+    for cast in casts:
+        try:
+            cast.disconnect()
+        except Exception:
+            pass
+
+
+def _cleanup_stale_casts() -> list[Any]:
+    """Pop stale cast connections. Must be called with _cast_lock held.
+
+    Returns the cast objects to disconnect; the caller disconnects them after
+    releasing _cast_lock.
+    """
     now = time.time()
     stale = [
         host
         for host, conn in _active_casts.items()
         if now - conn.timestamp > CAST_CONNECTION_TTL
     ]
+    casts = []
     for host in stale:
         conn = _active_casts.pop(host)
-        try:
-            conn.cast.disconnect()
-        except Exception:
-            pass
+        casts.append(conn.cast)
         _LOGGER.debug("Cleaned up stale cast connection for %s", host)
+    return casts
 
 
 def get_active_cast(host: str) -> Any | None:
@@ -153,17 +169,15 @@ def set_active_cast(
     is_live: bool = False,
 ) -> None:
     """Store an active cast connection with metadata."""
+    to_disconnect: list[Any] = []
     with _cast_lock:
         # Cleanup stale connections first
-        _cleanup_stale_casts()
+        to_disconnect.extend(_cleanup_stale_casts())
         # If at capacity, remove oldest connection
         while len(_active_casts) >= MAX_ACTIVE_CASTS and host not in _active_casts:
             oldest_host = min(_active_casts, key=lambda h: _active_casts[h].timestamp)
             old_conn = _active_casts.pop(oldest_host)
-            try:
-                old_conn.cast.disconnect()
-            except Exception:
-                pass
+            to_disconnect.append(old_conn.cast)
             _LOGGER.debug("Evicted oldest cast connection for %s", oldest_host)
 
         # Preserve existing listeners if updating
@@ -182,16 +196,16 @@ def set_active_cast(
             listeners=listeners,
         )
 
+    # Disconnect superseded connections after releasing the lock.
+    _disconnect_casts(to_disconnect)
+
 
 def remove_active_cast(host: str) -> None:
     """Remove an active cast connection."""
     with _cast_lock:
         conn = _active_casts.pop(host, None)
-        if conn:
-            try:
-                conn.cast.disconnect()
-            except Exception:
-                pass
+    if conn:
+        _disconnect_casts([conn.cast])
 
 
 def register_connection_callback(callback: ConnectionStatusCallback) -> None:
