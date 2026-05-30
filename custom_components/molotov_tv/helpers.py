@@ -1062,7 +1062,7 @@ def extract_program_episodes(
             if not isinstance(section, dict):
                 continue
 
-            section_slug = (section.get("slug") or "").lower()
+            section_slug = str(section.get("slug") or "").lower()
             section_title = section.get("title") or section.get("slug") or "unknown"
 
             # Skip sections that aren't playable content
@@ -1202,7 +1202,7 @@ def extract_recording_assets(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     sections = extract_sections(data)
 
     for section in sections:
-        slug = (section.get("slug") or "").casefold()
+        slug = str(section.get("slug") or "").casefold()
 
         # Skip non-content sections (gauge widget, category filters)
         if slug in _BOOKMARK_SKIP_SLUGS:
