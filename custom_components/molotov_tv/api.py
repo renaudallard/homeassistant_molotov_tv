@@ -353,10 +353,12 @@ class MolotovApi:
         for coro in asyncio.as_completed(tasks):
             try:
                 url, result = await coro
-                # Cancel remaining tasks
+                # Cancel remaining tasks and wait for them so their exceptions
+                # are retrieved and the cancellations complete cleanly.
                 for task in tasks:
                     if not task.done():
                         task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 _LOGGER.debug("Channel fetch succeeded from %s", url)
                 return result
             except MolotovApiError as err:
@@ -493,6 +495,7 @@ class MolotovApi:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 _LOGGER.debug("Search succeeded from %s", endpoint)
                 return result
             except MolotovApiError as err:
