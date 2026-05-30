@@ -302,7 +302,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             len(active_streams),
             MAX_CONCURRENT_STREAMS,
         )
-        if not session_id:
+        if slot_id == self._stream_id:
             self._stream_id = None
 
     @property
@@ -825,7 +825,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     ) -> None:
         """Play media locally by resolving stream URL."""
         # Acquire stream slot before starting playback
-        self._acquire_stream_slot(session_id)
+        slot_id = self._acquire_stream_slot(session_id)
 
         try:
             asset_url, title, is_live = self._build_cast_request(media_id)
@@ -837,11 +837,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 json.dumps(asset_data, default=str),
             )
 
-            if session_id:
-                self._local_streams[session_id] = asset_data
-            else:
-                # Legacy: no session, use single-stream behavior
-                self._local_streams["_default"] = asset_data
+            # Store under the actual slot id so the slot can be released on
+            # stop (legacy no-session plays use the generated slot id, not a
+            # placeholder key that would make the release a no-op).
+            self._local_streams[slot_id] = asset_data
 
             # Only change entity state if no cast is active
             # (cast-driven state takes priority for the entity)
@@ -877,8 +876,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             message = err.user_message or str(err)
             raise HomeAssistantError(f"Échec de lecture: {message}") from err
         finally:
-            if not self._local_streams.get(session_id or "_default"):
-                self._release_stream_slot(session_id)
+            if not self._local_streams.get(slot_id):
+                self._release_stream_slot(slot_id)
 
     def _async_stop_local_stream(self, session_id: str | None = None) -> None:
         """Stop local stream(s) without affecting cast sessions."""
