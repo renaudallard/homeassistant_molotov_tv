@@ -28,7 +28,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -96,6 +98,36 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]):
+        """Handle re-authentication when the stored credentials stop working."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input: dict | None = None):
+        """Prompt for the password and update the existing entry."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
+        email = reauth_entry.data.get(CONF_EMAIL, "")
+
+        if user_input is not None:
+            data = {CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]}
+            try:
+                await _async_validate_input(self.hass, data)
+            except MolotovAuthError:
+                errors["base"] = "invalid_auth"
+                _LOGGER.warning("Molotov re-authentication failed")
+            except MolotovApiError as err:
+                errors["base"] = "cannot_connect"
+                _LOGGER.exception("Molotov API error during reauth: %s", err)
+            else:
+                return self.async_update_reload_and_abort(reauth_entry, data=data)
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            description_placeholders={"email": email},
             errors=errors,
         )
 

@@ -9,11 +9,21 @@
           "email": "Email",
           "password": "Mot de passe"
         }
+      },
+      "reauth_confirm": {
+        "title": "Ré-authentification Molotov",
+        "description": "Saisissez le mot de passe pour {email}.",
+        "data": {
+          "password": "Mot de passe"
+        }
       }
     },
     "error": {
       "cannot_connect": "Échec de la connexion à Molotov.",
       "invalid_auth": "Email ou mot de passe invalide."
+    },
+    "abort": {
+      "reauth_successful": "Ré-authentification réussie."
     }
   },
   "options": {
