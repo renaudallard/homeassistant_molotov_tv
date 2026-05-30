@@ -1699,10 +1699,24 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         elif player_state == "PAUSED":
             session.player_state = STATE_PAUSED
         elif player_state == "IDLE":
+            was_idle = session.player_state == STATE_IDLE
             session.player_state = STATE_IDLE
             session.position = None
             session.duration = None
             session.position_updated_at = None
+            # Reclaim the stream slot when playback finishes or is stopped on
+            # the device; the health monitor only reaps on app takeover or a
+            # lost connection, so a completed item would otherwise keep its
+            # slot. Only act on the transition into IDLE to avoid scheduling
+            # repeated teardowns, and ignore INTERRUPTED (a new load).
+            idle_reason = getattr(status, "idle_reason", None)
+            if not was_idle and idle_reason in ("FINISHED", "CANCELLED"):
+                self.hass.async_create_task(
+                    self._async_end_session_for_host(
+                        host, f"Playback ended ({idle_reason})"
+                    )
+                )
+                return
 
         # Handle track information
         raw_tracks = getattr(status, "tracks", [])
