@@ -853,11 +853,11 @@ def parse_past_programs_as_replays(
         video_type = video.get("type", "channel")
         asset_url = api.build_asset_url(video_type, str(video_id), start_over=True)
 
-        # Extract program_id and channel_id for episode browsing
+        # Extract program_id and channel_id for episode browsing. Use the
+        # channel id resolved earlier (which also looks at metadata and the
+        # channel payload), falling back to the requested channel id.
         program_id = str(video.get("program_id")) if video.get("program_id") else None
-        item_channel_id = (
-            str(video.get("channel_id")) if video.get("channel_id") else channel_id
-        )
+        item_channel_id = str(raw_channel_id) if raw_channel_id else channel_id
 
         replays.append(
             BrowseAsset(
