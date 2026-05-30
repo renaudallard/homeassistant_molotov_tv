@@ -2335,16 +2335,20 @@ class MolotovPanel extends LitElement {
       this._castTitle = state.attributes.media_title || this._castTitle;
       this._isLive = state.attributes.is_live || false;
     } else if (this._castPlaying) {
-      // No active casts but we were casting — check for next episode
-      this._onPlaybackEnded();
-      this._castPlaying = false;
-      this._castTarget = null;
-      this._castTitle = null;
-      this._castMinimized = false;
-      this._castLoading = false;
-      this._activeCasts = {};
-      this._focusedCastHost = null;
-      this._stopCastProgressUpdate();
+      // No active casts but we were casting — check for next episode. If one
+      // started, keep the playback state (incl. the loading banner) it set up
+      // instead of tearing it down.
+      const startedNext = this._onPlaybackEnded();
+      if (!startedNext) {
+        this._castPlaying = false;
+        this._castTarget = null;
+        this._castTitle = null;
+        this._castMinimized = false;
+        this._castLoading = false;
+        this._activeCasts = {};
+        this._focusedCastHost = null;
+        this._stopCastProgressUpdate();
+      }
     }
   }
 
@@ -2711,14 +2715,16 @@ class MolotovPanel extends LitElement {
   }
 
   _onPlaybackEnded() {
-    if (this._episodePlaylist.length === 0 || this._episodeIndex < 0) return;
+    // Returns true when a next episode was started, so callers can skip
+    // tearing down the playback state that the new playback just set up.
+    if (this._episodePlaylist.length === 0 || this._episodeIndex < 0) return false;
 
     const nextIndex = this._episodeIndex + 1;
     if (nextIndex >= this._episodePlaylist.length) {
       // Last episode — clear playlist
       this._episodePlaylist = [];
       this._episodeIndex = -1;
-      return;
+      return false;
     }
 
     const nextEpisode = this._episodePlaylist[nextIndex];
@@ -2730,6 +2736,7 @@ class MolotovPanel extends LitElement {
     } else {
       this._playEpisode(nextEpisode, this._episodeParentTitle);
     }
+    return true;
   }
 
   _goBackFromPlayer() {
