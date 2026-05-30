@@ -1042,7 +1042,15 @@ class MolotovApi:
             raise MolotovApiError(
                 f"Unexpected response type from Molotov: {content_type or 'unknown'}"
             )
-        return await resp.json()
+        data = await resp.json()
+        if not isinstance(data, dict):
+            # Callers expect a mapping; a bare JSON list/scalar would otherwise
+            # raise an AttributeError that bypasses MolotovApiError handling.
+            raise MolotovApiError(
+                f"Unexpected JSON shape from Molotov: expected object, "
+                f"got {type(data).__name__}"
+            )
+        return data
 
     @staticmethod
     async def _read_bytes(resp) -> bytes:
