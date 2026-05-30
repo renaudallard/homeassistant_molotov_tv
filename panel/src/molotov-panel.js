@@ -3113,6 +3113,17 @@ class MolotovPanel extends LitElement {
     `;
   }
 
+  _tonightToProgramId(tonightId) {
+    // tonight_program:channel_id:name:thumb:start_ts:end_ts:description
+    //   -> program:channel_id:start_ts:end_ts (timestamps already in seconds).
+    // The backend only understands the program: form for these.
+    const parts = tonightId.split(":");
+    if (parts[0] !== "tonight_program" || parts.length < 6) {
+      return tonightId;
+    }
+    return `program:${parts[1]}:${parts[4]}:${parts[5]}`;
+  }
+
   async _playTonightProgram(program, channel) {
     const entityId = this._getEntityId();
     if (!entityId) return;
@@ -3120,11 +3131,13 @@ class MolotovPanel extends LitElement {
     this._episodePlaylist = [];
     this._episodeIndex = -1;
 
+    const programMediaId = this._tonightToProgramId(program.mediaContentId);
+
     this._selectedChannel = {
       id: channel.id,
       name: channel.name,
       thumbnail: channel.thumbnail,
-      mediaContentId: program.mediaContentId,
+      mediaContentId: programMediaId,
       currentProgram: {
         title: program.title,
         start: program.start,
@@ -3147,7 +3160,7 @@ class MolotovPanel extends LitElement {
     this._initPlaybackFlags();
 
     try {
-      const mediaContentId = this._buildPlayMediaId(program.mediaContentId);
+      const mediaContentId = this._buildPlayMediaId(programMediaId);
       await this.hass.callService("media_player", "play_media", {
         entity_id: entityId,
         media_content_id: mediaContentId,
