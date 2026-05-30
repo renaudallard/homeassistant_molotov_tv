@@ -328,8 +328,11 @@ def _attempt_reconnect(host: str) -> bool:
             if conn.app_id:
                 _launch_cast_app(cast, conn.app_id)
 
-            # Re-register listeners
-            for listener in conn.listeners:
+            # Re-register listeners. Snapshot under the lock because another
+            # thread may append via _cast_register_listener concurrently.
+            with _cast_lock:
+                listeners = list(conn.listeners)
+            for listener in listeners:
                 try:
                     cast.media_controller.register_status_listener(listener)
                 except Exception as err:
