@@ -1,0 +1,6 @@
+[tool.mypy]
+# pychromecast ships no type stubs; silence the missing-import errors so the
+# real type checking signal is not drowned out.
+[[tool.mypy.overrides]]
+module = "pychromecast.*"
+ignore_missing_imports = true

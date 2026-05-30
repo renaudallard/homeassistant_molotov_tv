@@ -594,7 +594,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if data is None:
             raise HomeAssistantError("EPG data is not available yet")
 
-        if media_content_id in (None, MEDIA_ROOT):
+        if media_content_id is None or media_content_id == MEDIA_ROOT:
             return build_root_browse()
 
         if media_content_id == MEDIA_NOW_PLAYING:
@@ -706,8 +706,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if media_id.startswith("stop_local"):
             # Format: stop_local:SESSION_ID or stop_local
             parts = media_id.split(":", 1)
-            session_id = parts[1] if len(parts) > 1 else None
-            self._async_stop_local_stream(session_id)
+            stop_session_id = parts[1] if len(parts) > 1 else None
+            self._async_stop_local_stream(stop_session_id)
             return
 
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
@@ -1189,8 +1189,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     results,
                     show_search=True,
                 )
-                browse.children.insert(
-                    0,
+                browse.children = [
                     BrowseMedia(
                         title="⌨️ Taper votre recherche...",
                         media_class=MediaClass.DIRECTORY,
@@ -1199,7 +1198,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         can_play=False,
                         can_expand=True,
                     ),
-                )
+                    *(browse.children or []),
+                ]
                 return browse
 
         children: list[BrowseAsset] = []
@@ -1207,8 +1207,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             "Recherche", MEDIA_SEARCH, children, show_search=True
         )
 
-        browse.children.insert(
-            0,
+        browse.children = [
             BrowseMedia(
                 title="⌨️ Taper votre recherche...",
                 media_class=MediaClass.DIRECTORY,
@@ -1217,7 +1216,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_play=False,
                 can_expand=True,
             ),
-        )
+            *(browse.children or []),
+        ]
 
         return browse
 
@@ -1632,16 +1632,20 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         return list(session.tracks.keys()) if session and session.tracks else None
 
     @property
-    def media_position(self) -> float | None:
+    def media_position(self) -> int | None:
         """Return current playback position in seconds."""
         session = self._focused_session
-        return session.position if session else None
+        if session and session.position is not None:
+            return int(session.position)
+        return None
 
     @property
-    def media_duration(self) -> float | None:
+    def media_duration(self) -> int | None:
         """Return total media duration in seconds."""
         session = self._focused_session
-        return session.duration if session else None
+        if session and session.duration is not None:
+            return int(session.duration)
+        return None
 
     @property
     def media_position_updated_at(self) -> datetime | None:
@@ -1870,9 +1874,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     custom_data["content_type"] = "application/x-mpegurl"
 
             else:
-                app_id = self._api.session_state.cast_app_id
-                if not app_id:
+                cast_app_id = self._api.session_state.cast_app_id
+                if not cast_app_id:
                     raise HomeAssistantError("Molotov cast app id is not available")
+                app_id = cast_app_id
 
             content_type = (
                 custom_data.get("content_type") or self._api.stream_content_type()
@@ -2106,8 +2111,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         """Stop the focused cast session and/or local stream."""
         session = self._focused_session
         if session:
-            # Save position for resume
-            if not session.is_live:
+            # Save position for resume (needs a content id to key the store by)
+            if not session.is_live and session.content_id:
                 position_data = await async_get_cast_position(self.hass, session.host)
                 if position_data:
                     position, duration = position_data
@@ -2241,12 +2246,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 raise HomeAssistantError(
                     "Invalid replay, recording, episode, or search result identifier"
                 )
-            asset_url = payload.get("url")
-            if not isinstance(asset_url, str) or not asset_url:
+            url_value = payload.get("url")
+            if not isinstance(url_value, str) or not url_value:
                 raise HomeAssistantError("Asset URL is missing")
             title = payload.get("title")
             is_live = bool(payload.get("live", False))
-            return asset_url, title, is_live
+            return url_value, title, is_live
 
         if media_id.startswith(f"{MEDIA_CHANNEL_PREFIX}:"):
             channel_id = media_id.split(":", 1)[1]
@@ -2495,11 +2500,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     if isinstance(value, str) and value:
                         return value
             if registry_entry and registry_entry.device_id:
-                host = extract_host_from_device_registry(
+                device_host = extract_host_from_device_registry(
                     self.hass, registry_entry.device_id
                 )
-                if host:
-                    return host
+                if device_host:
+                    return device_host
         return None
 
     def _match_cast_entity_id(self, name: str) -> str | None:

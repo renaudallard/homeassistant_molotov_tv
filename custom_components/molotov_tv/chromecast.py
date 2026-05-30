@@ -508,15 +508,14 @@ def _cast_media_blocking(
 
     cast = None
     browser = None
-    stop_discovery = None
 
     try:
         # Try to get stop_discovery function
         try:
             from pychromecast.discovery import stop_discovery
         except ImportError:
-            _LOGGER.debug("stop_discovery not in pychromecast.discovery")
             stop_discovery = None
+            _LOGGER.debug("stop_discovery not in pychromecast.discovery")
 
         # Try different pychromecast APIs
         chromecasts = None

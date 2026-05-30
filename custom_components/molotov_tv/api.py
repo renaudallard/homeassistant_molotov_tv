@@ -416,7 +416,7 @@ class MolotovApi:
         _LOGGER.debug("Performing search with base_api_url: %s", self._base_api_url)
 
         # Try different search endpoints
-        endpoints = []
+        endpoints: list[tuple[str, str, dict[str, str] | None]] = []
 
         # Use dynamic search URL if available (preferred)
         # Note: globalSearchUrl typically returns a list of SearchTile objects
@@ -711,10 +711,11 @@ class MolotovApi:
             url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/sections")
             _LOGGER.debug("Fetching channel sections for replays: %s", url)
             result = await self._request("GET", url, auth=True)
-            if result and result.get("sections"):
+            sections = result.get("sections")
+            if sections:
                 _LOGGER.debug(
                     "Found %d sections for channel %s via dedicated endpoint",
-                    len(result.get("sections")),
+                    len(sections),
                     channel_id,
                 )
                 return result

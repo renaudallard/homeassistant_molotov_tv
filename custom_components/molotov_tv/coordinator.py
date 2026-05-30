@@ -369,6 +369,7 @@ def _extract_image_url(
     if not isinstance(bundle, dict):
         return None
 
+    preferred: tuple[str, ...]
     if prefer_poster:
         preferred = ("poster_with_channel", "poster", "poster_tv", "landscape")
     else:

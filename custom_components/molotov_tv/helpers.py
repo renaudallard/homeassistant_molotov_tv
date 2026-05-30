@@ -1275,10 +1275,10 @@ def discover_cast_targets_blocking(zconf: Any) -> list[str]:
         getattr(pychromecast, "__version__", "unknown"),
     )
 
-    stop_discovery = None
     try:
         from pychromecast.discovery import stop_discovery
     except ImportError:
+        stop_discovery = None
         _LOGGER.debug("stop_discovery not available")
 
     browser = None
