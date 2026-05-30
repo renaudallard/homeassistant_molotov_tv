@@ -1342,7 +1342,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             except MolotovApiError as err:
                 raise HomeAssistantError("Failed to fetch channel programs") from err
 
-        if programs is not None:
+        if programs is not None and programs is not channel.programs:
+            # Work on a copy so the per-channel fetch result is never written
+            # back onto the shared coordinator channel (which other browse
+            # views read until the next refresh).
+            channel = copy(channel)
             channel.programs = programs
 
         return await self._async_browse_programs_with_replays(data, channel)
