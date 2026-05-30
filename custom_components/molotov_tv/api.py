@@ -1099,7 +1099,10 @@ class MolotovApi:
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
-                # Retry on transient failures
+                # Decide whether to retry transient failures, but back off
+                # only after the response is released (below, outside the
+                # context manager) so a pooled connection is not held for the
+                # duration of the sleep.
                 if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
                     _LOGGER.warning(
                         "Retryable error %s for %s %s, attempt %d/%d",
@@ -1109,23 +1112,10 @@ class MolotovApi:
                         _retries + 1,
                         MAX_RETRIES,
                     )
-                    await asyncio.sleep(
+                    retry_after = (
                         RETRY_DELAY_SECONDS * (2**_retries) * (0.5 + random.random())
                     )
-                    return await self._do_request(
-                        method,
-                        url_or_path,
-                        auth=auth,
-                        json=json,
-                        params=params,
-                        headers=headers,
-                        basic_auth=basic_auth,
-                        timeout=timeout,
-                        reader=reader,
-                        _retry=_retry,
-                        _retries=_retries + 1,
-                    )
-                if resp.status >= 400:
+                elif resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
                     user_message = _extract_user_message(error_body)
@@ -1151,7 +1141,25 @@ class MolotovApi:
                         + (f": {error_body}" if error_body else ""),
                         user_message=user_message,
                     )
-                return await reader(resp)
+                else:
+                    return await reader(resp)
+
+            # Transient failure: the response is released here, so the backoff
+            # does not pin a connection. Sleep and retry.
+            await asyncio.sleep(retry_after)
+            return await self._do_request(
+                method,
+                url_or_path,
+                auth=auth,
+                json=json,
+                params=params,
+                headers=headers,
+                basic_auth=basic_auth,
+                timeout=timeout,
+                reader=reader,
+                _retry=_retry,
+                _retries=_retries + 1,
+            )
         except MolotovApiError:
             raise
         except ClientResponseError as err:
