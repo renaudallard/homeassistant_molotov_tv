@@ -36,6 +36,7 @@ import json
 import logging
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
+import uuid
 
 from homeassistant.components.media_player import (
     BrowseMedia,
@@ -259,8 +260,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     def _acquire_stream_slot(self, session_id: str | None = None) -> str:
         """Acquire a stream slot. Raises if limit reached."""
-        import uuid
-
         active_streams = self._get_active_streams()
 
         # If a session_id is provided, release its existing slot first
@@ -1750,9 +1749,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         cast_target_override: str | None,
         receiver_type: str = "native",
     ) -> None:
-        # Acquire stream slot before starting playback
-        self._acquire_stream_slot()
-        slot_transferred = False
+        # Acquire a dedicated stream slot for this cast so it does not steal
+        # the entity-level slot that may belong to an active local stream.
+        cast_slot_id = self._acquire_stream_slot(str(uuid.uuid4()))
+        slot_assigned = False
 
         try:
             await self._api.async_ensure_logged_in()
@@ -1865,11 +1865,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 position_updated_at=dt_util.utcnow(),
                 connected=True,
                 player_state=STATE_PLAYING,
-                stream_id=self._stream_id,
+                stream_id=cast_slot_id,
             )
-            # Stop reusing the entity-level stream_id for this session
-            self._stream_id = None
-            slot_transferred = True
+            slot_assigned = True
 
             # Get initial volume from Chromecast
             volume_info = await async_get_cast_volume(self.hass, resolved_target)
@@ -1919,8 +1917,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             message = err.user_message or str(err)
             raise HomeAssistantError(f"Échec de lecture: {message}") from err
         finally:
-            if not slot_transferred:
-                self._release_stream_slot()
+            if not slot_assigned:
+                self._release_stream_slot(cast_slot_id)
 
     def _find_cast_entity(self, host: str) -> str | None:
         """Find the media_player entity ID for a Chromecast host."""
