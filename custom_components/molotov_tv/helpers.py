@@ -1356,9 +1356,12 @@ def discover_cast_targets_blocking(zconf: Any) -> list[str]:
             if not name and getattr(cast, "device", None):
                 name = getattr(cast.device, "friendly_name", None)
 
-            if isinstance(name, str) and name:
-                targets.append(f"{name}={host}")
-                _LOGGER.debug("Discovered: %s=%s", name, host)
+            # Strip the separators that split_manual_target uses (= and @) so
+            # a name containing one does not corrupt the alias=host round-trip.
+            safe_name = name.replace("=", " ").replace("@", " ").strip() if name else ""
+            if safe_name:
+                targets.append(f"{safe_name}={host}")
+                _LOGGER.debug("Discovered: %s=%s", safe_name, host)
             else:
                 targets.append(str(host))
                 _LOGGER.debug("Discovered: %s", host)
