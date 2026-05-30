@@ -92,6 +92,7 @@ from .chromecast import (
     async_get_cast_position,
     async_get_cast_volume,
     async_is_our_app_running,
+    remove_active_cast,
     register_connection_callback,
     unregister_connection_callback,
 )
@@ -231,6 +232,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._local_streams: dict[str, dict[str, Any]] = {}
         # Legacy single stream ID for cast-initiated slots
         self._stream_id: str | None = None
+        # Set once the entity is being removed so late cast-thread callbacks
+        # scheduled onto the loop become no-ops.
+        self._removed = False
 
     @property
     def _focused_session(self) -> CastSessionState | None:
@@ -330,14 +334,22 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from hass."""
         await super().async_will_remove_from_hass()
+        self._removed = True
         # Unregister callback
         unregister_connection_callback(self._connection_handler)
-        # Stop all health monitors
+        # Stop health monitors and disconnect cast connections so their
+        # sockets, threads and status listeners do not survive the entity
+        # (they live in a module-global dict and would otherwise leak across
+        # config-entry reloads).
         for session in list(self._cast_sessions.values()):
             await self._async_stop_health_monitor_for(session)
+            await self.hass.async_add_executor_job(remove_active_cast, session.host)
+        self._cast_sessions.clear()
 
     def _on_cast_connection_change(self, host: str, connected: bool) -> None:
         """Handle cast connection status changes (runs in event loop)."""
+        if self._removed:
+            return
         session = self._cast_sessions.get(host)
         if not session:
             return
@@ -1674,7 +1686,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     def _on_cast_status_for_host(self, host: str, status: Any) -> None:
         """Handle cast status updates for a specific host."""
-        if not status:
+        if self._removed or not status:
             return
 
         session = self._cast_sessions.get(host)
