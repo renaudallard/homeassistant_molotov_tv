@@ -336,19 +336,29 @@ def _attempt_reconnect(host: str) -> bool:
                     _LOGGER.debug("Failed to re-register listener: %s", err)
 
             # Update connection only if it's still registered
+            old_cast = None
+            aborted = False
             with _cast_lock:
                 if _active_casts.get(host) is not conn:
-                    _LOGGER.info(
-                        "Cast connection for %s was replaced/removed during reconnect, aborting",
-                        host,
-                    )
-                    try:
-                        cast.disconnect()
-                    except Exception:
-                        pass
-                    return False
-                conn.cast = cast
-                conn.timestamp = time.time()
+                    aborted = True
+                else:
+                    old_cast = conn.cast
+                    conn.cast = cast
+                    conn.timestamp = time.time()
+
+            if aborted:
+                _LOGGER.info(
+                    "Cast connection for %s was replaced/removed during reconnect, aborting",
+                    host,
+                )
+                # Drop the connection we just made (outside the lock).
+                _disconnect_casts([cast])
+                return False
+
+            # Disconnect the superseded connection so its socket and thread are
+            # not leaked (outside the lock).
+            if old_cast is not None and old_cast is not cast:
+                _disconnect_casts([old_cast])
 
             _LOGGER.info("Successfully reconnected to %s", host)
             _notify_connection_status(host, True)
