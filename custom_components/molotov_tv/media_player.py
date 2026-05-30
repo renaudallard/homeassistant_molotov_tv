@@ -43,6 +43,8 @@ from homeassistant.components.media_player import (
     MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
+    SearchMedia,
+    SearchMediaQuery,
 )
 from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.config_entries import ConfigEntry
@@ -204,6 +206,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         | MediaPlayerEntityFeature.TURN_OFF
         | MediaPlayerEntityFeature.SELECT_SOUND_MODE
         | MediaPlayerEntityFeature.SELECT_SOURCE
+        | MediaPlayerEntityFeature.SEARCH_MEDIA
     )
     _attr_state = STATE_IDLE
 
@@ -662,6 +665,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_replay_or_episodes(data, media_content_id)
 
         return build_root_browse()
+
+    async def async_search_media(self, query: SearchMediaQuery) -> SearchMedia:
+        """Service the media browser search box via the existing search."""
+        browse = await self._async_browse_search_results(query.search_query)
+        return SearchMedia(result=list(browse.children or []))
 
     async def async_play_media(
         self,

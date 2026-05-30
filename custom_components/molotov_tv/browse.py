@@ -279,9 +279,9 @@ def build_search_results_browse(
         can_expand=True,
         children=children,
     )
-    # Enable search box in the UI
+    # Enable the in-browser search box (serviced by async_search_media).
     if show_search:
-        browse.children_media_class = MediaClass.VIDEO
+        browse.can_search = True
     return browse
 
 
