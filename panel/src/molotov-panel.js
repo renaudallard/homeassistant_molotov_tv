@@ -1905,12 +1905,35 @@ class MolotovPanel extends LitElement {
   }
 
   _handleEntityChange(e) {
+    // Release any local stream on the previous entity before switching so its
+    // stream slot is not orphaned, then reset playback state.
+    const previousEntityId = this._getEntityId();
+    if (this._playing && previousEntityId && this.hass) {
+      this.hass.callService("media_player", "play_media", {
+        entity_id: previousEntityId,
+        media_content_id: `stop_local:${this._sessionId}`,
+        media_content_type: "video",
+      });
+    }
+    this._resetLocalPlaybackState();
+
     this._selectedEntityId = e.target.value;
     localStorage.setItem("molotov_selected_entity", this._selectedEntityId);
     this._hasLoadedChannels = false;
     this._channels = [];
     this._recordings = [];
     this._tonightChannels = [];
+    // Clear cached per-account browse state so stale data from the previous
+    // account is not shown after switching.
+    this._channelPrograms = {};
+    this._expandedChannels = {};
+    this._loadingPrograms = {};
+    this._expandedResults = {};
+    this._resultEpisodes = {};
+    this._loadingEpisodes = {};
+    this._expandedRecordings = {};
+    this._recordingEpisodes = {};
+    this._loadingRecordingEpisodes = {};
     this._loadChannels();
   }
 
@@ -2672,6 +2695,10 @@ class MolotovPanel extends LitElement {
       });
     }
 
+    this._resetLocalPlaybackState();
+  }
+
+  _resetLocalPlaybackState() {
     this._cleanupPlayer();
     this._playing = false;
     this._streamData = null;
