@@ -701,20 +701,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return
 
         if media_id.startswith(f"{MEDIA_CAST_PREFIX}:"):
-            parts = media_id.split(":", 3)
-
-            if len(parts) == 4:
-                _, encoded_target, receiver_type, base_media_id = parts
-                target = self._decode_cast_target(encoded_target)
-                await self._async_cast_or_switch(
-                    base_media_id, target, receiver_type=receiver_type
-                )
-                return
-
+            # Format: cast:ENCODED_TARGET[:RECEIVER_TYPE]:BASE_MEDIA_ID
+            # The base media id itself contains colons, so only treat the
+            # segment after the target as a receiver type when it is literally
+            # "native" or "custom"; otherwise it is part of the base id.
+            parts = media_id.split(":", 2)
             if len(parts) == 3:
-                _, encoded_target, base_media_id = parts
+                _, encoded_target, remainder = parts
                 target = self._decode_cast_target(encoded_target)
-                receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
+                maybe_type, sep, after = remainder.partition(":")
+                if maybe_type in ("native", "custom") and sep:
+                    receiver_type = maybe_type
+                    base_media_id = after
+                else:
+                    receiver_type = "custom" if CUSTOM_RECEIVER_APP_ID else "native"
+                    base_media_id = remainder
                 await self._async_cast_or_switch(
                     base_media_id, target, receiver_type=receiver_type
                 )
