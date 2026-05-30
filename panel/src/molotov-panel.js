@@ -3167,7 +3167,10 @@ class MolotovPanel extends LitElement {
     return html`
       <div
         class="tonight-program ${isLive ? "live" : ""} ${isPast ? "past" : ""}"
+        role="button"
+        tabindex="0"
         @click=${() => this._playTonightProgram(program, channel)}
+        @keydown=${(e) => this._activateOnKey(e, () => this._playTonightProgram(program, channel))}
       >
         ${program.thumbnail
           ? html`<img class="tonight-program-thumb" src=${program.thumbnail} loading="lazy" @load=${(e) => (e.target.style.display = "")} @error=${(e) => (e.target.style.display = "none")} />`
@@ -3184,6 +3187,14 @@ class MolotovPanel extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  _activateOnKey(e, action) {
+    // Activate a non-button clickable element with the keyboard.
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      action();
+    }
   }
 
   _tonightToProgramId(tonightId) {
@@ -3256,7 +3267,13 @@ class MolotovPanel extends LitElement {
 
     return html`
       <div class="search-result-row">
-        <div class="search-result-main" @click=${(e) => this._toggleRecordingExpand(e, recording)}>
+        <div
+          class="search-result-main"
+          role="button"
+          tabindex="0"
+          @click=${(e) => this._toggleRecordingExpand(e, recording)}
+          @keydown=${(e) => this._activateOnKey(e, () => this._toggleRecordingExpand(e, recording))}
+        >
           ${isSingleEpisode
             ? html`<ha-icon class="expand-icon" icon="mdi:play-circle-outline"></ha-icon>`
             : html`<ha-icon
@@ -3286,7 +3303,13 @@ class MolotovPanel extends LitElement {
                   : episodes.length > 0
                   ? episodes.map(
                       (episode) => html`
-                        <div class="episode-item" @click=${() => this._playRecordingEpisode(episode, recording.title)}>
+                        <div
+                          class="episode-item"
+                          role="button"
+                          tabindex="0"
+                          @click=${() => this._playRecordingEpisode(episode, recording.title)}
+                          @keydown=${(e) => this._activateOnKey(e, () => this._playRecordingEpisode(episode, recording.title))}
+                        >
                           ${episode.thumbnail
                             ? html`<img class="episode-thumb" src=${episode.thumbnail} loading="lazy" @load=${(e) => (e.target.style.display = "")} @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
@@ -3342,7 +3365,13 @@ class MolotovPanel extends LitElement {
 
     return html`
       <div class="search-result-row">
-        <div class="search-result-main" @click=${(e) => this._toggleResultExpand(e, result)}>
+        <div
+          class="search-result-main"
+          role="button"
+          tabindex="0"
+          @click=${(e) => this._toggleResultExpand(e, result)}
+          @keydown=${(e) => this._activateOnKey(e, () => this._toggleResultExpand(e, result))}
+        >
           <ha-icon
             class="expand-icon ${isExpanded ? "expanded" : ""}"
             icon="mdi:chevron-right"
@@ -3365,7 +3394,13 @@ class MolotovPanel extends LitElement {
                   : episodes.length > 0
                   ? episodes.map(
                       (episode) => html`
-                        <div class="episode-item" @click=${() => this._playEpisode(episode, result.title)}>
+                        <div
+                          class="episode-item"
+                          role="button"
+                          tabindex="0"
+                          @click=${() => this._playEpisode(episode, result.title)}
+                          @keydown=${(e) => this._activateOnKey(e, () => this._playEpisode(episode, result.title))}
+                        >
                           ${episode.thumbnail
                             ? html`<img class="episode-thumb" src=${episode.thumbnail} loading="lazy" @load=${(e) => (e.target.style.display = "")} @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
@@ -3406,7 +3441,13 @@ class MolotovPanel extends LitElement {
             @load=${(e) => (e.target.style.display = "")} @error=${(e) => (e.target.style.display = "none")}
             @click=${() => this._playChannel(channel)}
           />
-          <div class="channel-info" @click=${() => this._playChannel(channel)}>
+          <div
+            class="channel-info"
+            role="button"
+            tabindex="0"
+            @click=${() => this._playChannel(channel)}
+            @keydown=${(e) => this._activateOnKey(e, () => this._playChannel(channel))}
+          >
             <div class="channel-name">${channel.name}</div>
             <div class="program-info">
               <div class="program-now">
@@ -3436,7 +3477,13 @@ class MolotovPanel extends LitElement {
                   : programs.length > 0
                   ? programs.map(
                       (replay) => html`
-                        <div class="replay-item" @click=${() => this._playReplay(replay)}>
+                        <div
+                          class="replay-item"
+                          role="button"
+                          tabindex="0"
+                          @click=${() => this._playReplay(replay)}
+                          @keydown=${(e) => this._activateOnKey(e, () => this._playReplay(replay))}
+                        >
                           ${replay.thumbnail
                             ? html`<img class="replay-thumb" src=${replay.thumbnail} loading="lazy" @load=${(e) => (e.target.style.display = "")} @error=${(e) => (e.target.style.display = "none")} />`
                             : ""}
@@ -3797,7 +3844,10 @@ class MolotovPanel extends LitElement {
           return html`
             <div
               class="cast-chip ${isFocused ? "focused" : ""}"
+              role="button"
+              tabindex="0"
               @click=${() => this._focusCast(host)}
+              @keydown=${(e) => this._activateOnKey(e, () => this._focusCast(host))}
             >
               <span class="chip-icon">
                 <ha-icon icon=${isPlaying ? "mdi:cast-connected" : "mdi:cast"} style="--mdc-icon-size: 18px;"></ha-icon>
