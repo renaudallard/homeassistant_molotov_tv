@@ -37,6 +37,7 @@ The best early-warning signal is a periodic liveness/JSON check of
 | Integration flow (`api.py`) | Molotov today | Fubo equivalent (from smali) |
 |---|---|---|
 | Bootstrap | `GET v2/config` (dynamic URL discovery) | Gone. Hardcode region host: `api.fubo.tv` (US) / `api-eu.fubo.tv` (EU/France); `papi/v1/settings` for app settings |
+| Geolocation / geo-gate | `fapi.molotov.tv` (geolocation endpoint) | `GET /v3/location` (`LocationApi`) on `api.fubo.tv` / `api-eu.fubo.tv` -> `LocationResponse{network_allowed, country_code, region_code, dma, postal, asn, as_name, connection_type, ip_address, display_name}`. The `network_allowed` bool is the gate; `asn`/`connection_type` add VPN/proxy detection. Geo/market then rides on the `X-User-Market` request header. |
 | Login | `POST v3.1/auth/login` (grant_type=password) | `POST {api}/signin` `{email,password}` + headers `X-Device-Id`, `X-Device-Platform` -> `{access_token,id_token,refresh_token,expires_in}` |
 | Refresh | `GET v3/auth/refresh/{token}` | `POST {api}/refresh` |
 | Headers | `X-Molotov-Agent` + Bearer | Drop `X-Molotov-Agent`; keep `Authorization: Bearer`; add `X-Device-Id`/`X-Device-Platform`/`X-User-Id`/`X-Profile-Id`/`X-User-Market` |
