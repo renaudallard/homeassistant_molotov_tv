@@ -747,6 +747,7 @@ def parse_past_programs_as_replays(
     skipped_no_time = 0
     skipped_future = 0
     skipped_not_available = 0
+    skipped_no_video_id = 0
 
     for program in programs:
         if not isinstance(program, dict):
@@ -824,6 +825,14 @@ def parse_past_programs_as_replays(
             skipped_not_available += 1
             continue
 
+        # Require a per-program video id so the replay points to this specific
+        # program and not a generic channel-level start-over stream that would
+        # be identical for every program on the channel.
+        video_id = video.get("id") or video.get("program_id")
+        if not video_id:
+            skipped_no_video_id += 1
+            continue
+
         parsed_count += 1
 
         title = (
@@ -840,9 +849,8 @@ def parse_past_programs_as_replays(
             or format_value(payload.get("subtitle_formatter"))
         )
 
-        # Build replay URL - use video type and id if available
+        # Build replay URL from the program's video type and id.
         video_type = video.get("type", "channel")
-        video_id = video.get("id") or video.get("program_id") or channel_id
         asset_url = api.build_asset_url(video_type, str(video_id), start_over=True)
 
         # Extract program_id and channel_id for episode browsing
@@ -871,12 +879,14 @@ def parse_past_programs_as_replays(
         )
 
     _LOGGER.debug(
-        "Replay parsing: total=%d, parsed=%d, no_time=%d, future=%d, not_available=%d",
+        "Replay parsing: total=%d, parsed=%d, no_time=%d, future=%d, "
+        "not_available=%d, no_video_id=%d",
         len(programs),
         parsed_count,
         skipped_no_time,
         skipped_future,
         skipped_not_available,
+        skipped_no_video_id,
     )
 
     return replays
