@@ -2413,6 +2413,11 @@ class MolotovPanel extends LitElement {
       this._updateInterval = null;
     }
 
+    if (this._autoplayCheckTimeout) {
+      clearTimeout(this._autoplayCheckTimeout);
+      this._autoplayCheckTimeout = null;
+    }
+
     try {
       const player = window.dashjs.MediaPlayer().create();
       this._player = player;
@@ -2501,8 +2506,10 @@ class MolotovPanel extends LitElement {
       video.volume = this._volume;
       video.muted = this._muted;
 
-      // Check for autoplay block
-      setTimeout(() => {
+      // Check for autoplay block (store the id so it can be cancelled if the
+      // player is reinitialised or torn down before it fires).
+      this._autoplayCheckTimeout = setTimeout(() => {
+        this._autoplayCheckTimeout = null;
         if (video.paused && !video.currentTime) {
           console.log("[Molotov Panel] Autoplay blocked");
           this._showPlayOverlay = true;
@@ -2669,6 +2676,11 @@ class MolotovPanel extends LitElement {
     if (this._updateInterval) {
       clearInterval(this._updateInterval);
       this._updateInterval = null;
+    }
+
+    if (this._autoplayCheckTimeout) {
+      clearTimeout(this._autoplayCheckTimeout);
+      this._autoplayCheckTimeout = null;
     }
 
     if (this._player) {
