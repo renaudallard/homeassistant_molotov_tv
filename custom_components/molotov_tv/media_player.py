@@ -2260,9 +2260,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return None
         return assets
 
-    def _set_cached_replay(
-        self, channel_id: str, assets: list[BrowseAsset]
-    ) -> None:
+    def _set_cached_replay(self, channel_id: str, assets: list[BrowseAsset]) -> None:
         self._replay_cache[channel_id] = (dt_util.utcnow(), assets)
 
     def _get_cached_assets(
