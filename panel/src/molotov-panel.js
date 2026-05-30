@@ -1302,6 +1302,8 @@ class MolotovPanel extends LitElement {
     this._expandedResults = {};
     this._resultEpisodes = {};
     this._loadingEpisodes = {};
+    // Monotonic token to discard results from superseded searches
+    this._searchToken = 0;
     this._castTargets = [];
     this._isMobile = isMobileOrWebView();
     // On mobile/WebView, don't default to local (Widevine DRM doesn't work)
@@ -2057,6 +2059,10 @@ class MolotovPanel extends LitElement {
     const entityId = this._getEntityId();
     if (!entityId) return;
 
+    // Tag this run so results from a search the user has since replaced are
+    // discarded instead of clobbering the newer search.
+    const token = ++this._searchToken;
+
     this._searching = true;
     this._showingSearch = true;
     this._searchResults = [];
@@ -2071,6 +2077,7 @@ class MolotovPanel extends LitElement {
         media_content_id: `search:${encodeURIComponent(query)}`,
         media_content_type: "search",
       });
+      if (token !== this._searchToken) return;
 
       if (result && result.children) {
         const rawResults = result.children
@@ -2078,24 +2085,25 @@ class MolotovPanel extends LitElement {
           .map((item) => this._parseSearchResult(item));
 
         // Pre-fetch episodes for all results and filter out those with none
-        const resultsWithEpisodes = await this._filterResultsWithEpisodes(rawResults, entityId);
+        const resultsWithEpisodes = await this._filterResultsWithEpisodes(rawResults, entityId, token);
+        if (token !== this._searchToken) return;
         this._searchResults = resultsWithEpisodes;
         console.log(`[Molotov Panel] Found ${this._searchResults.length} results with episodes for "${query}"`);
       } else {
         this._searchResults = [];
       }
     } catch (err) {
+      if (token !== this._searchToken) return;
       console.error("[Molotov Panel] Search failed:", err);
       this._searchResults = [];
     }
 
+    if (token !== this._searchToken) return;
     this._searching = false;
     this.requestUpdate();
   }
 
-  async _filterResultsWithEpisodes(results, entityId) {
-    const validResults = [];
-
+  async _filterResultsWithEpisodes(results, entityId, token) {
     // Fetch episodes for all results in parallel
     const episodePromises = results.map(async (result) => {
       try {
@@ -2110,8 +2118,10 @@ class MolotovPanel extends LitElement {
           const episodes = this._parseEpisodeChildren(browseResult.children);
 
           if (episodes.length > 0) {
-            // Cache the episodes
-            this._resultEpisodes = { ...this._resultEpisodes, [result.mediaContentId]: episodes };
+            // Cache the episodes only if this search is still current.
+            if (token === undefined || token === this._searchToken) {
+              this._resultEpisodes = { ...this._resultEpisodes, [result.mediaContentId]: episodes };
+            }
             return result;
           }
         }
@@ -2139,6 +2149,8 @@ class MolotovPanel extends LitElement {
   }
 
   _clearSearch() {
+    // Supersede any in-flight search so its late results are discarded.
+    this._searchToken++;
     this._searchQuery = "";
     this._searchResults = [];
     this._showingSearch = false;
