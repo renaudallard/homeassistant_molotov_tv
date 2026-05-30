@@ -471,9 +471,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 _LOGGER.info("Reconnected to %s", host)
                 session.connected = True
                 session.error = None
-                session.player_state = STATE_PLAYING
+                # Keep the last known player state; the status listener will
+                # report the real one. Forcing PLAYING here wrongly showed a
+                # paused stream as playing until the next status callback.
                 if host == self._active_cast_target:
-                    self._attr_state = STATE_PLAYING
+                    self._sync_state_from_session(session)
                 self.async_write_ha_state()
             else:
                 _LOGGER.warning(
