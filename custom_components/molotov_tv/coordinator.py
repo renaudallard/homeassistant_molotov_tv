@@ -33,9 +33,10 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import MolotovApi, MolotovApiError
+from .api import MolotovApi, MolotovApiError, MolotovAuthError
 from .const import DEFAULT_SCAN_INTERVAL
 from .helpers import extract_image_from_bundle, parse_epg_programs, parse_timestamp
 from .models import EpgChannel, EpgData, EpgProgram
@@ -64,7 +65,22 @@ class MolotovEpgCoordinator(DataUpdateCoordinator[EpgData]):
         live_task = asyncio.create_task(self.api.async_get_live_home_channels())
         epg_task = asyncio.create_task(self.api.async_get_epg())
 
-        channels_raw = await channels_task
+        try:
+            channels_raw = await channels_task
+        except Exception as err:
+            # The primary fetch failed: cancel the sibling fetches so they are
+            # not left running, then surface the failure as the proper HA
+            # exception (UpdateFailed keeps logs clean; ConfigEntryAuthFailed
+            # triggers the reauth flow on a credential failure).
+            for task in (live_task, epg_task):
+                task.cancel()
+            await asyncio.gather(live_task, epg_task, return_exceptions=True)
+            if isinstance(err, MolotovAuthError):
+                raise ConfigEntryAuthFailed(str(err)) from err
+            if isinstance(err, MolotovApiError):
+                raise UpdateFailed(f"Error fetching Molotov channels: {err}") from err
+            raise
+
         channels_data = _parse_epg(channels_raw)
 
         _LOGGER.debug(
