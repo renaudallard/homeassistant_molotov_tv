@@ -1874,6 +1874,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if volume_info:
                 session.volume, session.muted = volume_info
 
+            # End any prior session on this target first so its stream slot
+            # and health monitor are released before we replace it (e.g. when
+            # a quick switch fell back to a full cast on the same device).
+            if resolved_target in self._cast_sessions:
+                await self._async_end_session_for_host(
+                    resolved_target, "Replaced by new cast on same target"
+                )
+
             self._cast_sessions[resolved_target] = session
             self._active_cast_target = resolved_target
 
