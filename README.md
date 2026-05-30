@@ -63,6 +63,7 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 2.  Cliquez sur **+ Ajouter une intégration** et recherchez **Molotov TV**.
 3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
     *   *Note : Si votre compte n'est pas Premium/VIP, la configuration échouera avec un message d'erreur.*
+    *   *Ré-authentification : si votre mot de passe change ou que votre session est invalidée, Home Assistant propose une demande de ré-authentification pour saisir à nouveau votre mot de passe, sans avoir à supprimer puis recréer l'intégration.*
 
 ### Options & Ajustements
 
@@ -76,7 +77,7 @@ Cliquez sur **Configurer** sur l'entrée de l'intégration pour accéder aux par
 1.  Ouvrez l'onglet **Médias** dans Home Assistant.
 2.  Sélectionnez **Molotov TV**.
 3.  Naviguez parmi les dossiers principaux :
-    *   **Recherche :** Utilisez le clavier virtuel pour trouver du contenu.
+    *   **Recherche :** Utilisez la barre de recherche du navigateur de médias ou le clavier virtuel du dossier **Recherche** pour trouver du contenu.
     *   **En direct :** Voir les programmes en cours de diffusion.
     *   **Chaînes :** Parcourir la liste de toutes les chaînes.
     *   **Enregistrements :** Accéder à vos bookmarks.
