@@ -2753,6 +2753,12 @@ class MolotovPanel extends LitElement {
 
   _goBackFromPlayer() {
     this._localMinimized = true;
+    // Pause the 1s progress updates while minimised so the channel list is
+    // not re-rendered every second; resumed on expand.
+    if (this._updateInterval) {
+      clearInterval(this._updateInterval);
+      this._updateInterval = null;
+    }
   }
 
   _goBackFromCast() {
@@ -2762,6 +2768,9 @@ class MolotovPanel extends LitElement {
   _expandCurrentPlayback() {
     if (this._playing && this._streamData) {
       this._localMinimized = false;
+      if (!this._updateInterval) {
+        this._startProgressUpdate();
+      }
     } else if (this._castPlaying) {
       this._castMinimized = false;
     }
