@@ -863,7 +863,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._attr_media_title = title
 
             stream = asset_data.get("stream", {})
-            self._attr_media_content_id = stream.get("url")
+            # Expose the internal media id, not the signed stream URL, which
+            # would otherwise be persisted in the recorder and visible to
+            # anyone with state access. The frontend receives the URL through
+            # the local_streams attribute instead.
+            self._attr_media_content_id = media_id
             video_format = stream.get("video_format")
             if video_format == "DASH":
                 self._attr_media_content_type = "application/dash+xml"
