@@ -1,5 +1,6 @@
 *.xapk
 xapk
+xapk_*/
 panel/node_modules/
 bundle.js
 molotov.log
