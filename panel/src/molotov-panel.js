@@ -1336,9 +1336,25 @@ class MolotovPanel extends LitElement {
     this._episodeParentTitle = "";
     this._episodeIsRecording = false;
     // Unique session ID for local playback isolation between HA users
-    this._sessionId = crypto.randomUUID();
+    this._sessionId = this._generateSessionId();
     // Entity selector for multi-account support
     this._selectedEntityId = localStorage.getItem("molotov_selected_entity") || "";
+  }
+
+  _generateSessionId() {
+    // crypto.randomUUID is only exposed in secure contexts (HTTPS or
+    // localhost). Home Assistant is commonly reached over plain HTTP on a LAN
+    // IP, where it is undefined and would throw in the constructor, blanking
+    // the whole panel. Fall back to a good-enough unique id in that case.
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return (
+      "molotov-" +
+      Date.now().toString(36) +
+      "-" +
+      Math.random().toString(36).slice(2, 10)
+    );
   }
 
   connectedCallback() {
