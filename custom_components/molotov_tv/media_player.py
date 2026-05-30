@@ -1663,23 +1663,24 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     @property
     def source_list(self) -> list[str] | None:
-        """Return list of active cast sessions as sources."""
+        """Return active cast hosts as selectable sources (hosts are unique)."""
         if not self._cast_sessions:
             return None
-        return [s.title or s.host for s in self._cast_sessions.values()]
+        return list(self._cast_sessions)
 
     @property
     def source(self) -> str | None:
-        """Return the currently focused cast session."""
-        session = self._focused_session
-        if session:
-            return session.title or session.host
-        return None
+        """Return the host of the currently focused cast session."""
+        return self._active_cast_target
 
     async def async_select_source(self, source: str) -> None:
-        """Switch the focused cast to a different active session."""
+        """Switch the focused cast to a different active session.
+
+        Match on the unique host so two devices playing the same title are
+        not confused; the title is accepted as a fallback for compatibility.
+        """
         for host, s in self._cast_sessions.items():
-            if (s.title or s.host) == source:
+            if source in (host, s.title):
                 self._active_cast_target = host
                 self._sync_state_from_session(s)
                 self.async_write_ha_state()

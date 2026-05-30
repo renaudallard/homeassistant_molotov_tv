@@ -3747,7 +3747,9 @@ class MolotovPanel extends LitElement {
     const info = this._activeCasts[host];
     if (!info) return;
 
-    const source = info.title || host;
+    // Use the unique host as the source so two devices showing the same
+    // title are not confused.
+    const source = host;
     try {
       await this.hass.callService("media_player", "select_source", {
         entity_id: entityId,
@@ -3771,7 +3773,9 @@ class MolotovPanel extends LitElement {
     const info = this._activeCasts[host];
     if (!info) return;
 
-    const source = info.title || host;
+    // Use the unique host as the source so two devices showing the same
+    // title are not confused.
+    const source = host;
     try {
       await this.hass.callService("media_player", "select_source", {
         entity_id: entityId,
