@@ -2602,10 +2602,14 @@ class MolotovPanel extends LitElement {
       label: getLangName(track.lang),
     }));
 
-    // Find current audio track
+    // Find current audio track by its unique dash.js index, not language, so
+    // duplicate-language tracks (e.g. stereo + audio description) resolve to
+    // the track actually playing.
     const currentAudio = this._player.getCurrentTrackFor("audio");
     if (currentAudio) {
-      this._selectedAudioIndex = audioTracks.findIndex((t) => t.lang === currentAudio.lang);
+      this._selectedAudioIndex = audioTracks.findIndex(
+        (t) => t.index === currentAudio.index
+      );
     }
 
     // Get text tracks
@@ -2623,7 +2627,9 @@ class MolotovPanel extends LitElement {
     } else {
       const currentText = this._player.getCurrentTrackFor("text");
       if (currentText) {
-        this._selectedTextIndex = textTracks.findIndex((t) => t.lang === currentText.lang);
+        this._selectedTextIndex = textTracks.findIndex(
+          (t) => t.index === currentText.index
+        );
       }
     }
 
