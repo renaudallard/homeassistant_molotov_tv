@@ -82,3 +82,4 @@ class BrowseAsset:
     episode_id: str | None = None
     available_from: datetime | None = None
     available_until: datetime | None = None
+    is_locked: bool = False

@@ -141,6 +141,19 @@ def _asset_to_browse_child(asset: BrowseAsset, prefix: str) -> BrowseMedia:
     if asset.episode_title:
         display_title = f"{asset.title} - {asset.episode_title}"
 
+    if asset.is_locked:
+        # Reserved for the paid Molotov Extra add-on: show it but make it a
+        # dead node so it can be neither played nor browsed into.
+        return BrowseMedia(
+            title=f"🔒 {display_title}",
+            media_class=MediaClass.VIDEO,
+            media_content_id=MEDIA_ROOT,
+            media_content_type="directory",
+            can_play=False,
+            can_expand=False,
+            thumbnail=asset.thumbnail or asset.poster,
+        )
+
     is_container = (
         (
             asset.asset_type in ("program", "serie")

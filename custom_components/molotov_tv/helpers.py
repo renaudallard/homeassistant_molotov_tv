@@ -379,6 +379,10 @@ def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
             channel_id = str(raw)
 
     subtitle = _papi_text(footer.get("subtitle"))
+    locked = component.get("is_locked")
+    if locked is None:
+        locked = _as_dict(component.get("state")).get("is_locked")
+    is_locked = bool(locked)
 
     if channel_id:
         return BrowseAsset(
@@ -389,6 +393,7 @@ def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
             channel_id=channel_id,
             episode_title=subtitle,
             thumbnail=image,
+            is_locked=is_locked,
         )
     if series_id:
         # A series is a container browsed into for its episodes (catch-up).
@@ -399,6 +404,7 @@ def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
             program_id=series_id,
             episode_title=subtitle,
             thumbnail=image,
+            is_locked=is_locked,
         )
     if program_id:
         # A program-details/program/{id} is a single playable item (movie or
@@ -411,6 +417,7 @@ def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
             episode_id=program_id,
             episode_title=subtitle,
             thumbnail=image,
+            is_locked=is_locked,
         )
     return None
 
