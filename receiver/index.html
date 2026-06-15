@@ -218,9 +218,18 @@
         const SEEK_STEP_FWD = 30;
         const SEEK_COMMIT_DELAY = 400;
         const SEEK_PREVIEW_LINGER = 800;
+        // Holding the key auto-repeats keydown; each repeat in the same
+        // direction within the window grows the step, so a held button scrubs
+        // faster the longer it is held (capped).
+        const SEEK_REPEAT_WINDOW = 450;
+        const SEEK_ACCEL_STEP = 0.6;
+        const SEEK_MAX_MULTIPLIER = 12;
         let pendingSeekTime = null;
         let seekCommitTimer = null;
         let hideSeekPreviewTimer = null;
+        let seekRepeat = 0;
+        let seekDir = 0;
+        let lastSeekAt = 0;
 
         // --- DOM Elements ---
         const controlMenu = document.getElementById('control-menu');
@@ -386,10 +395,14 @@
             return sign + formatTime(Math.abs(deltaSec));
         }
 
-        function renderSeekPreview(target, bounds) {
+        function renderSeekPreview(target, bounds, speed) {
             const current = playerManager.getCurrentTimeSec();
+            let deltaText = formatDelta(Math.round(target - current));
+            if (speed && speed >= 2) {
+                deltaText += '  ×' + Math.round(speed);
+            }
             seekPreviewTime.textContent = formatTime(target);
-            seekPreviewDelta.textContent = formatDelta(Math.round(target - current));
+            seekPreviewDelta.textContent = deltaText;
 
             if (bounds.max !== null && bounds.max > bounds.min) {
                 const frac = (target - bounds.min) / (bounds.max - bounds.min);
@@ -418,12 +431,28 @@
             const bounds = getSeekBounds();
             if (!bounds) return;
 
+            // Accelerate while the key is held: count consecutive presses in
+            // the same direction within the repeat window and grow the step.
+            const now = Date.now();
+            const direction = deltaSec < 0 ? -1 : 1;
+            if (direction === seekDir && (now - lastSeekAt) < SEEK_REPEAT_WINDOW) {
+                seekRepeat++;
+            } else {
+                seekRepeat = 0;
+            }
+            seekDir = direction;
+            lastSeekAt = now;
+
+            const multiplier = Math.min(
+                SEEK_MAX_MULTIPLIER, 1 + seekRepeat * SEEK_ACCEL_STEP
+            );
+
             const base = (pendingSeekTime !== null)
                 ? pendingSeekTime
                 : playerManager.getCurrentTimeSec();
-            pendingSeekTime = clampBounds(base + deltaSec, bounds);
+            pendingSeekTime = clampBounds(base + deltaSec * multiplier, bounds);
 
-            renderSeekPreview(pendingSeekTime, bounds);
+            renderSeekPreview(pendingSeekTime, bounds, multiplier);
             showSeekPreview();
 
             clearTimeout(seekCommitTimer);
@@ -434,6 +463,8 @@
         function doSeekCommit() {
             clearTimeout(seekCommitTimer);
             seekCommitTimer = null;
+            seekRepeat = 0;
+            seekDir = 0;
             if (pendingSeekTime !== null) {
                 clampedSeek(pendingSeekTime);
                 pendingSeekTime = null;

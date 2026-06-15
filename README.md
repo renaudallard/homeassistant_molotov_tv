@@ -206,7 +206,7 @@ Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme 
 #### Contrôles à la télécommande
 Quand le récepteur personnalisé est utilisé sur un appareil doté d'une télécommande (Chromecast avec Google TV, Android TV), la lecture se pilote directement avec les flèches :
 
-*   **◄ / ►** : recul de 10 s / avance de 30 s. Les appuis répétés s'accumulent et un aperçu affiche la position cible ; le saut n'est appliqué qu'une seule fois, à l'arrêt des appuis. Sur une chaîne en direct, le saut reste borné à la fenêtre de différé disponible.
+*   **◄ / ►** : recul de 10 s / avance de 30 s. Maintenir la touche accélère le défilement (le pas grandit tant que la touche reste enfoncée, jusqu'à un maximum), et l'aperçu affiche la position cible ainsi que la vitesse (×N). Les appuis s'accumulent et le saut n'est appliqué qu'une seule fois, à l'arrêt des appuis. Sur une chaîne en direct, le saut reste borné à la fenêtre de différé disponible.
 *   **▼** : ouvre le menu (recul, avance, redémarrer, piste audio). Les entrées de saut y restent disponibles en secours sur les télécommandes qui ne transmettent pas les flèches.
 *   **▲ / Retour** : ferme le menu.
 *   **OK** : ouvre le menu, ou valide l'élément sélectionné.
