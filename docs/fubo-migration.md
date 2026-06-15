@@ -1,95 +1,73 @@
-# Fubo migration scope (contingency plan)
+# Fubo backend (Molotov 5.51)
 
-Analysis of decompiled **Molotov 5.51.0** (versionCode 504129) vs the **4.27.0**
-baseline, and what it would take to keep the integration working if Molotov
-retires its legacy REST API.
+Molotov 5.51 re-platformed onto **Fubo**. The integration now targets the Fubo
+REST API directly (`api-eu.fubo.tv`) instead of the legacy `*.molotov.tv`
+endpoints. This document is the validated contract the client implements; it was
+reverse-engineered and checked live against the EU host from a French vantage
+point with a real account.
 
-## Context: what changed in the app
+## Requirements
 
-Molotov 5.51.0 is a complete re-platforming of the app onto **Fubo**. The store
-package id stays `tv.molotov.app`, but the implementation was replaced wholesale:
+- The request egress IP must geolocate to **France** (the content market follows
+  the IP; `/v3/location.network_allowed` only gates VPN/proxy, not the market).
+- A Molotov account. Free channels (France 2 = `600019`, France 3 = `600049`,
+  France 4 = `600018`, France 5 = `600042`, Arte = `600034`, BFMTV = `600035`,
+  CNEWS = `600002`, LCP = `600008`) play directly; channels like TF1 need the
+  paid **Molotov Extra** add-on; DVR needs a recording quota.
 
-- Application class `tv.molotov.android.MolotovApplication` -> `tv.fubo.mobile.presentation.FuboApplication`.
-- Code moved from `tv/molotov/*` to `tv/fubo/*`.
-- All networking now targets `*.fubo.tv`; **zero** `molotov.tv` API hosts remain
-  in the app (only `aide.molotov.tv` help and a legal link survive).
-- Molotov persists only as a paid Fubo content add-on ("Molotov Extra").
+## Client identity (every request)
 
-The HTTP stack itself is unchanged in kind: still **Retrofit-on-OkHttp REST**
-(Retrofit was R8-repackaged `retrofit2` -> `aq/`, annotations -> `cq/`, not
-removed). No GraphQL/gRPC/Ktor. So a re-targeted `aiohttp` client remains the
-right design.
+Mandatory header `x-application-id: molotov` (without it the backend returns
+`NO_SERVICE_FOR_SUBSCRIPTION`), plus the device set: `user-agent`,
+`x-client-version: 5.51.0`, `x-os: android`, `x-device-platform: android_phone`,
+`x-preferred-language: fr-FR`, `x-supported-streaming-protocols: hls,dash`,
+`x-drm-scheme: widevine`, `x-supported-features` (incl. `use_drm_v2_response`),
+and a stable `x-device-id`. Authenticated calls add `Authorization: Bearer` and
+`x-profile-id`; `x-user-id` is sent **only** on `/vapi` playback calls.
 
-## Bottom line: do not migrate yet
+## Endpoints used
 
-`https://fapi.molotov.tv/v2/config` still returns **HTTP 200** with the routing
-config the integration parses (`login`, `refresh_token`, `remote`,
-`remote_subbed`, `search`, `search_universal`, `bookmark`, `v3_home`,
-`cast_app_id`, ...). Molotov's API servers remain live even though the app moved
-to Fubo, so the integration is **not broken** by the app migration.
+| Concern | Call |
+|---|---|
+| Login | `PUT /signin {email,password}` then `GET /user` (id + `profiles[0].id`) |
+| Refresh | `POST /refresh` (refresh token as Bearer); a 401 refreshes once and retries |
+| Live guide | `GET /epg?startTime&endTime` (RFC3339 UTC) `&limit&ignoreEmpty=true` |
+| Search | `GET /papi/v1/search/content?category=top_results&fuzzy=true&query=` |
+| Detail / replays / episodes | `GET /papi/v1/program-details/{channel\|program\|series}/{id}` (`?tabID=id-tab-watch-now` for a series' episodes) |
+| Recordings | `GET /dvr/v2/list?sort=date&status={recorded\|scheduled}` (merge; `status=all` is empty) |
+| Playback | `GET /vapi/asset/v1?channelId=&type=live` or `?id=&type={vod\|dvr}` |
 
-This document is the reference for *if/when* the legacy API is decommissioned.
-The best early-warning signal is a periodic liveness/JSON check of
-`https://fapi.molotov.tv/v2/config`.
+`/papi` pages are server-driven: `content.sections[].components[]` cards carry an
+`actions.on_click[]` navigation `endpoint.url` that encodes the target kind/id
+(`program-details/channel/{id}`, `channel-details/{id}`,
+`program-details/program/{id}`, `program-details/series/{id}`). Poster cards put
+their title in the action's form-encoded `trkOriginElement` param. A channel's
+detail page carries its catch-up in an "En replay sur …" card section.
 
-## Flow mapping (current Molotov -> Fubo)
+## DRM and casting
 
-| Integration flow (`api.py`) | Molotov today | Fubo equivalent (from smali) |
-|---|---|---|
-| Bootstrap | `GET v2/config` (dynamic URL discovery) | Gone. Hardcode region host: `api.fubo.tv` (US) / `api-eu.fubo.tv` (EU/France); `papi/v1/settings` for app settings |
-| Geolocation / geo-gate | `fapi.molotov.tv` (geolocation endpoint) | `GET /v3/location` (`LocationApi`) on `api.fubo.tv` / `api-eu.fubo.tv` -> `LocationResponse{network_allowed, country_code, region_code, dma, postal, asn, as_name, connection_type, ip_address, display_name}`. The `network_allowed` bool is the gate; `asn`/`connection_type` add VPN/proxy detection. Geo/market then rides on the `X-User-Market` request header. |
-| Login | `POST v3.1/auth/login` (grant_type=password) | `POST {api}/signin` `{email,password}` + headers `X-Device-Id`, `X-Device-Platform` -> `{access_token,id_token,refresh_token,expires_in}` |
-| Refresh | `GET v3/auth/refresh/{token}` | `POST {api}/refresh` |
-| Headers | `X-Molotov-Agent` + Bearer | Drop `X-Molotov-Agent`; keep `Authorization: Bearer`; add `X-Device-Id`/`X-Device-Platform`/`X-User-Id`/`X-Profile-Id`/`X-User-Market` |
-| Channels + EPG | `channels-subbed` + `live/sections` + UMC firestick EPG zip | `/epg` + `KnowledgeGraphApi` (`services.fubo.tv`); different schema |
-| Search | v2/v3 search variants | `KnowledgeGraphApi` |
-| Bookmarks/recordings | `v4/me/bookmarks/sections` | Fubo DVR/my-list (needs RE; not precisely located) |
-| Asset stream | `v2/me/assets` + `cdn_decision_url`/`suffix_url` | `VapiApi.getVapi` (`@Url`) -> `PlaybackDataResponse` (manifest url + DRM metadata) |
-| Resume position | local store + cast position | `PlayHeadApi` (server-side playheads) |
+Every asset is **Widevine via DRMtoday**. `/vapi` returns `stream.url` (tokenized
+DASH manifest) and `drm_v2.license.{url, headers}` where the headers carry
+`x-dt-auth-token`. The integration passes `license_url` and `drm_token` to the
+custom cast receiver through the existing `customData` keys (`stream_url`,
+`content_type`, `license_url`, `drm_token`); the receiver injects
+`x-dt-auth-token` on the license request. It must **not** set `customData.asset_id`
+(the receiver appends `assetId=` to the license URL only for the old Molotov
+endpoint, which would corrupt the final DRMtoday URL). Live tokens are short
+lived, so a fresh manifest is resolved via `/vapi` immediately before each play.
+The `heartbeat`/`concurrency` endpoints are analytics only and are not required
+to keep a stream alive.
 
-Other Fubo APIs present: `LocationApi`, `HeartbeatApi`, `ConcurrencyMonitorApi`,
-`AdsTrackerApi`, `DynamicUrlApi`, `ApiFactory` (builds per-endpoint clients).
+## Module mapping
 
-Fubo backend hosts (region enum DEV/QA/PROD, with `-eu` variants):
-`api.fubo.tv`, `api-eu.fubo.tv`, `services.fubo.tv`, `events.fubo.tv`,
-signup at `www.fubo.tv/signup`.
-
-## Blockers (priority order)
-
-1. **DRM is the feasibility gate.** Fubo content is Widevine-protected: license
-   via `irdeto.fubo.tv/licenseServer/widevine/v1/FuboTV/license` (token passed as
-   the `ls_session` query param) or `api.fubo.tv/v1/drm/getkey` (token in a
-   `customdata` header). The integration's model (resolve a DASH URL, cast/play
-   it, with the receiver doing Molotov's simple `license_url`+`token`) does not
-   map to this. Solve DRM first; if it cannot be solved, migration is not viable
-   in the current form (the custom cast receiver would need a Fubo/Irdeto
-   rewrite).
-2. **Geo-blocking.** `api.fubo.tv` returns 451 from outside its regions;
-   `api-eu.fubo.tv` is the EU endpoint. RE and runtime likely require a
-   France/EU vantage point.
-3. **Auth hardening.** MFA and social/`signin/code` paths exist - a headless
-   email/password login may hit MFA challenges it cannot satisfy.
-4. **Entitlement model.** Molotov is now a Fubo "Molotov Extra" add-on;
-   account/entitlement semantics differ.
-5. **Full schema rewrite.** Every response model differs, so `helpers.py`
-   parsers would be rewritten.
-
-## Effort and recommendation
-
-Effort is large: effectively a new `api.py` client, new `helpers.py` parsers,
-and very likely a new custom cast receiver for Fubo DRM. Compounded by the live
-Fubo API being geo-blocked (RE needs an EU vantage or captured real-device
-traffic).
-
-Recommendation: keep the working Molotov client; treat this as a dormant
-contingency. Add a small monitor on `v2/config`. If it goes dark, the first
-spike to run is DRM feasibility (can a Fubo/Irdeto Widevine stream be acquired
-and played/cast headlessly?) - everything else is mechanical by comparison.
-
-## RE starting points
-
-Decompiled Fubo network classes (from a 5.51.0 apktool decode) live under
-`tv/fubo/android/data/network/internal/retrofit/`:
-`AccountApi`, `VapiApi`, `KnowledgeGraphApi`, `PlayHeadApi`, `LocationApi`,
-`HeartbeatApi`, `ConcurrencyMonitorApi`, `AdsTrackerApi`, `DynamicUrlApi`, and
-`ApiFactory` (in `data/network/api/`).
+- `api.py` — the Fubo HTTP client (auth, `/epg`, `/papi`, `/vapi`, `/dvr`) over a
+  provider-agnostic transport (single 401 refresh-and-retry, 5xx/429 backoff).
+- `coordinator.py` — one `/epg` fetch → `EpgData`.
+- `helpers.py` — `parse_fubo_epg`, the papi card parser
+  (`parse_papi_card`/`parse_papi_sections`/`parse_papi_search`),
+  `parse_papi_episodes`, `parse_papi_channel_replays`, `parse_fubo_recordings`,
+  and the RFC3339 branch of `parse_timestamp`.
+- `media_player.py` — resolves playback via `/vapi` and builds the receiver
+  `customData` (`_extract_stream_attrs`).
+- `browse.py` — maps Fubo pages into the existing four-folder tree.
+- `receiver/index.html` and the Lit panel are unchanged.

@@ -29,7 +29,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import json
 
 from homeassistant.const import Platform
 
@@ -111,32 +110,3 @@ PANEL_ICON = "mdi:television-play"
 
 CONTENT_TYPE_DASH = "application/dash+xml"
 CONTENT_TYPE_HLS = "application/x-mpegurl"
-
-MOLOTOV_AGENT = json.dumps(
-    {
-        "app_name": "Molotov",
-        "app_version_name": "4.27.0",
-        "app_id": "android_tv_app",
-        "api_version": 8,
-        "advertising_id": None,
-        "app_build": 8881,
-        "os": "Android",
-        "os_version": "12",
-        "os_sdk_version": 31,
-        "rating": "HIGH",
-        "type": "tv",
-        "features_supported": [],
-        "screen_reader_enabled": False,
-        "model": "HA",
-        "device": "Etincelle",
-        "brand": "Molotov",
-        "manufacturer": "Molotov",
-        "display": "Etincelle",
-        "serial": None,
-        "serial_software": None,
-        "store": "google",
-        "rooted": False,
-    },
-    separators=(",", ":"),
-    ensure_ascii=True,
-)

@@ -108,7 +108,6 @@ RETRY_DELAY_SECONDS = 1.0
 
 # Live guide window: how far ahead to fetch, and how many channels per page.
 EPG_WINDOW = timedelta(hours=6)
-EPG_LOOKBACK = timedelta(hours=24)
 EPG_CHANNEL_LIMIT = 100
 
 # Playback reference scheme used by build_asset_url/async_get_asset_stream. The
@@ -364,18 +363,6 @@ class MolotovApi:
         """Fetch a live channel's detail page (its current programme)."""
 
         return await self.async_get_program_details(channel_id, kind="channel")
-
-    async def async_get_channel_past_programs(self, channel_id: str) -> dict[str, Any]:
-        """Fetch the recent guide window used to surface a channel's replays."""
-
-        await self.async_ensure_logged_in()
-        now = dt_util.utcnow()
-        return await self.async_get_epg(start=now - EPG_LOOKBACK, end=now)
-
-    async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
-        """Fetch the recent guide window used to surface a channel's replays."""
-
-        return await self.async_get_channel_past_programs(channel_id)
 
     # --- Live guide -----------------------------------------------------
 

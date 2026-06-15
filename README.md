@@ -31,7 +31,8 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 ## 📋 Prérequis
 
 *   **Home Assistant** (version 2025.10.0 ou ultérieure).
-*   **Compte Molotov Premium ou VIP :** Cette intégration nécessite un abonnement payant. Les comptes gratuits ne sont pas pris en charge.
+*   **Compte Molotov :** Un compte Molotov suffit pour les chaînes gratuites (France 2/3/4/5, Arte, BFMTV, CNEWS, LCP...). Certaines chaînes (TF1, etc.) nécessitent l'option payante « Molotov Extra », et les enregistrements (DVR) nécessitent un quota d'enregistrement.
+*   **Adresse IP française :** Molotov 5.51 s'appuie sur le backend Fubo (`api-eu.fubo.tv`), où le marché de contenu suit l'IP de sortie de la requête. Home Assistant doit donc sortir sur une IP géolocalisée en France.
 *   **Appareil Chromecast :** Requis pour caster du contenu sur votre téléviseur.
 
 ## 🚀 Installation
@@ -62,7 +63,7 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 1.  Allez dans **Paramètres** > **Appareils et services**.
 2.  Cliquez sur **+ Ajouter une intégration** et recherchez **Molotov TV**.
 3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
-    *   *Note : Si votre compte n'est pas Premium/VIP, la configuration échouera avec un message d'erreur.*
+    *   *Note : la connexion se fait via le backend Fubo. Identifiants invalides, indisponibilité géographique (hors France) ou compte non éligible se traduisent par un message d'erreur explicite.*
     *   *Ré-authentification : si votre mot de passe change ou que votre session est invalidée, Home Assistant propose une demande de ré-authentification pour saisir à nouveau votre mot de passe, sans avoir à supprimer puis recréer l'intégration.*
 
 ### Options & Ajustements
