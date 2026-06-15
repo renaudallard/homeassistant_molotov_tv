@@ -24,27 +24,38 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""API client for Molotov TV."""
+"""Fubo backend API client for the Molotov TV integration.
+
+Molotov 5.51 runs on the Fubo backend; this client speaks that REST API
+(``api-eu.fubo.tv``) while keeping the public method names the rest of the
+integration depends on. The transport engine (url resolution, single 401
+refresh-and-retry, 5xx/429 backoff, auth locking) is provider-agnostic.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import timedelta
-import gzip
-import io
+from datetime import datetime, timedelta
 import json
 import logging
 import random
-import time
 from typing import Any
-from urllib.parse import quote, urlencode, urljoin
-import zipfile
+import uuid
+from urllib.parse import urljoin
 
-from aiohttp import BasicAuth, ClientResponseError, ClientSession, ClientTimeout
+from aiohttp import ClientResponseError, ClientSession, ClientTimeout
 from homeassistant.util import dt as dt_util
 
-from .const import CONTENT_TYPE_DASH, DEFAULT_ENVIRONMENT, ENVIRONMENTS, MOLOTOV_AGENT
+from .const import (
+    CONTENT_TYPE_DASH,
+    DEFAULT_ENVIRONMENT,
+    ENVIRONMENTS,
+    FUBO_APPLICATION_ID,
+    FUBO_CLIENT_VERSION,
+    FUBO_SUPPORTED_FEATURES,
+    FUBO_USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +78,7 @@ async def _read_error_body(resp) -> str | None:
 
 
 def _extract_user_message(error_body: str | None) -> str | None:
-    """Extract user_message from JSON error body if present."""
+    """Extract a human-readable message from a JSON error body if present."""
     if not error_body:
         return None
     try:
@@ -75,83 +86,49 @@ def _extract_user_message(error_body: str | None) -> str | None:
         if isinstance(data, dict):
             error = data.get("error", data)
             if isinstance(error, dict):
-                user_msg = error.get("user_message")
-                if user_msg:
-                    _LOGGER.debug(
-                        "Extracted user_message: %s",
-                        user_msg[:100] if user_msg else None,
-                    )
-                return user_msg
+                return error.get("user_message") or error.get("message")
     except (json.JSONDecodeError, TypeError) as err:
-        _LOGGER.debug("Failed to extract user_message from error body: %s", err)
+        _LOGGER.debug("Failed to extract user message from error body: %s", err)
     return None
 
 
-def _extract_json_from_zip(raw: bytes) -> bytes:
-    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        json_entries = [
-            entry
-            for entry in archive.infolist()
-            if entry.filename.lower().endswith(".json")
-        ]
-        if json_entries:
-            target = max(json_entries, key=lambda entry: entry.file_size)
-        else:
-            entries = archive.infolist()
-            if not entries:
-                raise MolotovApiError("EPG zip payload is empty")
-            target = entries[0]
-        return archive.read(target.filename)
-
-
-def _decode_epg_payload(raw: bytes) -> dict[str, Any]:
-    if raw.startswith(b"\x1f\x8b"):
-        raw = gzip.decompress(raw)
-    elif raw.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
-        raw = _extract_json_from_zip(raw)
-
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw.decode("utf-8", errors="replace")
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as err:
-        raise MolotovApiError("EPG payload is not valid JSON") from err
-
-    if isinstance(data, list):
-        return {"channels": data}
-    if not isinstance(data, dict):
-        raise MolotovApiError("EPG response is not a JSON object")
-    return data
-
-
-def _extract_config_url(data: dict[str, Any], key: str) -> str | None:
-    value = data.get(key)
-    if not isinstance(value, dict):
-        return None
-    url = value.get("url")
-    if isinstance(url, str) and url:
-        return url
-    return None
+def _rfc3339(value: datetime) -> str:
+    """Format a datetime as the RFC3339 UTC string /epg requires."""
+    return value.astimezone(dt_util.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # HTTP request timeouts (seconds)
-DEFAULT_TIMEOUT = ClientTimeout(total=20, connect=10)  # Reduced from 30s
-LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=45, connect=10)  # Reduced from 60s
+DEFAULT_TIMEOUT = ClientTimeout(total=20, connect=10)
+LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=45, connect=10)
 
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_STATUS_CODES = {502, 503, 504, 429}  # Gateway errors and rate limiting
 RETRY_DELAY_SECONDS = 1.0
 
-# EPG link cache TTL (seconds)
-EPG_LINK_CACHE_TTL = 300  # 5 minutes
+# Live guide window: how far ahead to fetch, and how many channels per page.
+EPG_WINDOW = timedelta(hours=6)
+EPG_LOOKBACK = timedelta(hours=24)
+EPG_CHANNEL_LIMIT = 100
+
+# Playback reference scheme used by build_asset_url/async_get_asset_stream. The
+# value is opaque to callers and resolved to a fresh manifest at play time.
+_REF_PREFIX = "fubo:"
+_VIDEO_TYPE_TO_KIND = {
+    "channel": "live",
+    "live": "live",
+    "replay": "vod",
+    "vod": "vod",
+    "program": "vod",
+    "episode": "vod",
+    "recording": "dvr",
+    "record": "dvr",
+    "dvr": "dvr",
+}
 
 
 class MolotovApiError(Exception):
-    """Generic Molotov API error."""
+    """Generic backend API error."""
 
     def __init__(self, message: str, user_message: str | None = None) -> None:
         super().__init__(message)
@@ -164,24 +141,20 @@ class MolotovAuthError(MolotovApiError):
 
 @dataclass
 class MolotovSession:
-    """Holds session-level data for Molotov."""
+    """Holds session-level data for the Fubo backend."""
 
     access_token: str | None = None
     refresh_token: str | None = None
-    access_token_expires_at: int | None = None
     user_id: str | None = None
+    profile_id: str | None = None
+    # None for Fubo (no official receiver app id); the media player then falls
+    # back to the custom receiver, which is what handles Fubo's Widevine DRM.
     cast_app_id: str | None = None
-    remote_url: str | None = None
-    remote_subbed_url: str | None = None
-    live_home_url: str | None = None
-    home_url: str | None = None
-    search_url: str | None = None
-    search_home_url: str | None = None
-    bookmark_url: str | None = None
+    device_id: str | None = None
 
 
 class MolotovApi:
-    """Minimal Molotov API client for Home Assistant."""
+    """Fubo backend API client for Home Assistant."""
 
     def __init__(
         self,
@@ -190,6 +163,7 @@ class MolotovApi:
         password: str,
         environment: str,
         language: str,
+        device_id: str | None = None,
     ) -> None:
         self._session = session
         self._email = email
@@ -199,21 +173,12 @@ class MolotovApi:
         self._environment = environment
         env = ENVIRONMENTS[environment]
         self._base_api_url = env["base_api_url"]
-        self._live_channel_api_url = env["live_channel_api_url"]
-        self._live_channel_auth = BasicAuth(
-            env["live_channel_json_user"], env["live_channel_json_password"]
-        )
-        self._session_state = MolotovSession(
-            cast_app_id=env.get("cast_app_id"),
-            remote_url=urljoin(self._base_api_url, "v2/remote/channels"),
-            remote_subbed_url=urljoin(self._base_api_url, "v2/remote/channels-subbed"),
-            live_home_url=urljoin(self._base_api_url, "v2/channels/live/sections"),
-            home_url=urljoin(self._base_api_url, "v3/me/home/sections"),
-            bookmark_url=urljoin(self._base_api_url, "v4/me/bookmarks/sections"),
-        )
         self._language = language
+        # Fubo expects a BCP-47 tag; the integration stores a short code.
+        self._preferred_language = "fr-FR" if language.startswith("fr") else language
+        self._device_id = device_id or f"etincelle-{uuid.uuid4()}"
+        self._session_state = MolotovSession(device_id=self._device_id)
         self._lock = asyncio.Lock()
-        self._epg_link_cache: tuple[float, str] | None = None  # (timestamp, link)
 
     @property
     def session_state(self) -> MolotovSession:
@@ -227,676 +192,84 @@ class MolotovApi:
 
         return self._base_api_url
 
+    @property
+    def device_id(self) -> str:
+        """Return the stable device id sent to the backend."""
+
+        return self._device_id
+
     def build_asset_url(
         self, video_type: str, video_id: str, start_over: bool = False
     ) -> str:
-        """Build a Molotov asset URL for the given video reference."""
+        """Build an opaque playback reference for the given video.
 
-        params: dict[str, str] = {
-            "type": video_type,
-            "id": video_id,
-            "video_format": "DASH",
-        }
+        The reference is resolved to a fresh tokenized manifest by
+        async_get_asset_stream at play time (tokens are short-lived).
+        """
+
+        kind = _VIDEO_TYPE_TO_KIND.get(video_type, "vod")
+        ref = f"{_REF_PREFIX}{kind}:{video_id}"
         if start_over:
-            params["start_over"] = "true"
-        return f"{urljoin(self._base_api_url, 'v2/me/assets')}?{urlencode(params)}"
+            ref = f"{ref}:startover"
+        return ref
+
+    @staticmethod
+    def _parse_asset_ref(ref: str) -> tuple[str, str, bool]:
+        """Parse a build_asset_url reference into (kind, id, start_over)."""
+
+        if not ref.startswith(_REF_PREFIX):
+            # Fall back to treating an unknown reference as a VOD id.
+            return "vod", ref, False
+        parts = ref.split(":")
+        kind = parts[1] if len(parts) > 1 else "vod"
+        start_over = parts[-1] == "startover"
+        id_parts = parts[2:-1] if start_over else parts[2:]
+        return kind, ":".join(id_parts), start_over
 
     def stream_content_type(self) -> str:
-        """Return the content type for cast playback."""
+        """Return the default content type for cast playback."""
 
         return CONTENT_TYPE_DASH
 
+    # --- Authentication -------------------------------------------------
+
     async def async_login(self) -> None:
-        """Authenticate and cache tokens."""
+        """Sign in and load the user/profile ids."""
 
         async with self._lock:
-            payload = {
-                "grant_type": "password",
-                "email": self._email,
-                "password": self._password,
-            }
             data = await self._request(
-                "POST",
-                "v3.1/auth/login",
+                "PUT",
+                "signin",
                 auth=False,
-                json=payload,
+                json={"email": self._email, "password": self._password},
             )
-            self._update_session_from_auth(data)
-            if not self._session_state.access_token:
+            tokens = data.get("payload", data)
+            access_token = tokens.get("access_token")
+            if not access_token:
                 raise MolotovAuthError("Login response did not include access token")
-            if not self._session_state.user_id:
+            self._session_state.access_token = access_token
+            self._session_state.refresh_token = tokens.get("refresh_token")
+
+            # The fresh token cannot 401, so disable the refresh-and-retry path
+            # here to avoid re-entering the auth lock we already hold.
+            user = await self._request("GET", "user", auth=True, _retry=False)
+            account = user.get("data") or {}
+            user_id = account.get("id")
+            if not user_id:
                 raise MolotovAuthError("Login response did not include user id")
-            try:
-                await self.async_fetch_config()
-            except MolotovApiError as err:
-                _LOGGER.warning(
-                    "Molotov config fetch failed; using defaults: %s",
-                    err,
-                )
-
-    async def async_fetch_config(self) -> None:
-        """Fetch dynamic config data."""
-
-        data = await self._request("GET", "v2/config", auth=False)
-
-        api_root = data.get("apiRoot")
-        if api_root and isinstance(api_root, str):
-            _LOGGER.debug("Configured apiRoot: %s", api_root)
-            # Potentially update base_api_url if we want to trust the config
-            # self._base_api_url = api_root
-
-        cast_app_id = data.get("cast_app_id")
-        if cast_app_id:
-            self._session_state.cast_app_id = cast_app_id
-        remote_url = _extract_config_url(data, "remote")
-        if remote_url:
-            self._session_state.remote_url = remote_url
-        remote_subbed_url = _extract_config_url(data, "remote_subbed")
-        if remote_subbed_url:
-            self._session_state.remote_subbed_url = remote_subbed_url
-        live_home_url = _extract_config_url(data, "live_home")
-        if live_home_url:
-            self._session_state.live_home_url = live_home_url
-        home_url = _extract_config_url(data, "v3_home") or _extract_config_url(
-            data, "home"
-        )
-        if home_url:
-            self._session_state.home_url = home_url
-
-        search_url = (
-            _extract_config_url(data, "search")
-            or _extract_config_url(data, "search_legacy")
-            or _extract_config_url(data, "search_universal")
-            or _extract_config_url(data, "globalSearchUrl")
-            or _extract_config_url(data, "searchUrl")
-        )
-        if search_url:
-            self._session_state.search_url = search_url
-        search_home_url = (
-            _extract_config_url(data, "v3_search_home")
-            or _extract_config_url(data, "search_home")
-            or _extract_config_url(data, "searchHome")
-        )
-        if search_home_url:
-            self._session_state.search_home_url = search_home_url
-
-        bookmark_url = _extract_config_url(data, "bookmark") or _extract_config_url(
-            data, "bookmarks"
-        )
-        if bookmark_url:
-            self._session_state.bookmark_url = bookmark_url
-
-    async def async_get_channels(self) -> dict[str, Any]:
-        """Fetch the channel list with EPG data when available."""
-
-        await self.async_ensure_logged_in()
-        urls: list[str] = []
-        session = self._session_state
-        if session.remote_subbed_url:
-            urls.append(session.remote_subbed_url)
-        if session.remote_url and session.remote_url not in urls:
-            urls.append(session.remote_url)
-
-        if not urls:
-            _LOGGER.warning("No channel URLs available, falling back to EPG")
-            return await self.async_get_epg()
-
-        # Race all URLs concurrently - return first success
-        async def fetch_url(url: str) -> tuple[str, dict[str, Any]]:
-            _LOGGER.debug("Fetching Molotov channels from %s", url)
-            result = await self._request("GET", url, auth=True)
-            return url, result
-
-        tasks = [asyncio.create_task(fetch_url(url)) for url in urls]
-        last_error: MolotovApiError | None = None
-
-        for coro in asyncio.as_completed(tasks):
-            try:
-                url, result = await coro
-                # Cancel remaining tasks and wait for them so their exceptions
-                # are retrieved and the cancellations complete cleanly.
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-                _LOGGER.debug("Channel fetch succeeded from %s", url)
-                return result
-            except MolotovApiError as err:
-                last_error = err
-                _LOGGER.debug("Channel fetch failed: %s", err)
-            except asyncio.CancelledError:
-                pass
-
-        _LOGGER.warning("All channel endpoints failed, falling back to EPG feed")
-        try:
-            return await self.async_get_epg()
-        except MolotovApiError as err:
-            if last_error:
-                _LOGGER.error(
-                    "Channel fetch failed for all endpoints; fallback failed: %s",
-                    err,
-                )
-            raise
-
-    async def async_get_all_channels(self) -> dict[str, Any]:
-        """Fetch all channels (not just subscribed)."""
-        await self.async_ensure_logged_in()
-        url = self._session_state.remote_url or urljoin(
-            self._base_api_url, "v2/remote/channels"
-        )
-        return await self._request("GET", url, auth=True)
-
-    async def async_get_live_home_channels(self) -> dict[str, Any]:
-        """Fetch live home sections (includes per-channel programs when available)."""
-        await self.async_ensure_logged_in()
-        url = self._session_state.live_home_url or urljoin(
-            self._base_api_url, "v2/channels/live/sections"
-        )
-        return await self._request("GET", url, auth=True)
-
-    async def async_get_home_sections(self) -> dict[str, Any]:
-        """Fetch the home sections feed."""
-
-        await self.async_ensure_logged_in()
-        url = self._session_state.home_url or urljoin(
-            self._base_api_url, "v3/me/home/sections"
-        )
-        return await self._request("GET", url, auth=True)
-
-    async def async_search(self, query: str) -> dict[str, Any]:
-        """Search for content.
-
-        Args:
-            query: The search query string.
-
-        Returns:
-            Search results with sections containing matching items.
-        """
-        await self.async_ensure_logged_in()
-        _LOGGER.debug("Performing search with base_api_url: %s", self._base_api_url)
-
-        # Try different search endpoints
-        endpoints: list[tuple[str, str, dict[str, str] | None]] = []
-
-        # Use dynamic search URL if available (preferred)
-        # Note: globalSearchUrl typically returns a list of SearchTile objects
-        if self._session_state.search_url:
-            _LOGGER.debug(
-                "Using dynamic search URL: %s", self._session_state.search_url
-            )
-            endpoints.append(("POST", self._session_state.search_url, {"query": query}))
-
-        endpoints.extend(
-            [
-                ("POST", "v2/search", {"query": query}),
-                ("POST", "v2/universal-search", {"query": query}),
-                ("POST", "v2/me/search", {"query": query}),  # Try without /query
-                ("POST", "v2/me/search/query", {"query": query}),
-                ("POST", "v3/me/search/query", {"query": query}),
-                ("POST", "v2/search/query", {"query": query}),  # Try without /me/
-                ("POST", "v3/search/query", {"query": query}),
-                ("GET", f"v2/me/search?query={quote(query)}", None),
-                ("GET", f"v3/search?q={quote(query)}", None),
-            ]
-        )
-
-        def _validate_search_result(
-            result: Any, endpoint: str
-        ) -> dict[str, Any] | None:
-            """Return a normalised result dict if useful, else None."""
-            if isinstance(result, dict):
-                if (
-                    result.get("sections")
-                    or result.get("items")
-                    or result.get("results")
-                ):
-                    return result
-            elif isinstance(result, list):
-                _LOGGER.debug(
-                    "Got list response with %d items from %s", len(result), endpoint
-                )
-                return {
-                    "sections": [
-                        {
-                            "title": "Results",
-                            "items": result,
-                            "type": "search_results",
-                        }
-                    ],
-                    "query": query,
-                }
-            return None
-
-        async def _try_search(
-            method: str, endpoint: str, body: dict[str, Any] | None
-        ) -> tuple[str, dict[str, Any]]:
-            url = (
-                endpoint
-                if endpoint.startswith("http")
-                else urljoin(self._base_api_url, endpoint)
-            )
-            _LOGGER.debug("Trying search endpoint: %s %s", method, url)
-            if method == "POST" and body:
-                result = await self._request(method, url, auth=True, json=body)
-            else:
-                result = await self._request(method, url, auth=True)
-            validated = _validate_search_result(result, endpoint)
-            if validated is None:
-                raise MolotovApiError(f"No useful results from {endpoint}")
-            return endpoint, validated
-
-        # Race all endpoints concurrently - return first success
-        tasks = [asyncio.create_task(_try_search(m, ep, b)) for m, ep, b in endpoints]
-        last_error: MolotovApiError | None = None
-
-        for coro in asyncio.as_completed(tasks):
-            try:
-                endpoint, result = await coro
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-                _LOGGER.debug("Search succeeded from %s", endpoint)
-                return result
-            except MolotovApiError as err:
-                last_error = err
-                _LOGGER.debug("Search endpoint failed: %s", err)
-            except asyncio.CancelledError:
-                pass
-
-        if last_error:
-            _LOGGER.warning("All search endpoints failed: %s", last_error)
-            raise MolotovApiError(f"Search failed: {last_error}") from last_error
-        return {"sections": [], "query": query}
-
-    async def async_get_search_home(self) -> dict[str, Any]:
-        """Get search home page with suggestions and popular content."""
-        await self.async_ensure_logged_in()
-        endpoints = []
-        if self._session_state.search_home_url:
-            endpoints.append(self._session_state.search_home_url)
-        endpoints.extend(
-            [
-                "v3/search-home",
-                "v2/me/search/home",
-            ]
-        )
-        last_error: MolotovApiError | None = None
-        for endpoint in endpoints:
-            url = (
-                endpoint
-                if endpoint.startswith("http")
-                else urljoin(self._base_api_url, endpoint)
-            )
-            try:
-                return await self._request("GET", url, auth=True)
-            except MolotovApiError as err:
-                _LOGGER.debug("Search home endpoint %s failed: %s", url, err)
-                last_error = err
-        if last_error:
-            raise last_error
-        return {}
-
-    async def async_get_program_details(
-        self, channel_id: str, program_id: str
-    ) -> dict[str, Any]:
-        """Fetch program details including all episodes.
-
-        Args:
-            channel_id: The channel ID.
-            program_id: The program ID.
-
-        Returns:
-            Program details with channelEpisodeSections and programEpisodeSections.
-        """
-        await self.async_ensure_logged_in()
-
-        # Try v2 endpoint first
-        endpoints = [
-            f"v2/channels/{channel_id}/programs/{program_id}/view",
-            f"v3/channels/{channel_id}/programs/{program_id}/view",
-            f"v2/channels/{channel_id}/programs/{program_id}",
-        ]
-
-        for endpoint in endpoints:
-            try:
-                url = urljoin(self._base_api_url, endpoint)
-                result = await self._request("GET", url, auth=True)
-                if isinstance(result, dict):
-                    _LOGGER.debug(
-                        "Program details from %s: keys=%s",
-                        endpoint,
-                        list(result.keys()),
-                    )
-                    return result
-            except MolotovApiError as err:
-                _LOGGER.debug("Program details endpoint %s failed: %s", endpoint, err)
-
-        return {
-            "program": None,
-            "channelEpisodeSections": [],
-            "programEpisodeSections": [],
-        }
-
-    async def async_get_asset_stream(self, asset_url: str) -> dict[str, Any]:
-        """Resolve asset URL to stream data."""
-        await self.async_ensure_logged_in()
-
-        # 1. Get asset metadata
-        asset_data = await self._request("GET", asset_url, auth=True)
-
-        _LOGGER.debug(
-            "Asset response keys: %s",
-            list(asset_data.keys())
-            if isinstance(asset_data, dict)
-            else type(asset_data),
-        )
-
-        # 2. Check CDN decision - stream might be at top level or nested
-        stream = asset_data.get("stream", {})
-        if not stream or not stream.get("url"):
-            # Try alternative locations for stream URL
-            _LOGGER.debug(
-                "No 'stream.url' key, checking alternatives in: %s",
-                list(asset_data.keys()),
-            )
-            for key in [
-                "manifest_url",
-                "url",
-                "playback_url",
-                "dash_url",
-                "mpd_url",
-                "content_url",
-            ]:
-                if key in asset_data and asset_data[key]:
-                    stream = {"url": asset_data[key]}
-                    _LOGGER.debug("Found stream URL in '%s'", key)
-                    break
-
-        cdn_url = stream.get("cdn_decision_url")
-        suffix_url = stream.get("suffix_url")
-        final_url = stream.get("url")
-
-        if cdn_url:
-            try:
-                _LOGGER.debug("Resolving CDN decision from %s", cdn_url)
-                providers_data = await self._request("GET", cdn_url, auth=True)
-
-                # Expecting a list of base URLs
-                if isinstance(providers_data, list) and providers_data:
-                    base_url = providers_data[0]
-                    if isinstance(base_url, str):
-                        if suffix_url:
-                            final_url = (
-                                f"{base_url.rstrip('/')}/{suffix_url.lstrip('/')}"
-                            )
-                        else:
-                            final_url = base_url
-                        _LOGGER.debug("Resolved stream URL: %s", final_url)
-            except MolotovAuthError:
-                raise
-            except (
-                MolotovApiError,
-                KeyError,
-                TypeError,
-                IndexError,
-                ValueError,
-            ) as err:
-                _LOGGER.warning("Failed to resolve CDN decision: %s", err)
-
-        # Update the stream dict with the resolved URL
-        if final_url:
-            stream["url"] = final_url
-            _LOGGER.debug(
-                "Final stream URL: %s", final_url[:100] if final_url else None
-            )
-        else:
-            _LOGGER.warning("No stream URL found in asset response")
-
-        asset_data["stream"] = stream
-        return asset_data
-
-    async def async_get_bookmarks(self) -> dict[str, Any]:
-        """Fetch the bookmarks sections feed (recordings)."""
-
-        await self.async_ensure_logged_in()
-
-        # Prefer v4 (same as official app), fall back to v3 then v2
-        seen: set[str] = set()
-        endpoints: list[str] = []
-        for u in [
-            self._session_state.bookmark_url,
-            urljoin(self._base_api_url, "v4/me/bookmarks/sections"),
-            urljoin(self._base_api_url, "v3/me/bookmarks/sections"),
-            urljoin(self._base_api_url, "v2/me/bookmarks/sections"),
-        ]:
-            if u and u not in seen:
-                seen.add(u)
-                endpoints.append(u)
-
-        for url in endpoints:
-            try:
-                result = await self._request("GET", url, auth=True)
-                if isinstance(result, dict):
-                    sections = result.get("sections", [])
-                    _LOGGER.debug(
-                        "Bookmarks from %s: %d sections",
-                        url.split("/")[-2] if "/" in url else url,
-                        len(sections) if isinstance(sections, list) else 0,
-                    )
-                    if sections:
-                        return result
-            except MolotovApiError as err:
-                _LOGGER.debug("Bookmarks endpoint %s failed: %s", url, err)
-
-        return {"sections": []}
-
-    async def async_get_channel_programs(self, channel_id: str) -> dict[str, Any]:
-        """Fetch program data for a single channel."""
-
-        await self.async_ensure_logged_in()
-        return await self._request(
-            "GET",
-            f"v3.1/remote/programs/from-channel/{channel_id}",
-            auth=True,
-        )
-
-    async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
-        """Fetch replay/catchup content for a channel."""
-
-        await self.async_ensure_logged_in()
-
-        # Channel pages in the app use the channel sections endpoint.
-        try:
-            url = urljoin(self._base_api_url, f"v2/channels/{channel_id}/sections")
-            _LOGGER.debug("Fetching channel sections for replays: %s", url)
-            result = await self._request("GET", url, auth=True)
-            sections = result.get("sections")
-            if sections:
-                _LOGGER.debug(
-                    "Found %d sections for channel %s via dedicated endpoint",
-                    len(sections),
-                    channel_id,
-                )
-                return result
-            _LOGGER.debug(
-                "Channel sections endpoint returned no sections for %s", channel_id
-            )
-        except MolotovApiError as err:
-            _LOGGER.debug(
-                "Channel sections endpoint failed for %s: %s", channel_id, err
-            )
-
-        # Fall back to home sections filtered by channel.
-        # Home sections contain VOD items with video.type="vod".
-        try:
-            home_data = await self.async_get_home_sections()
-        except MolotovApiError as err:
-            _LOGGER.debug("Failed to fetch home sections for replays: %s", err)
-            return {"sections": [], "channel_id": channel_id}
-
-        # Filter sections and items by channel_id.
-        filtered_sections: list[dict[str, Any]] = []
-        for section in home_data.get("sections", []):
-            if not isinstance(section, dict):
-                continue
-
-            # Check if section itself is for this channel
-            context = section.get("context", {})
-            section_channel = (
-                section.get("channel_id")
-                or context.get("channel_id")
-                or section.get("id")
-            )
-            is_channel_section = str(section_channel) == str(channel_id)
-
-            # Filter items by channel_id
-            items = section.get("items", [])
-            channel_items = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                # Check channel_id in metadata or video
-                metadata = item.get("metadata", {})
-                video = item.get("video", {})
-                item_channel = (
-                    metadata.get("channel_id")
-                    or video.get("channel_id")
-                    or item.get("channel_id")
-                )
-
-                # Match if item belongs to channel OR the whole section belongs to channel
-                if is_channel_section or str(item_channel) == str(channel_id):
-                    # Only include VOD type items
-                    video_type = video.get("type", "")
-                    if video_type == "vod":
-                        channel_items.append(item)
-                        _LOGGER.debug(
-                            "Found VOD item for channel %s: %s (vod_id=%s, section=%s)",
-                            channel_id,
-                            item.get("title", "unknown")[:30],
-                            video.get("id"),
-                            section.get("title", "unknown"),
-                        )
-                elif item_channel:
-                    _LOGGER.debug(
-                        "Skipping item '%s': Item channel_id=%s != Target %s",
-                        item.get("title", "unknown")[:30],
-                        item_channel,
-                        channel_id,
-                    )
-
-            if channel_items:
-                filtered_section = {**section, "items": channel_items}
-                filtered_sections.append(filtered_section)
-
-        _LOGGER.debug(
-            "Found %d replay sections with %d items for channel %s",
-            len(filtered_sections),
-            sum(len(s.get("items", [])) for s in filtered_sections),
-            channel_id,
-        )
-
-        return {"sections": filtered_sections, "channel_id": channel_id}
-
-    async def async_get_channel_past_programs(
-        self, channel_id: str, days: int = 7
-    ) -> dict[str, Any]:
-        """Fetch programs for a channel including past ones (for replay)."""
-
-        await self.async_ensure_logged_in()
-
-        # Calculate time range: 7 days ago to now
-        # Also try without time params to see what we get
-        now = dt_util.utcnow()
-        from_ts = int((now - timedelta(days=days)).timestamp() * 1000)
-        to_ts = int(now.timestamp() * 1000)
-
-        _LOGGER.debug(
-            "Fetching programs for channel %s: from=%s (%s) to=%s (%s)",
-            channel_id,
-            from_ts,
-            (now - timedelta(days=days)).isoformat(),
-            to_ts,
-            now.isoformat(),
-        )
-
-        # Try different endpoints for programs
-        endpoints = [
-            # Without time params first - see what we get
-            f"v3.1/remote/programs/from-channel/{channel_id}",
-            # With time params
-            f"v3.1/remote/programs/from-channel/{channel_id}?from={from_ts}&to={to_ts}",
-            # Try start/end params instead
-            f"v3.1/remote/programs/from-channel/{channel_id}?start={from_ts}&end={to_ts}",
-        ]
-
-        for endpoint in endpoints:
-            try:
-                url = urljoin(self._base_api_url, endpoint)
-                _LOGGER.debug("Trying programs endpoint: %s", url)
-                result = await self._request("GET", url, auth=True)
-                _LOGGER.debug(
-                    "Programs response for channel %s: keys=%s",
-                    channel_id,
-                    list(result.keys()) if isinstance(result, dict) else type(result),
-                )
-                # Check if we got any content
-                sections = result.get("sections", [])
-                if sections:
-                    items_count = sum(
-                        len(s.get("items", [])) for s in sections if isinstance(s, dict)
-                    )
-                    _LOGGER.debug(
-                        "Endpoint %s returned %d sections with %d total items",
-                        endpoint.split("?")[0],
-                        len(sections),
-                        items_count,
-                    )
-                    if items_count > 0:
-                        return result
-            except MolotovApiError as err:
-                _LOGGER.debug("Programs endpoint %s failed: %s", endpoint, err)
-
-        return {"programs": []}
-
-    async def async_get_all_recordings(self) -> list[dict[str, Any]]:
-        """Fetch all recordings from bookmarks."""
-
-        await self.async_ensure_logged_in()
-        all_sections: list[dict[str, Any]] = []
-
-        try:
-            data = await self.async_get_bookmarks()
-            if isinstance(data, dict) and "sections" in data:
-                sections = data.get("sections", [])
-                _LOGGER.debug("Bookmarks returned %d sections", len(sections))
-                all_sections.extend(sections)
-        except MolotovApiError as err:
-            _LOGGER.debug("Failed to fetch bookmarks: %s", err)
-
-        return all_sections
+            profiles = account.get("profiles") or []
+            profile_id = profiles[0].get("id") if profiles else None
+            if not profile_id:
+                raise MolotovAuthError("Account has no usable profile")
+            self._session_state.user_id = str(user_id)
+            self._session_state.profile_id = str(profile_id)
 
     async def async_refresh_token(self, force: bool = False) -> None:
-        """Refresh access token using the refresh token.
-
-        When force is set the unexpired-token short-circuit is skipped: the
-        server rejected a token we still believe is valid (revoked, password
-        changed elsewhere, or clock skew), so a refresh must happen anyway.
-        """
+        """Exchange the refresh token for a fresh access token."""
 
         token_before = self._session_state.access_token
         async with self._lock:
-            # Re-check expiration inside lock to avoid redundant refreshes
-            expires_at = self._session_state.access_token_expires_at
-            if not force and expires_at:
-                now = int(dt_util.utcnow().timestamp())
-                if now < expires_at - 60:
-                    return  # Token was already refreshed by another call
-
-            # If forced but the token already changed while waiting for the
-            # lock, another caller refreshed it; do not refresh again.
+            # Another caller may have refreshed while we waited for the lock.
             if force and self._session_state.access_token != token_before:
                 return
 
@@ -905,82 +278,238 @@ class MolotovApi:
                 raise MolotovAuthError("Missing refresh token")
 
             data = await self._request(
-                "GET",
-                f"v3/auth/refresh/{refresh_token}",
+                "POST",
+                "refresh",
                 auth=False,
+                headers={"authorization": f"Bearer {refresh_token}"},
+                _retry=False,
             )
-            self._update_session_from_auth(data)
+            tokens = data.get("payload", data)
+            access_token = tokens.get("access_token")
+            if not access_token:
+                raise MolotovAuthError("Refresh did not return an access token")
+            self._session_state.access_token = access_token
+            new_refresh = tokens.get("refresh_token")
+            if new_refresh:
+                self._session_state.refresh_token = new_refresh
 
     async def async_ensure_logged_in(self) -> None:
-        """Ensure a valid access token is present."""
+        """Ensure an access token is present; a stale one is refreshed on 401."""
 
         if not self._session_state.access_token:
             await self.async_login()
-            return
 
-        expires_at = self._session_state.access_token_expires_at
-        if expires_at:
-            now = int(dt_util.utcnow().timestamp())
-            if now >= expires_at - 60:
-                await self.async_refresh_token()
+    # --- Content (server-driven page API) -------------------------------
 
-    async def async_get_epg(self) -> dict[str, Any]:
-        """Fetch the EPG JSON payload."""
+    async def async_get_page(self, slug_or_url: str) -> dict[str, Any]:
+        """Fetch a papi page by slug ('home') or absolute action URL."""
 
         await self.async_ensure_logged_in()
-        user_id = self._session_state.user_id
-        if not user_id:
-            raise MolotovApiError("Missing user id for EPG request")
+        path = slug_or_url
+        if not path.startswith("http") and not path.startswith("papi/"):
+            path = f"papi/v1/page/{path}"
+        return await self._request("GET", path, auth=True)
 
-        # Check EPG link cache
-        link: str | None = None
-        now = time.time()
-        if self._epg_link_cache:
-            cached_time, cached_link = self._epg_link_cache
-            if now - cached_time < EPG_LINK_CACHE_TTL:
-                link = cached_link
-                _LOGGER.debug("Using cached EPG link")
+    async def async_get_home(self) -> dict[str, Any]:
+        """Fetch the home page (carousels of cards)."""
 
-        # Fetch new link if not cached
-        if not link:
-            link_data = await self._request(
-                "GET",
-                f"{self._live_channel_api_url.rstrip('/')}/v1/{user_id}/firestick/download-link-epg-files",
-                auth=False,
-                basic_auth=self._live_channel_auth,
-            )
-            link = link_data.get("link")
-            if not link:
-                raise MolotovApiError("EPG link not returned by live channel API")
-            # Cache the link
-            self._epg_link_cache = (now, link)
+        return await self.async_get_page("home")
 
-        live_channel_base = self._live_channel_api_url.rstrip("/")
-        use_basic_auth = link.startswith(live_channel_base)
-        epg_raw = await self._request_raw_bytes(
+    async def async_get_channels(self) -> dict[str, Any]:
+        """Fetch the channel directory page (also carries the Apps section)."""
+
+        return await self.async_get_page("channels")
+
+    async def async_get_all_channels(self) -> dict[str, Any]:
+        """Fetch the channel directory page."""
+
+        return await self.async_get_channels()
+
+    async def async_get_live_home_channels(self) -> dict[str, Any]:
+        """Fetch the live-tv page (every channel's current programme)."""
+
+        return await self.async_get_page("live-tv")
+
+    async def async_search(self, query: str) -> dict[str, Any]:
+        """Search content; results come back as a page of card sections."""
+
+        await self.async_ensure_logged_in()
+        return await self._request(
             "GET",
-            link,
-            auth=False,
-            basic_auth=self._live_channel_auth if use_basic_auth else None,
-            timeout=LARGE_RESPONSE_TIMEOUT,
+            "papi/v1/search/content",
+            auth=True,
+            params={"category": "top_results", "fuzzy": "true", "query": query},
         )
-        return _decode_epg_payload(epg_raw)
+
+    async def async_get_program_details(
+        self,
+        content_id: str,
+        kind: str = "program",
+        tab: str = "id-tab-about",
+    ) -> dict[str, Any]:
+        """Fetch a program/series/channel detail page (metadata + about tab)."""
+
+        await self.async_ensure_logged_in()
+        if kind not in ("program", "series", "channel"):
+            kind = "program"
+        params = {"tabID": tab} if tab else None
+        return await self._request(
+            "GET",
+            f"papi/v1/program-details/{kind}/{content_id}",
+            auth=True,
+            params=params,
+        )
+
+    async def async_get_channel_programs(self, channel_id: str) -> dict[str, Any]:
+        """Fetch a live channel's detail page (its current programme)."""
+
+        return await self.async_get_program_details(channel_id, kind="channel")
+
+    async def async_get_channel_past_programs(self, channel_id: str) -> dict[str, Any]:
+        """Fetch the recent guide window used to surface a channel's replays."""
+
+        await self.async_ensure_logged_in()
+        now = dt_util.utcnow()
+        return await self.async_get_epg(start=now - EPG_LOOKBACK, end=now)
+
+    async def async_get_channel_replays(self, channel_id: str) -> dict[str, Any]:
+        """Fetch the recent guide window used to surface a channel's replays."""
+
+        return await self.async_get_channel_past_programs(channel_id)
+
+    # --- Live guide -----------------------------------------------------
+
+    async def async_get_epg(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch the live guide: channels with programmes over a time window."""
+
+        await self.async_ensure_logged_in()
+        now = dt_util.utcnow()
+        params = {
+            "startTime": _rfc3339(start or now),
+            "endTime": _rfc3339(end or now + EPG_WINDOW),
+            "limit": str(limit or EPG_CHANNEL_LIMIT),
+            "ignoreEmpty": "true",
+        }
+        return await self._request(
+            "GET", "epg", auth=True, params=params, timeout=LARGE_RESPONSE_TIMEOUT
+        )
+
+    # --- Recordings (DVR) -----------------------------------------------
+
+    async def async_get_all_recordings(self) -> list[dict[str, Any]]:
+        """Fetch DVR recordings, merging the recorded and scheduled statuses.
+
+        status=all returns an empty body, so each status is fetched separately
+        and merged, deduped by asset id. An account without a DVR quota returns
+        400, which surfaces here as an empty list.
+        """
+
+        await self.async_ensure_logged_in()
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for status in ("recorded", "scheduled"):
+            try:
+                data = await self._request(
+                    "GET",
+                    "dvr/v2/list",
+                    auth=True,
+                    params={"sort": "date", "status": status},
+                )
+            except MolotovApiError as err:
+                _LOGGER.debug("DVR list (%s) failed: %s", status, err)
+                continue
+            for entry in data.get("response") or []:
+                asset_id = _dvr_entry_asset_id(entry)
+                if asset_id is not None:
+                    if asset_id in seen:
+                        continue
+                    seen.add(asset_id)
+                merged.append(entry)
+        return merged
+
+    async def async_add_recording(
+        self, asset_id: str, is_upcoming: bool = False
+    ) -> None:
+        """Schedule a recording for a live airing (LIVE_xxxxx asset)."""
+
+        await self.async_ensure_logged_in()
+        body = {
+            "action_name": "add-recording",
+            "params": {
+                "asset_id": asset_id,
+                "is_upcoming": "true" if is_upcoming else "false",
+            },
+            "metadatas": {"asset.asset_id": asset_id},
+        }
+        # The response body is unused; do not require a JSON content type.
+        await self._do_request(
+            "POST",
+            "action/v1/add-recording",
+            auth=True,
+            json=body,
+            reader=self._read_discard,
+        )
+
+    # --- Playback -------------------------------------------------------
+
+    async def async_get_asset_stream(self, asset_url: str) -> dict[str, Any]:
+        """Resolve a playback reference to a tokenized manifest + DRM info."""
+
+        await self.async_ensure_logged_in()
+        kind, video_id, _start_over = self._parse_asset_ref(asset_url)
+        if not video_id:
+            raise MolotovApiError(f"Invalid playback reference: {asset_url}")
+        params: dict[str, Any] = {"wants_trackers": "true"}
+        if kind == "live":
+            params["channelId"] = video_id
+            params["type"] = "live"
+        elif kind == "dvr":
+            params["id"] = video_id
+            params["type"] = "dvr"
+        else:
+            params["id"] = video_id
+            params["type"] = "vod"
+        # x-user-id is only sent on playback calls, never on page calls.
+        headers = {"x-drm-scheme": "widevine"}
+        if self._session_state.user_id:
+            headers["x-user-id"] = self._session_state.user_id
+        return await self._request(
+            "GET", "vapi/asset/v1", auth=True, params=params, headers=headers
+        )
+
+    # --- Transport ------------------------------------------------------
 
     def build_headers(self, auth: bool) -> dict[str, str]:
-        """Build request headers for Molotov."""
+        """Build the Fubo client/device headers for a request."""
 
         headers = {
-            "User-Agent": "Android",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-            "Content-Type": "application/json",
-            "Accept-Language": self._language,
-            "logged_in": "true" if auth else "false",
-            "orientation": "portrait",
-            "X-Molotov-Agent": MOLOTOV_AGENT,
+            "user-agent": FUBO_USER_AGENT,
+            "x-application-id": FUBO_APPLICATION_ID,
+            "x-client-version": FUBO_CLIENT_VERSION,
+            "x-os": "android",
+            "x-os-version": "16",
+            "x-device-app": "android",
+            "x-device-platform": "android_phone",
+            "x-device-type": "phone",
+            "x-device-group": "mobile",
+            "x-device-brand": "Etincelle",
+            "x-device-model": "HA",
+            "x-device-id": self._device_id,
+            "x-preferred-language": self._preferred_language,
+            "x-supported-streaming-protocols": "hls,dash",
+            "x-drm-scheme": "widevine",
+            "x-supported-features": FUBO_SUPPORTED_FEATURES,
+            "accept": "application/json",
         }
         if auth and self._session_state.access_token:
-            headers["Authorization"] = f"Bearer {self._session_state.access_token}"
+            headers["authorization"] = f"Bearer {self._session_state.access_token}"
+            if self._session_state.profile_id:
+                headers["x-profile-id"] = self._session_state.profile_id
         return headers
 
     async def _request(
@@ -992,7 +521,6 @@ class MolotovApi:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
-        basic_auth: BasicAuth | None = None,
         timeout: ClientTimeout | None = None,
         _retry: bool = True,
         _retries: int = 0,
@@ -1004,37 +532,8 @@ class MolotovApi:
             json=json,
             params=params,
             headers=headers,
-            basic_auth=basic_auth,
             timeout=timeout,
             reader=self._read_json,
-            _retry=_retry,
-            _retries=_retries,
-        )
-
-    async def _request_raw_bytes(
-        self,
-        method: str,
-        url_or_path: str,
-        *,
-        auth: bool,
-        json: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-        basic_auth: BasicAuth | None = None,
-        timeout: ClientTimeout | None = None,
-        _retry: bool = True,
-        _retries: int = 0,
-    ) -> bytes:
-        return await self._do_request(
-            method,
-            url_or_path,
-            auth=auth,
-            json=json,
-            params=params,
-            headers=headers,
-            basic_auth=basic_auth,
-            timeout=timeout,
-            reader=self._read_bytes,
             _retry=_retry,
             _retries=_retries,
         )
@@ -1044,21 +543,20 @@ class MolotovApi:
         content_type = resp.headers.get("content-type", "")
         if "json" not in content_type:
             raise MolotovApiError(
-                f"Unexpected response type from Molotov: {content_type or 'unknown'}"
+                f"Unexpected response type from backend: {content_type or 'unknown'}"
             )
         data = await resp.json()
         if not isinstance(data, dict):
-            # Callers expect a mapping; a bare JSON list/scalar would otherwise
-            # raise an AttributeError that bypasses MolotovApiError handling.
             raise MolotovApiError(
-                f"Unexpected JSON shape from Molotov: expected object, "
+                f"Unexpected JSON shape from backend: expected object, "
                 f"got {type(data).__name__}"
             )
         return data
 
     @staticmethod
-    async def _read_bytes(resp) -> bytes:
-        return await resp.read()
+    async def _read_discard(resp) -> None:
+        await resp.read()
+        return None
 
     async def _do_request(
         self,
@@ -1069,7 +567,6 @@ class MolotovApi:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
-        basic_auth: BasicAuth | None = None,
         timeout: ClientTimeout | None = None,
         reader,
         _retry: bool = True,
@@ -1091,7 +588,6 @@ class MolotovApi:
                 headers=req_headers,
                 params=params,
                 json=json,
-                auth=basic_auth,
                 timeout=timeout or DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status == 401 and auth and _retry:
@@ -1103,7 +599,6 @@ class MolotovApi:
                         json=json,
                         params=params,
                         headers=headers,
-                        basic_auth=basic_auth,
                         timeout=timeout,
                         reader=reader,
                         _retry=False,
@@ -1111,10 +606,8 @@ class MolotovApi:
                     )
                 if resp.status == 401:
                     raise MolotovAuthError("Invalid credentials")
-                # Decide whether to retry transient failures, but back off
-                # only after the response is released (below, outside the
-                # context manager) so a pooled connection is not held for the
-                # duration of the sleep.
+                # Decide whether to retry, but back off only after the response
+                # is released (below) so a pooled connection is not pinned.
                 if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
                     _LOGGER.warning(
                         "Retryable error %s for %s %s, attempt %d/%d",
@@ -1131,25 +624,17 @@ class MolotovApi:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
                     user_message = _extract_user_message(error_body)
-                    if error_body:
-                        _LOGGER.debug(
-                            "Molotov API error: %s %s (%s %s): %s",
-                            method,
-                            url,
-                            resp.status,
-                            reason,
-                            error_body,
-                        )
-                    else:
-                        _LOGGER.debug(
-                            "Molotov API error: %s %s (%s %s)",
-                            method,
-                            url,
-                            resp.status,
-                            reason,
-                        )
+                    _LOGGER.debug(
+                        "Backend API error: %s %s (%s %s)%s",
+                        method,
+                        url,
+                        resp.status,
+                        reason,
+                        f": {error_body}" if error_body else "",
+                    )
                     raise MolotovApiError(
-                        f"Molotov API request failed: {method} {url} ({resp.status} {reason})"
+                        f"Backend API request failed: {method} {url} "
+                        f"({resp.status} {reason})"
                         + (f": {error_body}" if error_body else ""),
                         user_message=user_message,
                     )
@@ -1166,7 +651,6 @@ class MolotovApi:
                 json=json,
                 params=params,
                 headers=headers,
-                basic_auth=basic_auth,
                 timeout=timeout,
                 reader=reader,
                 _retry=_retry,
@@ -1178,37 +662,24 @@ class MolotovApi:
             if err.status == 401:
                 raise MolotovAuthError("Invalid credentials") from err
             raise MolotovApiError(
-                f"Molotov API request failed: {method} {url} ({err.status})"
+                f"Backend API request failed: {method} {url} ({err.status})"
             ) from err
         except Exception as err:
-            _LOGGER.exception("Molotov API request crashed: %s %s", method, url)
+            _LOGGER.exception("Backend API request crashed: %s %s", method, url)
             raise MolotovApiError(
-                f"Molotov API request failed: {method} {url}"
+                f"Backend API request failed: {method} {url}"
             ) from err
 
-    def _update_session_from_auth(self, data: dict[str, Any]) -> None:
-        auth = data.get("auth") if isinstance(data, dict) else None
-        auth_data = auth if isinstance(auth, dict) else data
-        access_token = auth_data.get("access_token")
-        refresh_token = auth_data.get("refresh_token")
-        expires_at = auth_data.get("access_token_expires_at")
 
-        if access_token:
-            self._session_state.access_token = access_token
-        if refresh_token:
-            self._session_state.refresh_token = refresh_token
-        if isinstance(expires_at, int):
-            self._session_state.access_token_expires_at = expires_at
+def _dvr_entry_asset_id(entry: dict[str, Any]) -> str | None:
+    """Return the dvr asset id of a /dvr/v2/list entry, for deduping."""
 
-        account = data.get("account") if isinstance(data, dict) else None
-        if isinstance(account, dict):
-            user_id = account.get("id")
-            if user_id is not None:
-                self._session_state.user_id = str(user_id)
-
-            # Check for premium status
-            user_type = account.get("user_type")
-            if user_type not in ("premium", "vip"):
-                raise MolotovAuthError(
-                    f"User type is '{user_type}'. Please subscribe to a paid plan to use this integration."
-                )
+    data = entry.get("data") if isinstance(entry, dict) else None
+    if not isinstance(data, dict):
+        return None
+    for asset in data.get("assets") or []:
+        if isinstance(asset, dict) and asset.get("type") == "dvr":
+            asset_id = asset.get("assetId")
+            if asset_id:
+                return str(asset_id)
+    return None

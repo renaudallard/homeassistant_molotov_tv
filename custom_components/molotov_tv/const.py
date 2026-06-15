@@ -62,13 +62,22 @@ RESUME_EXPIRY_DAYS = 30  # Clear positions older than 30 days
 
 ENVIRONMENTS: dict[str, dict[str, str]] = {
     "prod": {
-        "base_api_url": "https://fapi.molotov.tv/",
-        "live_channel_api_url": "https://umc.molotov.tv/",
-        "live_channel_json_user": "mtv",
-        "live_channel_json_password": "1sGvyQaaLZ",
-        "cast_app_id": "F8EFD38B",
+        # Fubo is the backend Molotov 5.51 runs on; the EU host serves the
+        # French market (the content market follows the request egress IP).
+        "base_api_url": "https://api-eu.fubo.tv/",
     }
 }
+
+# Fubo (Molotov tenant) client identity sent on every request. x-application-id
+# is mandatory: without it the backend returns NO_SERVICE_FOR_SUBSCRIPTION.
+FUBO_APPLICATION_ID = "molotov"
+FUBO_CLIENT_VERSION = "5.51.0"
+FUBO_USER_AGENT = "MolotovTV/5.51.0 (Linux; U; ANDROID; fr-FR; etincelle)"
+# use_drm_v2_response makes /vapi/asset include drm_v2 (license url + headers).
+FUBO_SUPPORTED_FEATURES = (
+    "use_drm_v2_response,playback_template_v2,"
+    "play_start_from_offset,load_channels_in_guide"
+)
 
 # To use a custom receiver:
 # 1. Host the file in receiver/index.html on an HTTPS server (e.g. GitHub Pages)
@@ -101,6 +110,7 @@ PANEL_TITLE = "Molotov TV"
 PANEL_ICON = "mdi:television-play"
 
 CONTENT_TYPE_DASH = "application/dash+xml"
+CONTENT_TYPE_HLS = "application/x-mpegurl"
 
 MOLOTOV_AGENT = json.dumps(
     {

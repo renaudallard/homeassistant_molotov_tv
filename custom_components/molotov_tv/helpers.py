@@ -342,16 +342,111 @@ def format_value(payload: Any) -> str | None:
 
 
 def parse_timestamp(value: Any) -> datetime | None:
-    """Parse timestamp from various formats (ms or seconds)."""
+    """Parse a timestamp from epoch (ms or seconds) or an RFC3339 string."""
     if isinstance(value, str):
-        if value.isdigit():
-            value = int(value)
+        text = value.strip()
+        if text.isdigit():
+            value = int(text)
+        elif text:
+            # Fubo /epg and /dvr emit RFC3339 UTC strings (2026-06-13T19:10:00Z).
+            parsed = dt_util.parse_datetime(text)
+            if parsed is None:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt_util.UTC)
+            return dt_util.as_utc(parsed)
         else:
             return None
     if not isinstance(value, (int, float)):
         return None
     seconds = value / 1000 if value > 10**11 else value
     return dt_util.utc_from_timestamp(seconds)
+
+
+def parse_fubo_epg(data: Any) -> EpgData:
+    """Parse a Fubo /epg response into EpgData.
+
+    Shape: response[].data.{channel, programsWithAssets[].{program, assets[]}}.
+    The channel id later feeds the live /vapi/asset/v1 call.
+    """
+    channels: list[EpgChannel] = []
+    if not isinstance(data, dict):
+        return EpgData(channels=channels)
+    for entry in data.get("response") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_data = entry.get("data")
+        if not isinstance(entry_data, dict):
+            continue
+        channel_raw = entry_data.get("channel")
+        if not isinstance(channel_raw, dict):
+            continue
+        raw_id = channel_raw.get("id")
+        if raw_id is None:
+            continue
+        channel_id = str(raw_id)
+        label = (
+            channel_raw.get("displayName")
+            or channel_raw.get("name")
+            or channel_raw.get("callSign")
+            or channel_id
+        )
+        poster = channel_raw.get("logoOnDarkUrl") or channel_raw.get("logoOnWhiteUrl")
+        programs = _parse_fubo_programs(entry_data.get("programsWithAssets"))
+        channels.append(
+            EpgChannel(
+                channel_id=channel_id,
+                label=label,
+                poster=poster,
+                programs=programs,
+            )
+        )
+    return EpgData(channels=channels)
+
+
+def _parse_fubo_programs(items: Any) -> list[EpgProgram]:
+    """Parse a Fubo programsWithAssets list into EpgProgram objects."""
+    programs: list[EpgProgram] = []
+    if not isinstance(items, list):
+        return programs
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prog = item.get("program")
+        if not isinstance(prog, dict):
+            continue
+        access: dict[str, Any] | None = None
+        assets = item.get("assets")
+        if isinstance(assets, list):
+            for asset in assets:
+                if isinstance(asset, dict) and isinstance(
+                    asset.get("accessRights"), dict
+                ):
+                    access = asset["accessRights"]
+                    break
+        if access is None:
+            continue
+        start = parse_timestamp(access.get("startTime"))
+        end = parse_timestamp(access.get("endTime"))
+        if start is None or end is None:
+            continue
+        # /epg uses heading for the show name and title for the episode; the
+        # guide shows the show name, with the episode as the subtitle.
+        title = prog.get("heading") or prog.get("title")
+        if not title:
+            continue
+        programs.append(
+            EpgProgram(
+                title=title,
+                start=start,
+                end=end,
+                description=prog.get("shortDescription") or prog.get("longDescription"),
+                episode_title=prog.get("subheading"),
+                thumbnail=prog.get("horizontalImage"),
+                poster=prog.get("verticalImage"),
+            )
+        )
+    return programs
 
 
 # --- EPG helpers ---

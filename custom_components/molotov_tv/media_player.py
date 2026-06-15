@@ -103,6 +103,8 @@ from .const import (
     CONF_CAST_TARGET,
     CONF_CAST_TARGETS,
     CONF_CAST_HOSTS,
+    CONTENT_TYPE_DASH,
+    CONTENT_TYPE_HLS,
     DOMAIN,
     MAX_CONCURRENT_STREAMS,
     MEDIA_CAST_PREFIX,
@@ -122,10 +124,9 @@ from .const import (
     MEDIA_SEARCH_RESULT_PREFIX,
     MEDIA_SEARCH_INPUT_PREFIX,
     MEDIA_TONIGHT_EPG,
-    MOLOTOV_AGENT,
     CUSTOM_RECEIVER_APP_ID,
 )
-from .coordinator import MolotovEpgCoordinator, _parse_epg
+from .coordinator import MolotovEpgCoordinator
 from .helpers import (
     decode_asset_payload_from_media_id,
     discover_cast_targets_blocking,
@@ -136,6 +137,7 @@ from .helpers import (
     find_channel,
     find_current_program,
     find_program,
+    parse_fubo_epg,
     parse_manual_targets,
     parse_remote_programs,
     split_manual_target,
@@ -498,42 +500,48 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
     @staticmethod
     def _extract_stream_attrs(asset_data: dict[str, Any]) -> dict[str, Any]:
-        """Extract stream URL, DRM, and track info from asset data."""
-        result: dict[str, Any] = {}
-        stream = asset_data.get("stream", {})
-        url = stream.get("url")
-        if url:
-            result["url"] = url
+        """Pull the manifest, content type, and Widevine DRM out of a /vapi response.
 
-        drm = asset_data.get("drm")
-        up_drm = asset_data.get("up_drm")
+        Fubo returns the DRMtoday license url + the x-dt-auth-token header in
+        drm_v2.license (drm v1 is a fallback). The cast path reads stream_url /
+        content_type / license_url / drm_token; the local player (via the
+        local_streams attribute) reads url / drm / live. One helper serves both.
+        """
+        stream = asset_data.get("stream") or {}
+        stream_url = stream.get("url")
+        protocol = str(stream.get("packagingProtocol") or "").lower()
+        content_type = CONTENT_TYPE_HLS if protocol == "hls" else CONTENT_TYPE_DASH
 
-        if up_drm:
-            wv = up_drm.get("key_systems", {}).get("Widevine", {})
-            license_data = wv.get("license", {})
-            if license_data:
-                license_url = license_data.get("url")
-                if query_params := license_data.get("query_params"):
-                    from urllib.parse import urlencode
+        drm_v2 = asset_data.get("drm_v2") or {}
+        license_info = drm_v2.get("license") or {}
+        license_url = license_info.get("url")
+        headers = license_info.get("headers") or {}
+        drm_token = headers.get("x-dt-auth-token")
 
-                    if "?" in license_url:
-                        license_url = f"{license_url}&{urlencode(query_params)}"
-                    else:
-                        license_url = f"{license_url}?{urlencode(query_params)}"
+        if not (license_url and drm_token):
+            drm = asset_data.get("drm") or {}
+            license_url = license_url or drm.get("licenseUrl") or drm.get("license_url")
+            v1_headers = drm.get("licenseUrlHeaders") or {}
+            drm_token = (
+                drm_token or drm.get("token") or v1_headers.get("x-dt-auth-token")
+            )
+            if not headers and v1_headers:
+                headers = v1_headers
 
-                result["drm"] = {
-                    "type": "widevine",
-                    "license_url": license_url,
-                    "headers": license_data.get("http_headers", {}),
-                }
-        elif drm:
-            result["drm"] = drm
-
-        config = asset_data.get("config", {})
-        selected_track = config.get("selected_track", {})
-        if selected_track:
-            result["selected_track"] = selected_track
-
+        result: dict[str, Any] = {
+            "url": stream_url,
+            "stream_url": stream_url,
+            "content_type": content_type,
+            "license_url": license_url,
+            "drm_token": drm_token,
+            "live": stream.get("live"),
+        }
+        if license_url and drm_token:
+            result["drm"] = {
+                "type": "widevine",
+                "license_url": license_url,
+                "headers": headers or {"x-dt-auth-token": drm_token},
+            }
         return result
 
     @property
@@ -788,21 +796,19 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
 
             if use_custom:
-                # For custom receiver, resolve stream locally
+                # For the custom receiver, resolve the stream + DRM locally.
                 asset_data = await self._api.async_get_asset_stream(asset_url)
-                stream = asset_data.get("stream", {})
-                stream_url = stream.get("url")
+                attrs = self._extract_stream_attrs(asset_data)
+                stream_url = attrs["stream_url"]
                 if not stream_url:
                     return False
                 asset_url = stream_url
-
-                video_format = stream.get("video_format")
-                if video_format == "DASH":
-                    content_type = "application/dash+xml"
-                elif video_format == "HLS":
-                    content_type = "application/x-mpegurl"
-                else:
-                    content_type = "application/dash+xml"
+                content_type = attrs["content_type"]
+                custom_data["stream_url"] = stream_url
+                custom_data["content_type"] = content_type
+                if attrs["license_url"] and attrs["drm_token"]:
+                    custom_data["license_url"] = attrs["license_url"]
+                    custom_data["drm_token"] = attrs["drm_token"]
             else:
                 content_type = self._api.stream_content_type()
 
@@ -870,19 +876,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._attr_state = STATE_PLAYING
                 self._attr_media_title = title
 
-            stream = asset_data.get("stream", {})
             # Expose the internal media id, not the signed stream URL, which
             # would otherwise be persisted in the recorder and visible to
             # anyone with state access. The frontend receives the URL through
             # the local_streams attribute instead.
             self._attr_media_content_id = media_id
-            video_format = stream.get("video_format")
-            if video_format == "DASH":
-                self._attr_media_content_type = "application/dash+xml"
-            elif video_format == "HLS":
-                self._attr_media_content_type = "application/x-mpegurl"
-            else:
-                self._attr_media_content_type = video_format or "application/dash+xml"
+            self._attr_media_content_type = self._extract_stream_attrs(asset_data)[
+                "content_type"
+            ]
 
             self.async_write_ha_state()
             _LOGGER.info(
@@ -1060,8 +1061,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Fetch EPG feed (has full schedules for ~30 channels)
         epg_channels_by_id: dict[str, EpgChannel] = {}
         try:
-            epg_raw = await self._api.async_get_epg()
-            epg_data = _parse_epg(epg_raw)
+            epg_raw = await self._api.async_get_epg(end=tonight_end_utc)
+            epg_data = parse_fubo_epg(epg_raw)
             for ch in epg_data.channels:
                 epg_channels_by_id[ch.channel_id] = ch
         except MolotovApiError as err:
@@ -1836,42 +1837,23 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 _LOGGER.debug("Resolving asset stream locally for custom receiver...")
                 asset_data = await self._api.async_get_asset_stream(asset_url)
 
-                stream = asset_data.get("stream", {})
-                stream_url = stream.get("url")
+                attrs = self._extract_stream_attrs(asset_data)
+                stream_url = attrs["stream_url"]
                 if not stream_url:
                     raise MolotovApiError("No stream URL found in asset response")
 
                 asset_url = stream_url
-
-                drm = asset_data.get("drm", {})
-                license_url = drm.get("license_url")
-                token = drm.get("token")
-
-                if license_url and token:
-                    custom_data["license_url"] = license_url
-                    custom_data["drm_token"] = token
-                    custom_data["stream_url"] = stream_url
-
-                    custom_data["merchant"] = drm.get("merchant")
-                    custom_data["user_id"] = drm.get("user_id")
-                    custom_data["session_id"] = drm.get("session_id")
-                    custom_data["asset_id"] = drm.get("asset_id")
-
+                custom_data["stream_url"] = stream_url
+                custom_data["content_type"] = attrs["content_type"]
+                if attrs["license_url"] and attrs["drm_token"]:
+                    custom_data["license_url"] = attrs["license_url"]
+                    custom_data["drm_token"] = attrs["drm_token"]
+                    # Do NOT set custom_data["asset_id"]: the receiver appends
+                    # assetId= to the license URL only for the legacy Molotov
+                    # endpoint, which would corrupt Fubo's final DRMtoday URL.
                     _LOGGER.debug(
                         "Added DRM info to custom_data: %s", list(custom_data.keys())
                     )
-
-                config = asset_data.get("config", {})
-                selected_track = config.get("selected_track", {})
-                if selected_track:
-                    custom_data["selected_track"] = selected_track
-                    _LOGGER.debug("Added selected_track preference: %s", selected_track)
-
-                video_format = stream.get("video_format")
-                if video_format == "DASH":
-                    custom_data["content_type"] = "application/dash+xml"
-                elif video_format == "HLS":
-                    custom_data["content_type"] = "application/x-mpegurl"
 
             else:
                 cast_app_id = self._api.session_state.cast_app_id
@@ -2263,21 +2245,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         raise HomeAssistantError("Unsupported media identifier")
 
     def _build_cast_custom_data(self, asset_url: str) -> dict[str, Any]:
-        session = self._api.session_state
-        if not session.access_token or not session.refresh_token:
-            raise HomeAssistantError("Molotov session tokens are not available")
-
-        return {
-            "version": 7,
-            "asset_data": {"url": asset_url},
-            "play_ads": False,
-            "molotov_agent": MOLOTOV_AGENT,
-            "refresh_token": session.refresh_token,
-            "cast_connect": {
-                "remoteAccessToken": session.access_token,
-                "remote_access_token": session.access_token,
-            },
-        }
+        # The receiver needs only stream_url/content_type and, for DRM, the
+        # license_url + drm_token. Those are filled in by the cast path once the
+        # manifest is resolved via /vapi; Fubo requires none of the old Molotov
+        # session fields (version, molotov_agent, refresh_token, cast_connect).
+        return {}
 
     def _get_cached_programs(self, channel_id: str) -> list[EpgProgram] | None:
         cached = self._program_cache.get(channel_id)
