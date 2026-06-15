@@ -1237,15 +1237,38 @@ def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
             thumbnail=image,
         )
     if program_id:
+        # A program-details/program/{id} is a single playable item (movie or
+        # episode), not a container; episode_id marks it as a playable leaf.
         return BrowseAsset(
             title=label or program_id,
             asset_url=api.build_asset_url("program", program_id),
             asset_type="vod",
             program_id=program_id,
+            episode_id=program_id,
             episode_title=subtitle,
             thumbnail=image,
         )
     return None
+
+
+def parse_papi_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse a series' watch-now tab (list-item-wide) into playable episodes."""
+    episodes: list[BrowseAsset] = []
+    content = data.get("content") if isinstance(data, dict) else None
+    sections = content.get("sections") if isinstance(content, dict) else None
+    if not isinstance(sections, list):
+        return episodes
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        if str(section.get("component_type") or "") != "list-item-wide":
+            continue
+        for component in section.get("components") or []:
+            asset = parse_papi_card(component, api)
+            if asset is not None and asset.program_id:
+                asset.asset_type = "episode"
+                episodes.append(asset)
+    return episodes
 
 
 def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:

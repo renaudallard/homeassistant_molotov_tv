@@ -51,10 +51,10 @@ from .const import (
 from .models import EpgData
 from .helpers import (
     encode_asset_payload,
-    extract_program_episodes,
     extract_recording_assets,
     extract_replay_assets,
     find_channel,
+    parse_papi_episodes,
     parse_past_programs_as_replays,
     sort_assets,
 )
@@ -513,56 +513,47 @@ async def async_fetch_program_episodes(
     *,
     recordings_only: bool = False,
 ) -> BrowseMedia:
-    """Fetch and display all episodes for a program."""
+    """Fetch and display all episodes for a series."""
     children: list[BrowseMedia] = []
 
-    if not channel_id:
-        # The episode endpoint is keyed by channel; without a channel id (e.g.
-        # a search result for a series spanning channels) episodes cannot be
-        # listed, so show the container empty rather than issue a bad request.
-        _LOGGER.debug("No channel id for program %s; cannot list episodes", program_id)
-    else:
-        try:
-            data = await api.async_get_program_details(channel_id, program_id)
-            episodes = extract_program_episodes(
-                data, api, program_id, recordings_only=recordings_only
-            )
-            _LOGGER.debug(
-                "Found %d episodes for program %s on channel %s",
-                len(episodes),
-                program_id,
-                channel_id,
-            )
+    try:
+        # Fubo series carry their catch-up episodes on a watch-now tab; the
+        # series id is the program_id, so no channel id is needed.
+        data = await api.async_get_program_details(
+            program_id, kind="series", tab="id-tab-watch-now"
+        )
+        episodes = parse_papi_episodes(data, api)
+        _LOGGER.debug("Found %d episodes for series %s", len(episodes), program_id)
 
-            for episode in episodes:
-                payload_data = {
-                    "url": episode.asset_url,
-                    "title": episode.title,
-                    "thumb": episode.thumbnail or episode.poster,
-                    "live": episode.is_live,
-                }
-                if episode.description:
-                    payload_data["desc"] = episode.description
-                payload = encode_asset_payload(payload_data)
-                ep_title = episode.title
-                if episode.episode_title:
-                    ep_title = f"{episode.episode_title} - {episode.title}"
-                if episode.start:
-                    ep_title = f"{episode.start.strftime('%d/%m %H:%M')} - {ep_title}"
+        for episode in episodes:
+            payload_data = {
+                "url": episode.asset_url,
+                "title": episode.title,
+                "thumb": episode.thumbnail or episode.poster,
+                "live": episode.is_live,
+            }
+            if episode.description:
+                payload_data["desc"] = episode.description
+            payload = encode_asset_payload(payload_data)
+            ep_title = episode.title
+            if episode.episode_title:
+                ep_title = f"{episode.episode_title} - {episode.title}"
+            if episode.start:
+                ep_title = f"{episode.start.strftime('%d/%m %H:%M')} - {ep_title}"
 
-                children.append(
-                    BrowseMedia(
-                        title=ep_title,
-                        media_class=MediaClass.VIDEO,
-                        media_content_id=f"{MEDIA_EPISODE_PREFIX}:{payload}",
-                        media_content_type=MEDIA_EPISODE_PREFIX,
-                        can_play=False,
-                        can_expand=True,
-                        thumbnail=episode.thumbnail or episode.poster,
-                    )
+            children.append(
+                BrowseMedia(
+                    title=ep_title,
+                    media_class=MediaClass.VIDEO,
+                    media_content_id=f"{MEDIA_EPISODE_PREFIX}:{payload}",
+                    media_content_type=MEDIA_EPISODE_PREFIX,
+                    can_play=False,
+                    can_expand=True,
+                    thumbnail=episode.thumbnail or episode.poster,
                 )
-        except MolotovApiError as err:
-            _LOGGER.warning("Failed to fetch program episodes: %s", err)
+            )
+    except MolotovApiError as err:
+        _LOGGER.warning("Failed to fetch series episodes: %s", err)
 
     if not children:
         children.append(
