@@ -201,6 +201,14 @@ Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-
 ### Hébergement du récepteur personnalisé
 Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
 
+#### Contrôles à la télécommande
+Quand le récepteur personnalisé est utilisé sur un appareil doté d'une télécommande (Chromecast avec Google TV, Android TV), la lecture se pilote directement avec les flèches :
+
+*   **◄ / ►** : recul de 10 s / avance de 30 s. Les appuis répétés s'accumulent et un aperçu affiche la position cible ; le saut n'est appliqué qu'une seule fois, à l'arrêt des appuis. Sur une chaîne en direct, le saut reste borné à la fenêtre de différé disponible.
+*   **▼** : ouvre le menu (recul, avance, redémarrer, piste audio). Les entrées de saut y restent disponibles en secours sur les télécommandes qui ne transmettent pas les flèches.
+*   **▲ / Retour** : ferme le menu.
+*   **OK** : ouvre le menu, ou valide l'élément sélectionné.
+
 ## ⚠️ Clause de non-responsabilité
 
 Ce projet est une intégration non officielle et n'est **pas affilié à, approuvé par, ou associé à Molotov TV**. Tous les noms de produits, logos et marques sont la propriété de leurs détenteurs respectifs.
