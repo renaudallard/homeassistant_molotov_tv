@@ -506,21 +506,28 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         protocol = str(stream.get("packagingProtocol") or "").lower()
         content_type = CONTENT_TYPE_HLS if protocol == "hls" else CONTENT_TYPE_DASH
 
-        drm_v2 = asset_data.get("drm_v2") or {}
-        license_info = drm_v2.get("license") or {}
-        license_url = license_info.get("url")
-        headers = license_info.get("headers") or {}
-        drm_token = headers.get("x-dt-auth-token")
+        license_url = None
+        drm_token = None
+        headers: dict[str, Any] = {}
+        # Only resolve DRM for a protected stream; a clear stream needs none.
+        if stream.get("drmProtected") is not False:
+            drm_v2 = asset_data.get("drm_v2") or {}
+            license_info = drm_v2.get("license") or {}
+            license_url = license_info.get("url")
+            headers = license_info.get("headers") or {}
+            drm_token = headers.get("x-dt-auth-token")
 
-        if not (license_url and drm_token):
-            drm = asset_data.get("drm") or {}
-            license_url = license_url or drm.get("licenseUrl") or drm.get("license_url")
-            v1_headers = drm.get("licenseUrlHeaders") or {}
-            drm_token = (
-                drm_token or drm.get("token") or v1_headers.get("x-dt-auth-token")
-            )
-            if not headers and v1_headers:
-                headers = v1_headers
+            if not (license_url and drm_token):
+                drm = asset_data.get("drm") or {}
+                license_url = (
+                    license_url or drm.get("licenseUrl") or drm.get("license_url")
+                )
+                v1_headers = drm.get("licenseUrlHeaders") or {}
+                drm_token = (
+                    drm_token or drm.get("token") or v1_headers.get("x-dt-auth-token")
+                )
+                if not headers and v1_headers:
+                    headers = v1_headers
 
         result: dict[str, Any] = {
             "url": stream_url,
