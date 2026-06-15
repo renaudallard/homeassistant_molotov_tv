@@ -43,6 +43,7 @@ class EpgProgram:
     episode_title: str | None = None
     thumbnail: str | None = None
     poster: str | None = None
+    asset_id: str | None = None
 
 
 @dataclass(slots=True)

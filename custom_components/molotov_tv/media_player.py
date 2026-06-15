@@ -113,6 +113,7 @@ from .const import (
     MEDIA_NOW_PLAYING,
     MEDIA_PROGRAM_EPISODES_PREFIX,
     MEDIA_PROGRAM_PREFIX,
+    MEDIA_RECORD_PREFIX,
     MEDIA_RECORDING_PREFIX,
     MEDIA_RECORDINGS,
     MEDIA_REPLAY_PREFIX,
@@ -691,6 +692,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_perform_search(query)
             return
 
+        if media_id.startswith(f"{MEDIA_RECORD_PREFIX}:"):
+            await self._async_schedule_recording(media_id)
+            return
+
         if media_id.startswith("play_local:"):
             rest = media_id.split(":", 1)[1]
             # Format: play_local:SESSION_ID:media_id or play_local:media_id
@@ -945,6 +950,23 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         except MolotovApiError as err:
             _LOGGER.error("Search failed: %s", err)
             raise HomeAssistantError(f"La recherche a échoué: {err}") from err
+
+    async def _async_schedule_recording(self, media_id: str) -> None:
+        """Schedule a DVR recording for a live airing."""
+        # Format: record:ASSET_ID:IS_UPCOMING
+        parts = media_id.split(":")
+        if len(parts) < 2 or not parts[1]:
+            raise HomeAssistantError("Invalid recording identifier")
+        asset_id = parts[1]
+        is_upcoming = len(parts) > 2 and parts[2] == "1"
+        try:
+            await self._api.async_add_recording(asset_id, is_upcoming=is_upcoming)
+        except MolotovApiError as err:
+            message = (
+                err.user_message or "Échec de la programmation de l'enregistrement"
+            )
+            raise HomeAssistantError(message) from err
+        _LOGGER.info("Scheduled recording for airing %s", asset_id)
 
     async def _async_browse_now_playing(self, data: EpgData) -> BrowseMedia:
         channels = data.channels
@@ -1464,6 +1486,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     ) -> BrowseMedia:
         title = "Sélectionner un Chromecast"
         thumbnail = None
+        record_asset_id: str | None = None
+        record_upcoming = False
         if base_media_id.startswith(f"{MEDIA_PROGRAM_PREFIX}:"):
             parts = base_media_id.split(":")
             if len(parts) >= 4:
@@ -1475,6 +1499,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     if program.episode_title:
                         title = f"{title} - {program.episode_title}"
                     thumbnail = program.thumbnail or program.poster
+                    record_asset_id = program.asset_id
+                    record_upcoming = program.start > dt_util.utcnow()
         elif base_media_id.startswith(f"{MEDIA_LIVE_PREFIX}:"):
             channel_id = base_media_id.split(":", 1)[1]
             channel = find_channel(data, channel_id)
@@ -1510,6 +1536,21 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 can_expand=False,
             )
         )
+
+        if record_asset_id:
+            children.append(
+                BrowseMedia(
+                    title="⏺ Programmer l'enregistrement",
+                    media_class=MediaClass.VIDEO,
+                    media_content_id=(
+                        f"{MEDIA_RECORD_PREFIX}:{record_asset_id}:"
+                        f"{'1' if record_upcoming else '0'}"
+                    ),
+                    media_content_type=MEDIA_RECORD_PREFIX,
+                    can_play=True,
+                    can_expand=False,
+                )
+            )
 
         native_options = []
         custom_options = []

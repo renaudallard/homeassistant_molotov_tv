@@ -189,6 +189,7 @@ def _parse_fubo_programs(items: Any) -> list[EpgProgram]:
         if not isinstance(prog, dict):
             continue
         access: dict[str, Any] | None = None
+        asset_id: str | None = None
         assets = item.get("assets")
         if isinstance(assets, list):
             for asset in assets:
@@ -196,6 +197,8 @@ def _parse_fubo_programs(items: Any) -> list[EpgProgram]:
                     asset.get("accessRights"), dict
                 ):
                     access = asset["accessRights"]
+                    raw_asset_id = asset.get("assetId")
+                    asset_id = str(raw_asset_id) if raw_asset_id else None
                     break
         if access is None:
             continue
@@ -217,6 +220,7 @@ def _parse_fubo_programs(items: Any) -> list[EpgProgram]:
                 episode_title=prog.get("subheading"),
                 thumbnail=prog.get("horizontalImage"),
                 poster=prog.get("verticalImage"),
+                asset_id=asset_id,
             )
         )
     return programs
