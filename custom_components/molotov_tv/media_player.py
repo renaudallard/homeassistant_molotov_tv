@@ -133,12 +133,12 @@ from .helpers import (
     encode_asset_payload,
     extract_host_from_device_info,
     extract_host_from_device_registry,
-    extract_search_results,
     find_channel,
     find_current_program,
     find_program,
     parse_fubo_epg,
     parse_manual_targets,
+    parse_papi_search,
     parse_remote_programs,
     split_manual_target,
 )
@@ -933,7 +933,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         try:
             data = await self._api.async_search(query)
-            results = extract_search_results(data, self._api)
+            results = parse_papi_search(data, self._api)
             self._set_search_cache(query, results)
             _LOGGER.info(
                 "Search for '%s' completed with %d results. "
@@ -1243,7 +1243,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         try:
             data = await self._api.async_search(query)
-            results = extract_search_results(data, self._api)
+            results = parse_papi_search(data, self._api)
             _LOGGER.debug("Search for '%s' returned %d results", query, len(results))
             self._set_search_cache(query, results)
             return build_search_results_browse(

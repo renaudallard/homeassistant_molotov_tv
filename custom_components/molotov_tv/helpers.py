@@ -34,7 +34,7 @@ import json
 import logging
 import re
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote_plus, urlparse
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -1090,6 +1090,200 @@ def extract_search_suggestions(data: Any, api: MolotovApi) -> list[BrowseAsset]:
             if asset:
                 assets.append(asset)
     return dedupe_assets(assets)
+
+
+# --- Fubo papi (server-driven page) parsing ---
+
+_PAPI_CHANNEL_RE = re.compile(r"program-details/channel/(\d+)")
+_PAPI_CHANNEL_DETAILS_RE = re.compile(r"channel-details/(\d+)")
+_PAPI_PROGRAM_RE = re.compile(r"program-details/program/([\w-]+)")
+_PAPI_SERIES_RE = re.compile(r"program-details/series/([\w-]+)")
+# UI chrome components carry no playable content; skip them.
+_PAPI_SKIP_TYPES = frozenset(
+    {
+        "banner",
+        "chip-navigation",
+        "chip-filter",
+        "tab",
+        "picture",
+        "progress_bar",
+        "tag",
+        "text",
+        "list-item-suggestion",
+    }
+)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _papi_text(node: Any) -> str | None:
+    if isinstance(node, dict):
+        text = node.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return None
+
+
+def _papi_image(component: dict[str, Any]) -> str | None:
+    body = _as_dict(component.get("body"))
+    for node in (
+        component.get("picture"),
+        body.get("picture"),
+        component.get("image"),
+        component.get("image_compact"),
+        body.get("station_logo"),
+    ):
+        if isinstance(node, dict):
+            url = node.get("url")
+            if isinstance(url, str) and url:
+                return url
+    return None
+
+
+def _papi_action_url(component: dict[str, Any]) -> str | None:
+    actions = component.get("actions")
+    if not isinstance(actions, dict):
+        return None
+    on_click = actions.get("on_click")
+    if not isinstance(on_click, list):
+        return None
+    # A card often lists a tracking action before the navigation one; prefer
+    # the navigation target, falling back to the first endpoint url present.
+    first: str | None = None
+    for item in on_click:
+        if not isinstance(item, dict):
+            continue
+        endpoint = item.get("endpoint")
+        url = endpoint.get("url") if isinstance(endpoint, dict) else None
+        if not isinstance(url, str) or not url:
+            continue
+        if item.get("type") == "navigation":
+            return url
+        if first is None:
+            first = url
+    return first
+
+
+def _trk_title(url: str | None) -> str | None:
+    # Poster cards carry no title field; their display name rides in the
+    # action url's trkOriginElement tracking parameter.
+    if not url:
+        return None
+    match = re.search(r"[?&]trkOriginElement=([^&]+)", url)
+    if not match:
+        return None
+    # The tracking param is form-encoded, so spaces arrive as '+'.
+    value = unquote_plus(match.group(1)).strip()
+    return value or None
+
+
+def parse_papi_card(component: Any, api: MolotovApi) -> BrowseAsset | None:
+    """Map a papi page card component to a BrowseAsset, or None if not content."""
+    if not isinstance(component, dict):
+        return None
+    ctype = str(component.get("type") or component.get("component_type") or "")
+    if ctype in _PAPI_SKIP_TYPES:
+        return None
+
+    image = _papi_image(component)
+    action_url = _papi_action_url(component)
+    footer = _as_dict(component.get("footer"))
+    label = (
+        _papi_text(component.get("title"))
+        or _papi_text(component.get("heading"))
+        or _papi_text(footer.get("title"))
+        or _trk_title(action_url)
+    )
+    if image is None and label is None:
+        return None
+
+    channel_id = series_id = program_id = None
+    if action_url:
+        match = _PAPI_CHANNEL_RE.search(action_url) or _PAPI_CHANNEL_DETAILS_RE.search(
+            action_url
+        )
+        channel_id = match.group(1) if match else None
+        match = _PAPI_SERIES_RE.search(action_url)
+        series_id = match.group(1) if match else None
+        match = _PAPI_PROGRAM_RE.search(action_url)
+        program_id = match.group(1) if match else None
+    if channel_id is None:
+        raw = component.get("channel_id")
+        if isinstance(raw, (str, int)):
+            channel_id = str(raw)
+
+    subtitle = _papi_text(footer.get("subtitle"))
+
+    if channel_id:
+        return BrowseAsset(
+            title=label or channel_id,
+            asset_url=api.build_asset_url("channel", channel_id),
+            is_live=True,
+            asset_type="live",
+            channel_id=channel_id,
+            episode_title=subtitle,
+            thumbnail=image,
+        )
+    if series_id:
+        # A series is a container browsed into for its episodes (catch-up).
+        return BrowseAsset(
+            title=label or series_id,
+            asset_url="",
+            asset_type="serie",
+            program_id=series_id,
+            episode_title=subtitle,
+            thumbnail=image,
+        )
+    if program_id:
+        return BrowseAsset(
+            title=label or program_id,
+            asset_url=api.build_asset_url("program", program_id),
+            asset_type="vod",
+            program_id=program_id,
+            episode_title=subtitle,
+            thumbnail=image,
+        )
+    return None
+
+
+def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse every card across a papi page's content.sections into BrowseAssets."""
+    assets: list[BrowseAsset] = []
+    if not isinstance(data, dict):
+        return assets
+    content = data.get("content")
+    if not isinstance(content, dict):
+        return assets
+    sections = content.get("sections")
+    if not isinstance(sections, list):
+        return assets
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        if str(section.get("component_type") or "") == "banner":
+            continue
+        for component in section.get("components") or []:
+            asset = parse_papi_card(component, api)
+            if asset is not None:
+                assets.append(asset)
+    return assets
+
+
+def parse_papi_search(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse a /papi/v1/search/content grid into deduped search results."""
+    seen: set[str] = set()
+    unique: list[BrowseAsset] = []
+    # Search returns the same show once per channel; keep one card per title.
+    for asset in parse_papi_sections(data, api):
+        key = (asset.title or "").strip().lower()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        unique.append(asset)
+    return unique
 
 
 def extract_search_results(data: Any, api: MolotovApi) -> list[BrowseAsset]:
