@@ -139,19 +139,16 @@ from .helpers import (
     parse_fubo_epg,
     parse_manual_targets,
     parse_papi_search,
-    parse_remote_programs,
     split_manual_target,
 )
-from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram
+from .models import BrowseAsset, EpgChannel, EpgData
 from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PROGRAM_CACHE_TTL = timedelta(minutes=15)
 ASSET_CACHE_TTL = timedelta(minutes=5)
 CAST_DISCOVERY_TTL = timedelta(seconds=30)
 SEARCH_CACHE_TTL = timedelta(minutes=10)
-MAX_PROGRAM_CACHE_SIZE = 50
 
 
 @dataclass
@@ -226,7 +223,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._attr_unique_id = entry.entry_id
         self._attr_name = None
         self._attr_has_entity_name = True
-        self._program_cache: dict[str, tuple[datetime, list[EpgProgram]]] = {}
         self._replay_cache: dict[str, tuple[datetime, list[BrowseAsset]]] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
@@ -1344,27 +1340,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if channel is None:
             raise HomeAssistantError("Channel was not found in the EPG")
 
-        # Check cache first, then coordinator data, then per-channel fetch
-        programs = self._get_cached_programs(channel_id)
-        if programs is None:
-            programs = channel.programs  # From coordinator (already has EPG merged)
-
-        if not programs:
-            # Fallback to per-channel API fetch
-            try:
-                raw = await self._api.async_get_channel_programs(channel_id)
-                programs = parse_remote_programs(raw, channel_id)
-                self._set_cached_programs(channel_id, programs)
-            except MolotovApiError as err:
-                raise HomeAssistantError("Failed to fetch channel programs") from err
-
-        if programs is not None and programs is not channel.programs:
-            # Work on a copy so the per-channel fetch result is never written
-            # back onto the shared coordinator channel (which other browse
-            # views read until the next refresh).
-            channel = copy(channel)
-            channel.programs = programs
-
+        # The single /epg fetch already populates each channel's programmes.
         return await self._async_browse_programs_with_replays(data, channel)
 
     async def _async_browse_programs_with_replays(
@@ -2250,33 +2226,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # manifest is resolved via /vapi; Fubo requires none of the old Molotov
         # session fields (version, molotov_agent, refresh_token, cast_connect).
         return {}
-
-    def _get_cached_programs(self, channel_id: str) -> list[EpgProgram] | None:
-        cached = self._program_cache.get(channel_id)
-        if not cached:
-            return None
-        fetched_at, programs = cached
-        if dt_util.utcnow() - fetched_at > PROGRAM_CACHE_TTL:
-            self._program_cache.pop(channel_id, None)
-            return None
-        return programs
-
-    def _set_cached_programs(self, channel_id: str, programs: list[EpgProgram]) -> None:
-        """Cache programs for a channel, enforcing size limit."""
-        now = dt_util.utcnow()
-        expired = [
-            cid
-            for cid, (fetched_at, _) in self._program_cache.items()
-            if now - fetched_at > PROGRAM_CACHE_TTL
-        ]
-        for cid in expired:
-            self._program_cache.pop(cid, None)
-        while len(self._program_cache) >= MAX_PROGRAM_CACHE_SIZE:
-            oldest_id = min(
-                self._program_cache, key=lambda k: self._program_cache[k][0]
-            )
-            self._program_cache.pop(oldest_id, None)
-        self._program_cache[channel_id] = (now, programs)
 
     def _get_cached_replay(self, channel_id: str) -> list[BrowseAsset] | None:
         cached = self._replay_cache.get(channel_id)

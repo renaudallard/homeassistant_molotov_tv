@@ -359,11 +359,6 @@ class MolotovApi:
             params=params,
         )
 
-    async def async_get_channel_programs(self, channel_id: str) -> dict[str, Any]:
-        """Fetch a live channel's detail page (its current programme)."""
-
-        return await self.async_get_program_details(channel_id, kind="channel")
-
     # --- Live guide -----------------------------------------------------
 
     async def async_get_epg(
