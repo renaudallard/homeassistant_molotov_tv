@@ -300,35 +300,6 @@ class MolotovApi:
 
     # --- Content (server-driven page API) -------------------------------
 
-    async def async_get_page(self, slug_or_url: str) -> dict[str, Any]:
-        """Fetch a papi page by slug ('home') or absolute action URL."""
-
-        await self.async_ensure_logged_in()
-        path = slug_or_url
-        if not path.startswith("http") and not path.startswith("papi/"):
-            path = f"papi/v1/page/{path}"
-        return await self._request("GET", path, auth=True)
-
-    async def async_get_home(self) -> dict[str, Any]:
-        """Fetch the home page (carousels of cards)."""
-
-        return await self.async_get_page("home")
-
-    async def async_get_channels(self) -> dict[str, Any]:
-        """Fetch the channel directory page (also carries the Apps section)."""
-
-        return await self.async_get_page("channels")
-
-    async def async_get_all_channels(self) -> dict[str, Any]:
-        """Fetch the channel directory page."""
-
-        return await self.async_get_channels()
-
-    async def async_get_live_home_channels(self) -> dict[str, Any]:
-        """Fetch the live-tv page (every channel's current programme)."""
-
-        return await self.async_get_page("live-tv")
-
     async def async_search(self, query: str) -> dict[str, Any]:
         """Search content; results come back as a page of card sections."""
 
