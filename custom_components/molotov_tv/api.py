@@ -345,7 +345,7 @@ class MolotovApi:
         self,
         content_id: str,
         kind: str = "program",
-        tab: str = "id-tab-about",
+        tab: str | None = "id-tab-about",
     ) -> dict[str, Any]:
         """Fetch a program/series/channel detail page (metadata + about tab)."""
 

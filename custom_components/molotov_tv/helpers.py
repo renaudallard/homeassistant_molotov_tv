@@ -1271,6 +1271,26 @@ def parse_papi_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     return episodes
 
 
+def parse_papi_channel_replays(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse the 'En replay' catch-up section of a channel detail page."""
+    assets: list[BrowseAsset] = []
+    content = data.get("content") if isinstance(data, dict) else None
+    sections = content.get("sections") if isinstance(content, dict) else None
+    if not isinstance(sections, list):
+        return assets
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        title = (_papi_text(section.get("title")) or "").lower()
+        if "replay" not in title:
+            continue
+        for component in section.get("components") or []:
+            asset = parse_papi_card(component, api)
+            if asset is not None and not asset.is_live:
+                assets.append(asset)
+    return assets
+
+
 def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     """Parse every card across a papi page's content.sections into BrowseAssets."""
     assets: list[BrowseAsset] = []

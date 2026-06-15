@@ -28,7 +28,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 import string
 
@@ -52,10 +51,8 @@ from .models import EpgData
 from .helpers import (
     encode_asset_payload,
     extract_recording_assets,
-    extract_replay_assets,
-    find_channel,
+    parse_papi_channel_replays,
     parse_papi_episodes,
-    parse_past_programs_as_replays,
     sort_assets,
 )
 from .models import BrowseAsset
@@ -134,6 +131,62 @@ def build_channels_browse(data: EpgData) -> BrowseMedia:
     )
 
 
+def _asset_to_browse_child(asset: BrowseAsset, prefix: str) -> BrowseMedia:
+    """Build one browse child from an asset.
+
+    A series (or a programme container) is browsed into for its episodes; an
+    episode, movie, or live item is a playable leaf carrying a payload.
+    """
+    display_title = asset.title
+    if asset.episode_title:
+        display_title = f"{asset.title} - {asset.episode_title}"
+
+    is_container = (
+        (
+            asset.asset_type in ("program", "serie")
+            or (asset.asset_type == "vod" and not asset.episode_id)
+        )
+        and asset.program_id
+        and not asset.is_live
+    )
+    if is_container:
+        return BrowseMedia(
+            title=display_title,
+            media_class=MediaClass.TV_SHOW,
+            media_content_id=(
+                f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{asset.channel_id or ''}:"
+                f"{asset.program_id}:{asset.title}"
+            ),
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            thumbnail=asset.thumbnail or asset.poster,
+        )
+
+    payload_data = {
+        "url": asset.asset_url,
+        "title": asset.title,
+        "thumb": asset.thumbnail or asset.poster,
+        "live": asset.is_live,
+    }
+    if asset.program_id:
+        payload_data["program_id"] = asset.program_id
+    if asset.channel_id:
+        payload_data["channel_id"] = asset.channel_id
+    if asset.description:
+        payload_data["desc"] = asset.description
+    payload = encode_asset_payload(payload_data)
+    return BrowseMedia(
+        title=display_title,
+        media_class=MediaClass.VIDEO,
+        media_content_id=f"{prefix}:{payload}",
+        media_content_type=prefix,
+        can_play=False,
+        can_expand=True,
+        thumbnail=asset.thumbnail or asset.poster,
+    )
+
+
 def build_assets_browse(
     title: str,
     content_id: str,
@@ -141,37 +194,9 @@ def build_assets_browse(
     assets: list[BrowseAsset],
 ) -> BrowseMedia:
     """Build a browse list from assets."""
-    children: list[BrowseMedia] = []
-    for asset in assets:
-        payload_data = {
-            "url": asset.asset_url,
-            "title": asset.title,
-            "thumb": asset.thumbnail or asset.poster,
-            "live": asset.is_live,
-        }
-        # Include program info for replays so we can show all episodes
-        if asset.program_id:
-            payload_data["program_id"] = asset.program_id
-        if asset.channel_id:
-            payload_data["channel_id"] = asset.channel_id
-        if asset.description:
-            payload_data["desc"] = asset.description
-
-        payload = encode_asset_payload(payload_data)
-        item_title = asset.title
-        if asset.episode_title:
-            item_title = f"{asset.title} - {asset.episode_title}"
-        children.append(
-            BrowseMedia(
-                title=item_title,
-                media_class=MediaClass.VIDEO,
-                media_content_id=f"{prefix}:{payload}",
-                media_content_type=prefix,
-                can_play=False,
-                can_expand=True,
-                thumbnail=asset.thumbnail or asset.poster,
-            )
-        )
+    children: list[BrowseMedia] = [
+        _asset_to_browse_child(asset, prefix) for asset in assets
+    ]
 
     if not children:
         children.append(
@@ -203,60 +228,9 @@ def build_search_results_browse(
     show_search: bool = False,
 ) -> BrowseMedia:
     """Build a BrowseMedia with search results."""
-    children: list[BrowseMedia] = []
-
-    for asset in assets:
-        display_title = asset.title
-        if asset.episode_title:
-            display_title = f"{asset.title} - {asset.episode_title}"
-
-        # Check if this is a program container (Series/Show) that should be browsed
-        if (
-            (
-                asset.asset_type in ("program", "serie")
-                or (asset.asset_type == "vod" and not asset.episode_id)
-            )
-            and asset.program_id
-            and not asset.is_live
-        ):
-            children.append(
-                BrowseMedia(
-                    title=display_title,
-                    media_class=MediaClass.TV_SHOW,
-                    media_content_id=f"{MEDIA_PROGRAM_EPISODES_PREFIX}:{asset.channel_id or ''}:{asset.program_id}:{asset.title}",
-                    media_content_type="directory",
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=asset.thumbnail or asset.poster,
-                )
-            )
-        else:
-            # Playable item (Movie, Episode, Live)
-            payload_data = {
-                "url": asset.asset_url,
-                "title": asset.title,
-                "thumb": asset.thumbnail or asset.poster,
-                "live": asset.is_live,
-            }
-            if asset.program_id:
-                payload_data["program_id"] = asset.program_id
-            if asset.channel_id:
-                payload_data["channel_id"] = asset.channel_id
-            if asset.description:
-                payload_data["desc"] = asset.description
-
-            payload = encode_asset_payload(payload_data)
-            children.append(
-                BrowseMedia(
-                    title=display_title,
-                    media_class=MediaClass.VIDEO,
-                    media_content_id=f"{MEDIA_SEARCH_RESULT_PREFIX}:{payload}",
-                    media_content_type=MEDIA_SEARCH_RESULT_PREFIX,
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=asset.thumbnail or asset.poster,
-                )
-            )
+    children: list[BrowseMedia] = [
+        _asset_to_browse_child(asset, MEDIA_SEARCH_RESULT_PREFIX) for asset in assets
+    ]
 
     if not children:
         children.append(
@@ -405,89 +379,19 @@ def build_search_input_browse(buffer: str) -> BrowseMedia:
 async def async_fetch_channel_replays(
     api: MolotovApi, channel_id: str, epg_data: EpgData | None
 ) -> list[BrowseAsset]:
-    """Fetch replays for a specific channel."""
-    from homeassistant.util import dt as dt_util
+    """Fetch replays (catch-up) for a channel from its detail page.
 
-    # First try the dedicated replay API endpoint
+    The channel detail page carries an "En replay sur ..." card section whose
+    cards are catch-up programmes and series, resolved as VOD like episodes.
+    """
     try:
-        data = await api.async_get_channel_replays(channel_id)
-        assets = extract_replay_assets(data, api, channel_id=channel_id)
-        if assets:
-            assets = [asset for asset in assets if asset.channel_id == channel_id]
-        if assets:
-            _LOGGER.debug(
-                "Found %d replays from replay API for channel %s",
-                len(assets),
-                channel_id,
-            )
-            return assets
+        data = await api.async_get_program_details(channel_id, kind="channel", tab=None)
+        assets = parse_papi_channel_replays(data, api)
+        _LOGGER.debug("Found %d replays for channel %s", len(assets), channel_id)
+        return assets
     except MolotovApiError as err:
         _LOGGER.debug("Failed to fetch channel replays for %s: %s", channel_id, err)
-
-    # Try to get past programs via API
-    try:
-        data = await api.async_get_channel_past_programs(channel_id)
-        programs = parse_past_programs_as_replays(data, channel_id, api)
-        if programs:
-            _LOGGER.debug(
-                "Found %d replays from past programs API for channel %s",
-                len(programs),
-                channel_id,
-            )
-            return programs
-    except MolotovApiError as err:
-        _LOGGER.debug("Failed to fetch past programs for %s: %s", channel_id, err)
-
-    # Fall back to using past programs from coordinator data
-    if epg_data is None:
-        _LOGGER.debug("No EPG data available for channel %s replays", channel_id)
         return []
-
-    channel = find_channel(epg_data, channel_id)
-    if channel is None:
-        _LOGGER.debug("Channel %s not found in EPG data", channel_id)
-        return []
-
-    # Get past programs as replays (programs that ended in the last 7 days)
-    now = dt_util.utcnow()
-    replay_window = timedelta(days=7)
-    replay_cutoff = now - replay_window
-
-    _LOGGER.debug(
-        "Checking %d programs in EPG for channel %s, looking for past programs",
-        len(channel.programs),
-        channel_id,
-    )
-
-    replays: list[BrowseAsset] = []
-    for program in channel.programs:
-        # Skip programs that haven't ended yet (these are live or upcoming)
-        if program.end > now:
-            continue
-        # Skip programs older than replay window
-        if program.start < replay_cutoff:
-            continue
-
-        # Build replay URL with start_over
-        asset_url = api.build_asset_url("channel", channel_id, start_over=True)
-
-        replays.append(
-            BrowseAsset(
-                title=program.title,
-                asset_url=asset_url,
-                is_live=False,
-                description=program.description,
-                episode_title=program.episode_title,
-                thumbnail=program.thumbnail,
-                poster=program.poster,
-                start=program.start,
-                end=program.end,
-            )
-        )
-
-    _LOGGER.debug("Found %d replays from EPG for channel %s", len(replays), channel_id)
-
-    return replays
 
 
 async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
