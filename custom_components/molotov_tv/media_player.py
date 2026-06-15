@@ -43,6 +43,7 @@ from homeassistant.components.media_player import (
     MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
+    MediaPlayerState,
     SearchMedia,
     SearchMediaQuery,
 )
@@ -50,9 +51,6 @@ from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import (
-    STATE_IDLE,
-    STATE_PLAYING,
-    STATE_PAUSED,
     ATTR_ENTITY_ID,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -170,7 +168,7 @@ class CastSessionState:
     health_unsub: Any = None
     stream_id: str | None = None
     stream_data: dict | None = None
-    player_state: str = STATE_IDLE
+    player_state: MediaPlayerState = MediaPlayerState.IDLE
     tracks: dict = field(default_factory=dict)
     current_track_id: int | None = None
 
@@ -207,7 +205,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         | MediaPlayerEntityFeature.SELECT_SOURCE
         | MediaPlayerEntityFeature.SEARCH_MEDIA
     )
-    _attr_state = STATE_IDLE
+    _attr_state = MediaPlayerState.IDLE
 
     def __init__(
         self,
@@ -409,7 +407,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             else:
                 self._active_cast_target = None
-                self._attr_state = STATE_IDLE
+                self._attr_state = MediaPlayerState.IDLE
 
         self.async_write_ha_state()
 
@@ -831,7 +829,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 session.position = 0.0
                 session.duration = None
                 session.position_updated_at = dt_util.utcnow()
-                session.player_state = STATE_PLAYING
+                session.player_state = MediaPlayerState.PLAYING
                 # Set as focused cast
                 self._active_cast_target = target_host
                 self._sync_state_from_session(session)
@@ -869,7 +867,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # Only change entity state if no cast is active
             # (cast-driven state takes priority for the entity)
             if not self._cast_sessions:
-                self._attr_state = STATE_PLAYING
+                self._attr_state = MediaPlayerState.PLAYING
                 self._attr_media_title = title
 
             # Expose the internal media id, not the signed stream URL, which
@@ -890,7 +888,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         except MolotovApiError as err:
             if not self._local_streams and not self._cast_sessions:
-                self._attr_state = STATE_IDLE
+                self._attr_state = MediaPlayerState.IDLE
             _LOGGER.debug(
                 "MolotovApiError caught: user_message=%r, str=%s",
                 err.user_message,
@@ -919,7 +917,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._local_streams.clear()
 
         if not self._local_streams and not self._cast_sessions:
-            self._attr_state = STATE_IDLE
+            self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
 
     async def _async_perform_search(self, query: str) -> None:
@@ -1708,12 +1706,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         # Update player state from cast status
         player_state = getattr(status, "player_state", None)
         if player_state == "PLAYING":
-            session.player_state = STATE_PLAYING
+            session.player_state = MediaPlayerState.PLAYING
         elif player_state == "PAUSED":
-            session.player_state = STATE_PAUSED
+            session.player_state = MediaPlayerState.PAUSED
         elif player_state == "IDLE":
-            was_idle = session.player_state == STATE_IDLE
-            session.player_state = STATE_IDLE
+            was_idle = session.player_state == MediaPlayerState.IDLE
+            session.player_state = MediaPlayerState.IDLE
             session.position = None
             session.duration = None
             session.position_updated_at = None
@@ -1873,7 +1871,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 position=0.0,
                 position_updated_at=dt_util.utcnow(),
                 connected=True,
-                player_state=STATE_PLAYING,
+                player_state=MediaPlayerState.PLAYING,
                 stream_id=cast_slot_id,
             )
             slot_assigned = True
@@ -2046,11 +2044,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         session = self._focused_session
         if session:
             await async_cast_play(self.hass, session.host)
-            session.player_state = STATE_PLAYING
-            self._attr_state = STATE_PLAYING
+            session.player_state = MediaPlayerState.PLAYING
+            self._attr_state = MediaPlayerState.PLAYING
             self.async_write_ha_state()
         elif self._local_streams:
-            self._attr_state = STATE_PLAYING
+            self._attr_state = MediaPlayerState.PLAYING
             self.async_write_ha_state()
 
     async def async_media_pause(self) -> None:
@@ -2058,11 +2056,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         session = self._focused_session
         if session:
             await async_cast_pause(self.hass, session.host)
-            session.player_state = STATE_PAUSED
-            self._attr_state = STATE_PAUSED
+            session.player_state = MediaPlayerState.PAUSED
+            self._attr_state = MediaPlayerState.PAUSED
             self.async_write_ha_state()
         elif self._local_streams:
-            self._attr_state = STATE_PAUSED
+            self._attr_state = MediaPlayerState.PAUSED
             self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
@@ -2096,7 +2094,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self._release_stream_slot(sid)
             self._local_streams.clear()
             if not self._cast_sessions:
-                self._attr_state = STATE_IDLE
+                self._attr_state = MediaPlayerState.IDLE
             self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:
