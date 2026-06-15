@@ -50,7 +50,7 @@ from .const import (
 from .models import EpgData
 from .helpers import (
     encode_asset_payload,
-    extract_recording_assets,
+    parse_fubo_recordings,
     parse_papi_channel_replays,
     parse_papi_episodes,
     sort_assets,
@@ -395,12 +395,12 @@ async def async_fetch_channel_replays(
 
 
 async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
-    """Fetch all recordings from bookmarks."""
+    """Fetch all DVR recordings."""
     assets: list[BrowseAsset] = []
 
     try:
-        sections = await api.async_get_all_recordings()
-        assets = extract_recording_assets({"sections": sections}, api)
+        entries = await api.async_get_all_recordings()
+        assets = parse_fubo_recordings(entries, api)
     except MolotovApiError as err:
         _LOGGER.debug("Failed to fetch recordings: %s", err)
 

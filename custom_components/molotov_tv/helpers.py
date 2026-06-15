@@ -1291,6 +1291,49 @@ def parse_papi_channel_replays(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     return assets
 
 
+def parse_fubo_recordings(entries: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse /dvr/v2/list entries (programWithAssets) into playable recordings."""
+    assets: list[BrowseAsset] = []
+    if not isinstance(entries, list):
+        return assets
+    for entry in entries:
+        data = entry.get("data") if isinstance(entry, dict) else None
+        if not isinstance(data, dict):
+            continue
+        program = data.get("program")
+        if not isinstance(program, dict):
+            continue
+        dvr_asset = None
+        for asset in data.get("assets") or []:
+            if isinstance(asset, dict) and asset.get("type") == "dvr":
+                dvr_asset = asset
+                break
+        if dvr_asset is None:
+            continue
+        asset_id = dvr_asset.get("assetId")
+        if not asset_id:
+            continue
+        asset_id = str(asset_id)
+        channel = _as_dict(dvr_asset.get("channel"))
+        title = program.get("heading") or program.get("title") or asset_id
+        assets.append(
+            BrowseAsset(
+                # A recording is one captured airing, so it plays directly.
+                title=title,
+                asset_url=api.build_asset_url("recording", asset_id),
+                asset_type="dvr",
+                episode_id=asset_id,
+                episode_title=program.get("subheading"),
+                description=program.get("shortDescription"),
+                thumbnail=program.get("horizontalImage")
+                or program.get("verticalImage"),
+                channel_id=str(channel.get("id")) if channel.get("id") else None,
+                program_id=program.get("programId"),
+            )
+        )
+    return assets
+
+
 def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     """Parse every card across a papi page's content.sections into BrowseAssets."""
     assets: list[BrowseAsset] = []
