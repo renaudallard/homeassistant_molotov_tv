@@ -30,7 +30,7 @@ and a stable `x-device-id`. Authenticated calls add `Authorization: Bearer` and
 | Concern | Call |
 |---|---|
 | Login | `PUT /v2/signin {username,password}` (username is the account email; tokens arrive in a `{type,payload}` envelope) then `GET /user` (id + `profiles[0].id`) |
-| Refresh | `POST /refresh` (refresh token as Bearer); a 401 refreshes once and retries |
+| Refresh | `POST /refresh` (refresh token as Bearer); a 401 refreshes once and retries, and a rejected refresh token opens a new session with the stored credentials |
 | Live guide | `GET /epg?startTime&endTime` (RFC3339 UTC) `&limit&ignoreEmpty=true` |
 | Search | `GET /papi/v1/search/content?category=top_results&fuzzy=true&query=` |
 | Detail / replays / episodes | `GET /papi/v1/program-details/{channel\|program\|series}/{id}` (`?tabID=id-tab-watch-now` for a series' episodes) |

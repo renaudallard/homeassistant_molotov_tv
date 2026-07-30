@@ -255,39 +255,44 @@ class MolotovApi:
         """Sign in and load the user/profile ids."""
 
         async with self._lock:
-            # The account email goes in a "username" field and the tokens come
-            # back wrapped in a {type, payload} envelope. The older flat
-            # PUT /signin {email,password} answers 401 INVALID_USERNAME_PASSWORD
-            # for accounts the backend has since migrated.
-            data = await self._request(
-                "PUT",
-                "v2/signin",
-                auth=False,
-                json={"username": self._email, "password": self._password},
-            )
-            tokens = data.get("payload", data)
-            access_token = tokens.get("access_token")
-            if not access_token:
-                raise MolotovAuthError("Login response did not include access token")
-            self._session_state.access_token = access_token
-            self._session_state.refresh_token = tokens.get("refresh_token")
+            await self._async_login()
 
-            # The fresh token cannot 401, so disable the refresh-and-retry path
-            # here to avoid re-entering the auth lock we already hold.
-            user = await self._request("GET", "user", auth=True, _retry=False)
-            account = user.get("data") or {}
-            user_id = account.get("id")
-            if not user_id:
-                raise MolotovAuthError("Login response did not include user id")
-            profiles = account.get("profiles") or []
-            profile_id = profiles[0].get("id") if profiles else None
-            if not profile_id:
-                raise MolotovAuthError("Account has no usable profile")
-            self._session_state.user_id = str(user_id)
-            self._session_state.profile_id = str(profile_id)
+    async def _async_login(self) -> None:
+        """Sign in and load the user/profile ids; the caller holds the lock."""
+
+        # The account email goes in a "username" field and the tokens come
+        # back wrapped in a {type, payload} envelope. The older flat
+        # PUT /signin {email,password} answers 401 INVALID_USERNAME_PASSWORD
+        # for accounts the backend has since migrated.
+        data = await self._request(
+            "PUT",
+            "v2/signin",
+            auth=False,
+            json={"username": self._email, "password": self._password},
+        )
+        tokens = data.get("payload", data)
+        access_token = tokens.get("access_token")
+        if not access_token:
+            raise MolotovAuthError("Login response did not include access token")
+        self._session_state.access_token = access_token
+        self._session_state.refresh_token = tokens.get("refresh_token")
+
+        # The fresh token cannot 401, so disable the refresh-and-retry path
+        # here to avoid re-entering the auth lock we already hold.
+        user = await self._request("GET", "user", auth=True, _retry=False)
+        account = user.get("data") or {}
+        user_id = account.get("id")
+        if not user_id:
+            raise MolotovAuthError("Login response did not include user id")
+        profiles = account.get("profiles") or []
+        profile_id = profiles[0].get("id") if profiles else None
+        if not profile_id:
+            raise MolotovAuthError("Account has no usable profile")
+        self._session_state.user_id = str(user_id)
+        self._session_state.profile_id = str(profile_id)
 
     async def async_refresh_token(self, force: bool = False) -> None:
-        """Exchange the refresh token for a fresh access token."""
+        """Renew the access token, signing in again if the refresh fails."""
 
         token_before = self._session_state.access_token
         async with self._lock:
@@ -296,24 +301,40 @@ class MolotovApi:
                 return
 
             refresh_token = self._session_state.refresh_token
-            if not refresh_token:
-                raise MolotovAuthError("Missing refresh token")
+            if refresh_token:
+                try:
+                    if await self._async_refresh(refresh_token):
+                        return
+                except MolotovAuthError as err:
+                    # A transient backend error is not an auth problem and
+                    # propagates; only a rejected token falls through.
+                    _LOGGER.debug("Refresh token rejected: %s", err)
 
-            data = await self._request(
-                "POST",
-                "refresh",
-                auth=False,
-                headers={"authorization": f"Bearer {refresh_token}"},
-                _retry=False,
-            )
-            tokens = data.get("payload", data)
-            access_token = tokens.get("access_token")
-            if not access_token:
-                raise MolotovAuthError("Refresh did not return an access token")
-            self._session_state.access_token = access_token
-            new_refresh = tokens.get("refresh_token")
-            if new_refresh:
-                self._session_state.refresh_token = new_refresh
+            # The refresh token is missing or no longer accepted. The stored
+            # credentials are still good, so open a new session rather than
+            # making the user re-enter a password that has not changed.
+            _LOGGER.debug("Signing in again to replace the expired session")
+            await self._async_login()
+
+    async def _async_refresh(self, refresh_token: str) -> bool:
+        """Exchange the refresh token for a fresh access token."""
+
+        data = await self._request(
+            "POST",
+            "refresh",
+            auth=False,
+            headers={"authorization": f"Bearer {refresh_token}"},
+            _retry=False,
+        )
+        tokens = data.get("payload", data)
+        access_token = tokens.get("access_token")
+        if not access_token:
+            return False
+        self._session_state.access_token = access_token
+        new_refresh = tokens.get("refresh_token")
+        if new_refresh:
+            self._session_state.refresh_token = new_refresh
+        return True
 
     async def async_ensure_logged_in(self) -> None:
         """Ensure an access token is present; a stale one is refreshed on 401."""
