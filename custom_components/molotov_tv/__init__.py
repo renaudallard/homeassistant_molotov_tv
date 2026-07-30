@@ -92,7 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await api.async_login()
     except MolotovAuthError as err:
-        raise ConfigEntryAuthFailed("Invalid credentials") from err
+        raise ConfigEntryAuthFailed(str(err)) from err
     except MolotovApiError as err:
         _LOGGER.error("Failed to set up Molotov TV: %s", err)
         raise

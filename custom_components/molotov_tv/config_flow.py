@@ -64,9 +64,11 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 await _async_validate_input(self.hass, user_input)
-            except MolotovAuthError:
+            except MolotovAuthError as err:
                 errors["base"] = "invalid_auth"
-                _LOGGER.warning("Molotov authentication failed during config flow")
+                _LOGGER.warning(
+                    "Molotov authentication failed during config flow: %s", err
+                )
             except MolotovApiError as err:
                 errors["base"] = "cannot_connect"
                 _LOGGER.exception(
@@ -115,9 +117,9 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data = {CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]}
             try:
                 await _async_validate_input(self.hass, data)
-            except MolotovAuthError:
+            except MolotovAuthError as err:
                 errors["base"] = "invalid_auth"
-                _LOGGER.warning("Molotov re-authentication failed")
+                _LOGGER.warning("Molotov re-authentication failed: %s", err)
             except MolotovApiError as err:
                 errors["base"] = "cannot_connect"
                 _LOGGER.exception("Molotov API error during reauth: %s", err)
