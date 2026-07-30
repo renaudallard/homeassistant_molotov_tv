@@ -202,7 +202,7 @@ npm run build
 Le fichier bundlé est généré dans `custom_components/molotov_tv/www/molotov-panel.js`. Le cache du navigateur est invalidé automatiquement à chaque rebuild grâce à un hash du contenu du fichier.
 
 ### Hébergement du récepteur personnalisé
-Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Le code source est disponible dans le répertoire `receiver/` de ce dépôt. Les utilisateurs avancés peuvent héberger leur propre version en modifiant `const.py` et en enregistrant un nouvel App ID auprès de Google.
+Le "Récepteur Arnor" est un récepteur web de secours, prévu uniquement comme fallback si le streamer natif Molotov est indisponible. Son code source vit dans un dépôt dédié : **[renaudallard/etincelle_receiver](https://github.com/renaudallard/etincelle_receiver)**. Les utilisateurs avancés peuvent héberger leur propre version (HTTPS), l'enregistrer comme récepteur personnalisé dans la [Google Cast SDK Console](https://cast.google.com/publish/), puis renseigner l'App ID obtenu dans `const.py`.
 
 #### Contrôles à la télécommande
 Quand le récepteur personnalisé est utilisé sur un appareil doté d'une télécommande (Chromecast avec Google TV, Android TV), la lecture se pilote directement avec les flèches :

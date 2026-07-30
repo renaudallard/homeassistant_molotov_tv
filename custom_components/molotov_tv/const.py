@@ -78,10 +78,11 @@ FUBO_SUPPORTED_FEATURES = (
     "play_start_from_offset,load_channels_in_guide"
 )
 
-# To use a custom receiver:
-# 1. Host the file in receiver/index.html on an HTTPS server (e.g. GitHub Pages)
-# 2. Register a new Custom Receiver in Google Cast SDK Console pointing to that URL
-# 3. Replace the ID below with your new App ID
+# The custom Cast receiver lives in its own repository:
+#   https://github.com/renaudallard/etincelle_receiver
+# To use your own: host that receiver over HTTPS, register it as a Custom Receiver
+# in the Google Cast SDK Console (https://cast.google.com/publish/), then set the
+# App ID it issues below.
 CUSTOM_RECEIVER_APP_ID = "9527437F"  # Set to "1234ABCD" to enable custom receiver logic
 
 MEDIA_ROOT = "root"

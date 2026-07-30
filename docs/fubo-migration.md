@@ -70,4 +70,6 @@ to keep a stream alive.
 - `media_player.py` — resolves playback via `/vapi` and builds the receiver
   `customData` (`_extract_stream_attrs`).
 - `browse.py` — maps Fubo pages into the existing four-folder tree.
-- `receiver/index.html` and the Lit panel are unchanged.
+- The custom Cast receiver (now at
+  [renaudallard/etincelle_receiver](https://github.com/renaudallard/etincelle_receiver))
+  and the Lit panel are unchanged.
