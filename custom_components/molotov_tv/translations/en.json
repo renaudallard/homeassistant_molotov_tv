@@ -1,0 +1,41 @@
+{
+  "title": "Molotov TV",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Molotov",
+        "description": "Sign in with your Molotov account.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with Molotov",
+        "description": "Enter the password for {email}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Molotov.",
+      "invalid_auth": "Invalid email or password."
+    },
+    "abort": {
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Select Chromecast media players or add hostnames for per-play casting.",
+        "data": {
+          "cast_targets": "Chromecast media players",
+          "cast_hosts": "Chromecast hosts (one per line, optional name=host)"
+        }
+      }
+    }
+  }
+}

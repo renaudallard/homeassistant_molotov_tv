@@ -185,6 +185,7 @@ Le code suit une structure modulaire :
 *   **`text.py`** : Entité de recherche textuelle.
 *   **`chromecast.py`** : Connexion, contrôle et reconnexion Chromecast.
 *   **`storage.py`** : Stockage persistant des positions de reprise de lecture.
+*   **`translations/`** : Traductions du flux de configuration (français, anglais).
 *   **`panel/src/molotov-panel.js`** : Panneau LitElement frontend.
 
 ## 🛠️ Avancé
