@@ -29,7 +29,7 @@ and a stable `x-device-id`. Authenticated calls add `Authorization: Bearer` and
 
 | Concern | Call |
 |---|---|
-| Login | `PUT /signin {email,password}` then `GET /user` (id + `profiles[0].id`) |
+| Login | `PUT /v2/signin {username,password}` (username is the account email; tokens arrive in a `{type,payload}` envelope) then `GET /user` (id + `profiles[0].id`) |
 | Refresh | `POST /refresh` (refresh token as Bearer); a 401 refreshes once and retries |
 | Live guide | `GET /epg?startTime&endTime` (RFC3339 UTC) `&limit&ignoreEmpty=true` |
 | Search | `GET /papi/v1/search/content?category=top_results&fuzzy=true&query=` |

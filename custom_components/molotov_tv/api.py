@@ -236,11 +236,15 @@ class MolotovApi:
         """Sign in and load the user/profile ids."""
 
         async with self._lock:
+            # The account email goes in a "username" field and the tokens come
+            # back wrapped in a {type, payload} envelope. The older flat
+            # PUT /signin {email,password} answers 401 INVALID_USERNAME_PASSWORD
+            # for accounts the backend has since migrated.
             data = await self._request(
                 "PUT",
-                "signin",
+                "v2/signin",
                 auth=False,
-                json={"email": self._email, "password": self._password},
+                json={"username": self._email, "password": self._password},
             )
             tokens = data.get("payload", data)
             access_token = tokens.get("access_token")
