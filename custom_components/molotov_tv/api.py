@@ -77,19 +77,29 @@ async def _read_error_body(resp) -> str | None:
     return _truncate_text(body)
 
 
-def _extract_user_message(error_body: str | None) -> str | None:
-    """Extract a human-readable message from a JSON error body if present."""
+def _parse_error(error_body: str | None) -> tuple[str | None, str | None]:
+    """Return the (code, human-readable message) of a JSON error body.
+
+    The backend answers `{"error": {"code", "message", "lc_message"}}`;
+    lc_message is the message localised to x-preferred-language.
+    """
     if not error_body:
-        return None
+        return None, None
     try:
         data = json.loads(error_body)
-        if isinstance(data, dict):
-            error = data.get("error", data)
-            if isinstance(error, dict):
-                return error.get("user_message") or error.get("message")
     except (json.JSONDecodeError, TypeError) as err:
-        _LOGGER.debug("Failed to extract user message from error body: %s", err)
-    return None
+        _LOGGER.debug("Failed to parse error body: %s", err)
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    error = data.get("error", data)
+    if not isinstance(error, dict):
+        return None, None
+    code = error.get("code")
+    message = (
+        error.get("user_message") or error.get("lc_message") or error.get("message")
+    )
+    return (str(code) if code else None), (str(message) if message else None)
 
 
 def _rfc3339(value: datetime) -> str:
@@ -129,9 +139,18 @@ _VIDEO_TYPE_TO_KIND = {
 class MolotovApiError(Exception):
     """Generic backend API error."""
 
-    def __init__(self, message: str, user_message: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        user_message: str | None = None,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.user_message = user_message
+        # The backend error code, e.g. INVALID_USERNAME_PASSWORD. Only one of
+        # the codes the backend answers 401 with actually means a wrong
+        # password, so keep it for callers and for the logs.
+        self.code = code
 
 
 class MolotovAuthError(MolotovApiError):
@@ -562,7 +581,15 @@ class MolotovApi:
                         _retries=_retries,
                     )
                 if resp.status == 401:
-                    raise MolotovAuthError("Invalid credentials")
+                    error_body = await _read_error_body(resp)
+                    code, user_message = _parse_error(error_body)
+                    raise MolotovAuthError(
+                        f"Backend rejected the credentials: {method} {url} "
+                        f"(401 {code or 'no code'})"
+                        + (f": {user_message}" if user_message else ""),
+                        user_message=user_message,
+                        code=code,
+                    )
                 # Decide whether to retry, but back off only after the response
                 # is released (below) so a pooled connection is not pinned.
                 if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
@@ -580,7 +607,7 @@ class MolotovApi:
                 elif resp.status >= 400:
                     reason = resp.reason or "unknown"
                     error_body = await _read_error_body(resp)
-                    user_message = _extract_user_message(error_body)
+                    code, user_message = _parse_error(error_body)
                     _LOGGER.debug(
                         "Backend API error: %s %s (%s %s)%s",
                         method,
@@ -594,6 +621,7 @@ class MolotovApi:
                         f"({resp.status} {reason})"
                         + (f": {error_body}" if error_body else ""),
                         user_message=user_message,
+                        code=code,
                     )
                 else:
                     return await reader(resp)
@@ -617,7 +645,9 @@ class MolotovApi:
             raise
         except ClientResponseError as err:
             if err.status == 401:
-                raise MolotovAuthError("Invalid credentials") from err
+                raise MolotovAuthError(
+                    f"Backend rejected the credentials: {method} {url} (401)"
+                ) from err
             raise MolotovApiError(
                 f"Backend API request failed: {method} {url} ({err.status})"
             ) from err

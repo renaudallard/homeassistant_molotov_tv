@@ -64,7 +64,7 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 1.  Allez dans **Paramètres** > **Appareils et services**.
 2.  Cliquez sur **+ Ajouter une intégration** et recherchez **Molotov TV**.
 3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
-    *   *Note : la connexion se fait via le backend Fubo. Identifiants invalides, indisponibilité géographique (hors France) ou compte non éligible se traduisent par un message d'erreur explicite.*
+    *   *Note : la connexion se fait via le backend Fubo. En cas d'échec, le code d'erreur renvoyé par le backend (par exemple `INVALID_USERNAME_PASSWORD` pour des identifiants invalides, ou `NO_SERVICE_IN_COUNTRY` hors de France) est repris dans le message d'erreur et dans les journaux de Home Assistant.*
     *   *Ré-authentification : si votre mot de passe change ou que votre session est invalidée, Home Assistant propose une demande de ré-authentification pour saisir à nouveau votre mot de passe, sans avoir à supprimer puis recréer l'intégration.*
 
 ### Options & Ajustements
