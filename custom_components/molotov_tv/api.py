@@ -41,7 +41,6 @@ import json
 import logging
 import random
 from typing import Any
-import uuid
 from urllib.parse import urljoin
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
@@ -181,7 +180,7 @@ class MolotovApi:
         password: str,
         environment: str,
         language: str,
-        device_id: str | None = None,
+        device_id: str,
     ) -> None:
         self._session = session
         self._email = email
@@ -194,7 +193,12 @@ class MolotovApi:
         self._language = language
         # Fubo expects a BCP-47 tag; the integration stores a short code.
         self._preferred_language = "fr-FR" if language.startswith("fr") else language
-        self._device_id = device_id or f"etincelle-{uuid.uuid4()}"
+        # The backend registers a device per x-device-id and warns the account
+        # owner by mail when an unknown one signs in, so the caller has to hand
+        # over an id that survives restarts. It is required rather than
+        # defaulted to keep a forgetful caller from silently registering a new
+        # device on every setup.
+        self._device_id = device_id
         self._session_state = MolotovSession(device_id=self._device_id)
         self._lock = asyncio.Lock()
 

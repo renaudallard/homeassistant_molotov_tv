@@ -49,6 +49,7 @@ from .const import (
     DEFAULT_ENVIRONMENT,
     DOMAIN,
 )
+from .helpers import async_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -190,5 +191,6 @@ async def _async_validate_input(hass: HomeAssistant, data: dict) -> None:
         password=data[CONF_PASSWORD],
         environment=DEFAULT_ENVIRONMENT,
         language="fr",
+        device_id=await async_device_id(hass, data[CONF_EMAIL]),
     )
     await api.async_login()

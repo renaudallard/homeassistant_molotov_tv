@@ -57,6 +57,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import MolotovEpgCoordinator
+from .helpers import async_device_id
 from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password=password,
         environment=environment,
         language="fr",
+        device_id=await async_device_id(hass, email),
     )
 
     try:

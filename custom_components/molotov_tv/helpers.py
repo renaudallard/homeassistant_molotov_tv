@@ -34,15 +34,36 @@ import json
 import logging
 import re
 from typing import Any
+import uuid
 from urllib.parse import unquote_plus
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import instance_id
 from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi
 from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# --- Backend identity ---
+
+
+async def async_device_id(hass: HomeAssistant, email: str) -> str:
+    """Return the device id this installation presents to the backend.
+
+    The backend treats every unseen x-device-id as a new device, adds it to
+    the account and mails the owner about it, so the id has to be the same on
+    every sign-in. Deriving it from the Home Assistant instance id and the
+    account email gives one id per installation and account without storing
+    anything: the config flow and the entry setup compute the same value, and
+    it survives restarts, reloads and re-authentication.
+    """
+
+    instance = await instance_id.async_get(hass)
+    name = f"{instance}:{email.strip().lower()}"
+    return f"etincelle-{uuid.uuid5(uuid.NAMESPACE_DNS, name)}"
 
 
 # --- Encoding/Decoding helpers ---
