@@ -66,7 +66,7 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
     *   *Note : la connexion se fait via le backend Fubo. En cas d'échec, le code d'erreur renvoyé par le backend (par exemple `INVALID_USERNAME_PASSWORD` pour des identifiants invalides, ou `NO_SERVICE_IN_COUNTRY` hors de France) est repris dans le message d'erreur et dans les journaux de Home Assistant.*
     *   *Ré-authentification : une session expirée est renouvelée automatiquement à partir des identifiants enregistrés. Si le mot de passe lui-même change, Home Assistant propose une demande de ré-authentification pour le saisir à nouveau, sans avoir à supprimer puis recréer l'intégration.*
-    *   *Appareil déclaré : l'intégration s'annonce auprès du backend avec un identifiant d'appareil dérivé de l'identifiant de votre installation Home Assistant et de votre email. Il reste le même après un redémarrage, un rechargement ou une ré-authentification, donc le compte ne se remplit plus d'appareils. Cet identifiant étant nouveau, un dernier mail « nouvel appareil » arrive à la première connexion qui suit la mise à jour, puis plus aucun.*
+    *   *Appareil déclaré : l'intégration s'annonce auprès du backend avec un identifiant d'appareil dérivé de l'identifiant de votre installation Home Assistant et de votre email. Il reste le même après un redémarrage, un rechargement ou une ré-authentification, donc le compte ne se remplit plus d'appareils. L'appareil est déclaré sous le nom « Home Assistant ». Cet identifiant étant nouveau, un dernier mail « nouvel appareil » arrive à la première connexion qui suit la mise à jour, puis plus aucun.*
 
 ### Options & Ajustements
 

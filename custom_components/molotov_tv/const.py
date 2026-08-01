@@ -72,6 +72,9 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
 FUBO_APPLICATION_ID = "molotov"
 FUBO_CLIENT_VERSION = "5.51.0"
 FUBO_USER_AGENT = "MolotovTV/5.51.0 (Linux; U; ANDROID; fr-FR; etincelle)"
+# The name the account lists the device under. The Android app sends the name
+# the owner gave the handset; without it the device shows up unnamed.
+FUBO_DEVICE_NAME = "Home Assistant"
 # use_drm_v2_response makes /vapi/asset include drm_v2 (license url + headers).
 FUBO_SUPPORTED_FEATURES = (
     "use_drm_v2_response,playback_template_v2,"

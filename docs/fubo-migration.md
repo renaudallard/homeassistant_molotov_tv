@@ -25,6 +25,11 @@ Mandatory header `x-application-id: molotov` (without it the backend returns
 and a stable `x-device-id`. Authenticated calls add `Authorization: Bearer` and
 `x-profile-id`; `x-user-id` is sent **only** on `/vapi` playback calls.
 
+`x-device-name: Home Assistant` is the label the account lists the device under.
+The app sends the name the owner gave the handset (`Settings.Global device_name`,
+skipped when blank) and the backend names the device from it, so without the
+header the entry reads as unnamed.
+
 `x-device-id` identifies the installation: the backend adds every unseen value
 to the account as a new device and mails the owner about it. The id is derived
 from the Home Assistant instance id and the account email

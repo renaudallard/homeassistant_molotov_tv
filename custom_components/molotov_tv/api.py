@@ -52,6 +52,7 @@ from .const import (
     ENVIRONMENTS,
     FUBO_APPLICATION_ID,
     FUBO_CLIENT_VERSION,
+    FUBO_DEVICE_NAME,
     FUBO_SUPPORTED_FEATURES,
     FUBO_USER_AGENT,
 )
@@ -500,6 +501,7 @@ class MolotovApi:
             "x-device-group": "mobile",
             "x-device-brand": "Etincelle",
             "x-device-model": "HA",
+            "x-device-name": FUBO_DEVICE_NAME,
             "x-device-id": self._device_id,
             "x-preferred-language": self._preferred_language,
             "x-supported-streaming-protocols": "hls,dash",
