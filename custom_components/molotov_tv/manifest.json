@@ -2,7 +2,7 @@
   "domain": "molotov_tv",
   "name": "Molotov TV",
   "config_flow": true,
-  "documentation": "https://www.molotov.tv",
+  "documentation": "https://github.com/renaudallard/homeassistant_molotov_tv",
   "requirements": ["pychromecast>=14.0.0"],
   "after_dependencies": ["http", "frontend"],
   "codeowners": [],
