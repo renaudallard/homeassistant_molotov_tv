@@ -17,13 +17,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # The bump can sit in any commit of the push, so the old manifest
+          # has to be reachable however far back the push starts.
+          fetch-depth: 0
 
       - name: Check for version change
         id: version
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          new=$(jq -r .version custom_components/molotov_tv/manifest.json)
-          old=$(git show HEAD~1:custom_components/molotov_tv/manifest.json | jq -r .version)
+          manifest=custom_components/molotov_tv/manifest.json
+          new=$(jq -r .version "$manifest")
+          # Compare against where the branch stood before the push rather than
+          # against the parent of the tip. A push whose bump is not the last
+          # commit looks unchanged from HEAD~1 and never gets released.
+          base="$BEFORE"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base="HEAD^" ;;
+          esac
+          git rev-parse --verify --quiet "$base^{commit}" >/dev/null || base="HEAD^"
+          old=$(git show "$base:$manifest" 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          if [ "$old" = "null" ]; then
+            old=""
+          fi
+          echo "comparing against $base"
           echo "old=$old"
           echo "new=$new"
           if [ "$new" != "$old" ]; then
