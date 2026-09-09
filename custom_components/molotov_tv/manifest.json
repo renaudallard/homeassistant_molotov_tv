@@ -1,11 +1,11 @@
 {
   "domain": "molotov_tv",
   "name": "Molotov TV",
-  "config_flow": true,
-  "documentation": "https://github.com/renaudallard/homeassistant_molotov_tv",
-  "requirements": ["pychromecast>=14.0.0"],
   "after_dependencies": ["http", "frontend"],
   "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/renaudallard/homeassistant_molotov_tv",
   "iot_class": "cloud_polling",
+  "requirements": ["pychromecast>=14.0.0"],
   "version": "0.2.4"
 }
