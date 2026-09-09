@@ -5,6 +5,8 @@
 # Molotov TV pour Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Validate](https://github.com/renaudallard/homeassistant_molotov_tv/actions/workflows/validate.yml/badge.svg)](https://github.com/renaudallard/homeassistant_molotov_tv/actions/workflows/validate.yml)
+[![hassfest](https://github.com/renaudallard/homeassistant_molotov_tv/actions/workflows/hassfest.yml/badge.svg)](https://github.com/renaudallard/homeassistant_molotov_tv/actions/workflows/hassfest.yml)
 [![License](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
 [![Maintenance](https://img.shields.io/badge/Maintenu%3F-oui-green.svg)](https://github.com/renaudallard/homeassistant_molotov_tv)
 
