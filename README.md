@@ -165,6 +165,7 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
     *   Position non sauvegardée si > 95% du contenu a été visionné.
 *   **Expiration :** Les positions sont automatiquement supprimées après 30 jours.
 *   **TV en direct :** La reprise ne s'applique pas au contenu en direct.
+*   **Sur les autres appareils :** Avec le récepteur personnalisé, la position est aussi envoyée à Molotov pendant la lecture (replay, enregistrements), ce qui tient à jour « Continuer à regarder » dans l'application Molotov et sur vos autres appareils.
 
 ## 🔒 Sécurité
 
@@ -172,6 +173,7 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 *   **HTTPS uniquement :** Toutes les communications avec l'API Molotov utilisent HTTPS.
 *   **Stockage sécurisé :** Les identifiants sont stockés via le système de configuration chiffré de Home Assistant.
 *   **Tokens en mémoire :** Les tokens d'accès et de rafraîchissement sont conservés uniquement en mémoire et ne sont pas persistés sur le disque.
+*   **Récepteur personnalisé :** Pour envoyer la position de lecture à Molotov, il reçoit le token d'accès de la session, et seulement pour une adresse de Molotov (fubo.tv ou molotov.tv). Il garde ce token, comme le jeton DRM, hors de l'état que le Chromecast donne aux autres appareils du réseau.
 
 ## 🏗️ Architecture
 

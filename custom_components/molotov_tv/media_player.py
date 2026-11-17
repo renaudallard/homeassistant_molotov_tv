@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 import json
 import logging
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
 from homeassistant.components.media_player import (
@@ -182,6 +182,17 @@ async def async_setup_entry(
     api: MolotovApi = data["api"]
     resume_store: ResumePositionStore = data["resume_store"]
     async_add_entities([MolotovTvMediaPlayer(entry, coordinator, api, resume_store)])
+
+
+def _is_backend_url(url: str) -> bool:
+    """Whether [url] is an https address of the backend, fubo.tv or molotov.tv."""
+
+    parts = urlparse(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and any(
+        host == domain or host.endswith("." + domain)
+        for domain in ("fubo.tv", "molotov.tv")
+    )
 
 
 class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayerEntity):
@@ -818,6 +829,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 if attrs["license_url"] and attrs["drm_token"]:
                     custom_data["license_url"] = attrs["license_url"]
                     custom_data["drm_token"] = attrs["drm_token"]
+                custom_data.update(self._playhead_custom_data(asset_data))
             else:
                 content_type = self._api.stream_content_type()
 
@@ -1888,6 +1900,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     _LOGGER.debug(
                         "Added DRM info to custom_data: %s", list(custom_data.keys())
                     )
+                custom_data.update(self._playhead_custom_data(asset_data))
 
             else:
                 cast_app_id = self._api.session_state.cast_app_id
@@ -2270,6 +2283,39 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         }
         if start_over:
             data["live_rewind_sec"] = int((now - window[0]).total_seconds())
+        return data
+
+    def _playhead_custom_data(self, asset_data: dict[str, Any]) -> dict[str, Any]:
+        """What the receiver needs to report how far the programme was watched.
+
+        The backend gives a playhead address and payload for on-demand content
+        and recordings, none for live; the receiver posts the position there as
+        it plays, which continue watching on every device is read from. It does
+        so with the session's token, sent along only for an address of the
+        backend's own.
+        """
+        playhead = asset_data.get("playhead")
+        if not isinstance(playhead, dict):
+            return {}
+        url = playhead.get("url")
+        payload = playhead.get("payload")
+        session = self._api.session_state
+        if not (
+            isinstance(url, str)
+            and _is_backend_url(url)
+            and isinstance(payload, dict)
+            and session.access_token
+        ):
+            return {}
+        data: dict[str, Any] = {
+            "playhead_url": url,
+            "playhead_payload": payload,
+            "access_token": session.access_token,
+        }
+        if session.profile_id:
+            data["profile_id"] = session.profile_id
+        if session.user_id:
+            data["user_id"] = session.user_id
         return data
 
     async def _async_channel_catch_up(
