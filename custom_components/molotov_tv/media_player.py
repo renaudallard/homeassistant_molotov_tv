@@ -50,9 +50,6 @@ from homeassistant.components.media_player import (
 from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.const import (
-    ATTR_ENTITY_ID,
-)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -2044,48 +2041,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         _LOGGER.warning("No cast entity found for host %s", host)
         return None
-
-    async def _async_call_cast_service(self, service: str, **kwargs: Any) -> None:
-        """Call a media_player service on the focused cast entity."""
-        session = self._focused_session
-        _LOGGER.debug(
-            "Control request: service=%s, active_target=%s",
-            service,
-            self._active_cast_target,
-        )
-
-        if not session:
-            _LOGGER.warning("No active cast session to control")
-            return
-
-        entity_id = session.entity_id
-        if not entity_id:
-            entity_id = self._find_cast_entity(session.host)
-            session.entity_id = entity_id
-            _LOGGER.debug("Re-found cast entity: %s", entity_id)
-
-        if not entity_id:
-            _LOGGER.warning("No cast entity to control (target=%s)", session.host)
-            return
-
-        state = self.hass.states.get(entity_id)
-        _LOGGER.debug(
-            "Cast entity state: %s (state=%s)",
-            entity_id,
-            state.state if state else "None",
-        )
-
-        if not state or state.state == "unavailable":
-            _LOGGER.warning("Cast entity %s is unavailable", entity_id)
-            return
-
-        service_data = {ATTR_ENTITY_ID: entity_id, **kwargs}
-        _LOGGER.debug("Calling media_player.%s with data: %s", service, service_data)
-        try:
-            await self.hass.services.async_call("media_player", service, service_data)
-            _LOGGER.debug("Service call completed successfully")
-        except Exception as err:
-            _LOGGER.error("Service call failed: %s", err)
 
     async def async_media_play(self) -> None:
         """Send play command to focused cast."""
