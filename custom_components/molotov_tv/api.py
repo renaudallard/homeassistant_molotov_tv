@@ -126,7 +126,7 @@ LARGE_RESPONSE_TIMEOUT = ClientTimeout(total=45, connect=10)
 
 # Retry configuration
 MAX_RETRIES = 3
-RETRY_STATUS_CODES = {502, 503, 504, 429}  # Gateway errors and rate limiting
+RETRY_STATUS_CODES = {502, 503, 504, 429}  # Gateway errors and rate limiting, GET only
 RETRY_DELAY_SECONDS = 1.0
 
 # Live guide window: how far ahead to fetch, and how many channels per page.
@@ -667,7 +667,13 @@ class MolotovApi:
                     )
                 # Decide whether to retry, but back off only after the response
                 # is released (below) so a pooled connection is not pinned.
-                if resp.status in RETRY_STATUS_CODES and _retries < MAX_RETRIES:
+                # Only a GET is sent again: a gateway error does not say whether
+                # a POST or PUT (a recording scheduled) reached the backend.
+                if (
+                    resp.status in RETRY_STATUS_CODES
+                    and method == "GET"
+                    and _retries < MAX_RETRIES
+                ):
                     _LOGGER.warning(
                         "Retryable error %s for %s %s, attempt %d/%d",
                         resp.status,
