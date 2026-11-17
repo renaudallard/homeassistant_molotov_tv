@@ -606,6 +606,32 @@ def _parse_papi_recording(component: Any, api: MolotovApi) -> BrowseAsset | None
     )
 
 
+def parse_papi_credits_start(data: Any) -> int | None:
+    """Return when an episode's credits start, in seconds, or None.
+
+    An episode page's player carries an end slate offering the next episode
+    from [position] seconds into the episode, as its credits roll. A film or
+    the last episode of a show has none.
+    """
+    player = _as_dict(_as_dict(_as_dict(data).get("content")).get("player"))
+    slate = _as_dict(player.get("end_slate"))
+    position = slate.get("position")
+    if (
+        not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or position <= 0
+    ):
+        return None
+    for action in slate.get("actions") or []:
+        action = _as_dict(action)
+        if (
+            action.get("type") == "show_video_slate"
+            and _as_dict(action.get("content")).get("type") == "up-next"
+        ):
+            return int(position)
+    return None
+
+
 def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     """Parse every card across a papi page's content.sections into BrowseAssets."""
     assets: list[BrowseAsset] = []

@@ -21,8 +21,9 @@ Mandatory header `x-application-id: molotov` (without it the backend returns
 `NO_SERVICE_FOR_SUBSCRIPTION`), plus the device set: `user-agent`,
 `x-client-version: 5.51.0`, `x-os: android`, `x-device-platform: android_phone`,
 `x-preferred-language: fr-FR`, `x-supported-streaming-protocols: hls,dash`,
-`x-drm-scheme: widevine`, `x-supported-features` (incl. `use_drm_v2_response`),
-and a stable `x-device-id`. Authenticated calls add `Authorization: Bearer` and
+`x-drm-scheme: widevine`, `x-supported-features` (incl. `use_drm_v2_response`,
+and `auto_play_up_next` for the end slate of an episode page), and a stable
+`x-device-id`. Authenticated calls add `Authorization: Bearer` and
 `x-profile-id`; `x-user-id` is sent **only** on `/vapi` playback calls.
 
 `x-device-name: Home Assistant` is the label the account lists the device under.
@@ -67,6 +68,11 @@ custom cast receiver through the existing `customData` keys (`stream_url`,
 (the receiver appends `assetId=` to the license URL only for the old Molotov
 endpoint, which would corrupt the final DRMtoday URL). Live tokens are short
 lived, so a fresh manifest is resolved via `/vapi` immediately before each play.
+
+For an episode, the programme page read beside `/vapi` gives
+`content.player.end_slate.position`, the second the next episode is announced
+as the credits roll. It goes to the receiver as `customData.credits_sec`, and a
+position past it is reported to the playhead as the full duration.
 The `heartbeat`/`concurrency` endpoints are analytics only and are not required
 to keep a stream alive.
 

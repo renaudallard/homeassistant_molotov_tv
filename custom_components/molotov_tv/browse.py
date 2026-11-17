@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import string
 from typing import Any
@@ -53,6 +54,7 @@ from .helpers import (
     encode_asset_payload,
     find_on_demand_copy,
     parse_papi_channel_replays,
+    parse_papi_credits_start,
     parse_papi_episodes,
     parse_papi_on_air,
     parse_papi_recordings,
@@ -60,6 +62,9 @@ from .helpers import (
 from .models import BrowseAsset
 
 _LOGGER = logging.getLogger(__name__)
+
+# How long a cast may wait on the episode page for where its credits start.
+CREDITS_LOOKUP_TIMEOUT = 3
 
 
 def build_root_browse() -> BrowseMedia:
@@ -491,6 +496,20 @@ async def async_fetch_recordings(
     assets = parse_papi_recordings(data, api)
     _LOGGER.debug("Found %d recordings", len(assets))
     return assets
+
+
+async def async_fetch_credits_start(api: MolotovApi, asset_url: str) -> int | None:
+    """Return when the credits of the episode [asset_url] plays start, if known."""
+    vod_id = api.vod_id(asset_url)
+    if vod_id is None:
+        return None
+    try:
+        async with asyncio.timeout(CREDITS_LOOKUP_TIMEOUT):
+            page = await api.async_get_program_details(vod_id)
+    except (MolotovApiError, TimeoutError) as err:
+        _LOGGER.debug("No credits start for %s: %s", vod_id, err)
+        return None
+    return parse_papi_credits_start(page)
 
 
 async def async_fetch_program_episodes(

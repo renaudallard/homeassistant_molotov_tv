@@ -60,6 +60,7 @@ from homeassistant.util import dt as dt_util
 from .api import MolotovApi, MolotovApiError
 from .browse import (
     async_fetch_channel_catch_up,
+    async_fetch_credits_start,
     async_fetch_program_episodes,
     async_fetch_recordings,
     build_assets_browse,
@@ -168,6 +169,8 @@ class CastSessionState:
     health_unsub: Any = None
     stream_id: str | None = None
     stream_data: dict | None = None
+    # When the episode's credits start (s): a stop past it counts as watched.
+    credits_sec: int | None = None
     player_state: MediaPlayerState = MediaPlayerState.IDLE
     tracks: dict = field(default_factory=dict)
     current_track_id: int | None = None
@@ -404,6 +407,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 session.position,
                 session.duration,
                 session.title,
+                session.credits_sec,
             )
 
         # Release stream slot
@@ -816,7 +820,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
             if use_custom:
                 # For the custom receiver, resolve the stream + DRM locally.
-                asset_data = await self._api.async_get_asset_stream(asset_url)
+                asset_data, credits_sec = await self._async_resolve_stream(asset_url)
                 attrs = self._extract_stream_attrs(asset_data)
                 stream_url = attrs["stream_url"]
                 if not stream_url:
@@ -828,7 +832,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 if attrs["license_url"] and attrs["drm_token"]:
                     custom_data["license_url"] = attrs["license_url"]
                     custom_data["drm_token"] = attrs["drm_token"]
-                custom_data.update(self._playhead_custom_data(asset_data))
+                custom_data.update(self._playhead_custom_data(asset_data, credits_sec))
             else:
                 content_type = self._api.stream_content_type()
 
@@ -852,6 +856,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 session.title = title
                 session.content_id = media_id
                 session.is_live = is_live
+                session.credits_sec = custom_data.get("credits_sec")
                 session.position = 0.0
                 session.duration = None
                 session.position_updated_at = dt_util.utcnow()
@@ -1899,7 +1904,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 app_id = CUSTOM_RECEIVER_APP_ID
 
                 _LOGGER.debug("Resolving asset stream locally for custom receiver...")
-                asset_data = await self._api.async_get_asset_stream(asset_url)
+                asset_data, credits_sec = await self._async_resolve_stream(asset_url)
 
                 attrs = self._extract_stream_attrs(asset_data)
                 stream_url = attrs["stream_url"]
@@ -1918,7 +1923,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     _LOGGER.debug(
                         "Added DRM info to custom_data: %s", list(custom_data.keys())
                     )
-                custom_data.update(self._playhead_custom_data(asset_data))
+                custom_data.update(self._playhead_custom_data(asset_data, credits_sec))
 
             else:
                 cast_app_id = self._api.session_state.cast_app_id
@@ -1959,6 +1964,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 title=title,
                 content_id=media_id,
                 is_live=is_live,
+                credits_sec=custom_data.get("credits_sec"),
                 position=0.0,
                 position_updated_at=dt_util.utcnow(),
                 connected=True,
@@ -2133,6 +2139,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         position,
                         duration,
                         session.title,
+                        session.credits_sec,
                     )
 
             await async_cast_stop(self.hass, session.host)
@@ -2303,14 +2310,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             data["live_rewind_sec"] = int((now - window[0]).total_seconds())
         return data
 
-    def _playhead_custom_data(self, asset_data: dict[str, Any]) -> dict[str, Any]:
+    async def _async_resolve_stream(
+        self, asset_url: str
+    ) -> tuple[dict[str, Any], int | None]:
+        """Resolve a playback reference, and when its credits start if known.
+
+        The episode page that says where the credits start is read beside the
+        stream, so a cast does not wait on one after the other.
+        """
+        return await asyncio.gather(
+            self._api.async_get_asset_stream(asset_url),
+            async_fetch_credits_start(self._api, asset_url),
+        )
+
+    def _playhead_custom_data(
+        self, asset_data: dict[str, Any], credits_sec: int | None
+    ) -> dict[str, Any]:
         """What the receiver needs to report how far the programme was watched.
 
         The backend gives a playhead address and payload for on-demand content
         and recordings, none for live; the receiver posts the position there as
         it plays, which continue watching on every device is read from. It does
         so with the session's token, sent along only for an address of the
-        backend's own.
+        backend's own. A position past [credits_sec] is reported as watched to
+        the end, as the official app does once the next episode is announced.
         """
         playhead = asset_data.get("playhead")
         if not isinstance(playhead, dict):
@@ -2334,6 +2357,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             data["profile_id"] = session.profile_id
         if session.user_id:
             data["user_id"] = session.user_id
+        if credits_sec:
+            data["credits_sec"] = credits_sec
         return data
 
     async def _async_channel_catch_up(

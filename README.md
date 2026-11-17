@@ -163,9 +163,10 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 *   **Critères de sauvegarde :**
     *   Position sauvegardée uniquement si > 60 secondes de visionnage.
     *   Position non sauvegardée si > 95% du contenu a été visionné.
+    *   Position non sauvegardée si l'épisode est arrêté pendant son générique de fin, une fois l'épisode suivant annoncé : il compte comme vu.
 *   **Expiration :** Les positions sont automatiquement supprimées après 30 jours.
 *   **TV en direct :** La reprise ne s'applique pas au contenu en direct.
-*   **Sur les autres appareils :** Avec le récepteur personnalisé, la position est aussi envoyée à Molotov pendant la lecture (replay, enregistrements), ce qui tient à jour « Continuer à regarder » dans l'application Molotov et sur vos autres appareils.
+*   **Sur les autres appareils :** Avec le récepteur personnalisé, la position est aussi envoyée à Molotov pendant la lecture (replay, enregistrements), ce qui tient à jour « Continuer à regarder » dans l'application Molotov et sur vos autres appareils. Un épisode laissé dans son générique de fin y est indiqué comme vu, comme le fait l'application officielle.
 
 ## 🔒 Sécurité
 

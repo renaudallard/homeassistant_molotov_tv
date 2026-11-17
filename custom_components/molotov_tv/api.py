@@ -269,6 +269,15 @@ class MolotovApi:
         id_parts = parts[2:-1] if start_over else parts[2:]
         return kind, ":".join(id_parts), start_over
 
+    @classmethod
+    def vod_id(cls, ref: str) -> str | None:
+        """Return the id of the on-demand item a playback reference plays."""
+
+        if not ref.startswith(_REF_PREFIX):
+            return None
+        kind, video_id, _start_over = cls._parse_asset_ref(ref)
+        return video_id if kind == "vod" and video_id else None
+
     def stream_content_type(self) -> str:
         """Return the default content type for cast playback."""
 

@@ -82,12 +82,14 @@ class ResumePositionStore:
         position: float,
         duration: float,
         title: str | None = None,
+        credits_sec: int | None = None,
     ) -> None:
         """Save playback position for content.
 
         Only saves if position meets criteria:
         - Position > RESUME_MIN_POSITION seconds
         - Position < RESUME_MAX_PERCENT of duration
+        - Position before credits_sec, where the episode's credits start
         """
         if not content_id:
             return
@@ -102,14 +104,15 @@ class ResumePositionStore:
             )
             return
 
-        # Don't save if nearly finished watching
-        if duration > 0 and (position / duration) >= RESUME_MAX_PERCENT:
+        # Don't save if nearly finished watching, or left in the credits
+        if (duration > 0 and (position / duration) >= RESUME_MAX_PERCENT) or (
+            credits_sec and position >= credits_sec
+        ):
             _LOGGER.debug(
-                "Not saving position %.1f/%.1f for %s (>= %.0f%% watched)",
+                "Not saving position %.1f/%.1f for %s (watched to the end)",
                 position,
                 duration,
                 content_id,
-                RESUME_MAX_PERCENT * 100,
             )
             # Clear any existing position since they finished
             await self.async_clear_position(content_id)
