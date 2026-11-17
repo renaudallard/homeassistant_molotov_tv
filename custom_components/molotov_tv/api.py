@@ -312,10 +312,16 @@ class MolotovApi:
         self._session_state.user_id = str(user_id)
         self._session_state.profile_id = str(profile_id)
 
-    async def async_refresh_token(self, force: bool = False) -> None:
-        """Renew the access token, signing in again if the refresh fails."""
+    async def async_refresh_token(
+        self, force: bool = False, used_token: str | None = None
+    ) -> None:
+        """Renew the access token, signing in again if the refresh fails.
 
-        token_before = self._session_state.access_token
+        [used_token] is the token a refused request carried: when the session
+        holds another one by now, it was renewed meanwhile and is kept.
+        """
+
+        token_before = used_token or self._session_state.access_token
         async with self._lock:
             # Another caller may have refreshed while we waited for the lock.
             if force and self._session_state.access_token != token_before:
@@ -614,6 +620,9 @@ class MolotovApi:
             if url_or_path.startswith("http")
             else urljoin(self._base_api_url, url_or_path)
         )
+        # The token this request carries, read before it goes out: by the time
+        # it is refused, another request may already have renewed the session.
+        used_token = self._session_state.access_token if auth else None
         req_headers = self.build_headers(auth=auth)
         if headers:
             req_headers.update(headers)
@@ -628,7 +637,7 @@ class MolotovApi:
                 timeout=timeout or DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status == 401 and auth and _retry:
-                    await self.async_refresh_token(force=True)
+                    await self.async_refresh_token(force=True, used_token=used_token)
                     return await self._do_request(
                         method,
                         url_or_path,
