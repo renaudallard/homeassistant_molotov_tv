@@ -146,6 +146,7 @@ _LOGGER = logging.getLogger(__name__)
 ASSET_CACHE_TTL = timedelta(minutes=5)
 CAST_DISCOVERY_TTL = timedelta(seconds=30)
 SEARCH_CACHE_TTL = timedelta(minutes=10)
+NO_RECORDING = "Aucun enregistrement disponible"
 
 
 @dataclass
@@ -661,9 +662,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             return await self._async_browse_cast_targets(data, media_content_id)
 
         if media_content_id.startswith(f"{MEDIA_RECORDING_PREFIX}:"):
-            return await self._async_browse_replay_or_episodes(
-                data, media_content_id, recordings_only=True
-            )
+            return await self._async_browse_recording(data, media_content_id)
 
         if media_content_id.startswith(f"{MEDIA_SEARCH_INPUT_PREFIX}:"):
             buffer = media_content_id.split(":", 1)[1]
@@ -1072,7 +1071,29 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             assets = await async_fetch_recordings(self._api)
             self._recording_cache = (dt_util.utcnow(), assets)
         return build_assets_browse(
-            "Enregistrements", MEDIA_RECORDINGS, MEDIA_RECORDING_PREFIX, assets
+            "Enregistrements",
+            MEDIA_RECORDINGS,
+            MEDIA_RECORDING_PREFIX,
+            assets,
+            NO_RECORDING,
+        )
+
+    async def _async_browse_recording(
+        self, data: EpgData, media_content_id: str
+    ) -> BrowseMedia:
+        """Browse a show's folder of recordings, or a recording's devices."""
+        payload = decode_asset_payload_from_media_id(media_content_id) or {}
+        folder = payload.get("folder")
+        if not isinstance(folder, str) or not folder:
+            return await self._async_browse_cast_targets(data, media_content_id)
+        assets = await async_fetch_recordings(self._api, folder)
+        title = payload.get("title")
+        return build_assets_browse(
+            title if isinstance(title, str) and title else "Enregistrements",
+            media_content_id,
+            MEDIA_RECORDING_PREFIX,
+            assets,
+            NO_RECORDING,
         )
 
     async def _async_browse_tonight_epg(self, data: EpgData) -> BrowseMedia:
@@ -1315,8 +1336,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self,
         data: EpgData,
         media_content_id: str,
-        *,
-        recordings_only: bool = False,
     ) -> BrowseMedia:
         """Browse replay - show episodes if program_id available, else cast targets."""
         payload = decode_asset_payload_from_media_id(media_content_id)
@@ -1348,7 +1367,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     program_id,
                     payload.get("title"),
                     payload.get("thumb"),
-                    recordings_only=recordings_only,
                 )
             else:
                 _LOGGER.debug(

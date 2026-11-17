@@ -41,7 +41,7 @@ import json
 import logging
 import random
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
 from homeassistant.util import dt as dt_util
@@ -447,36 +447,28 @@ class MolotovApi:
 
     # --- Recordings (DVR) -----------------------------------------------
 
-    async def async_get_all_recordings(self) -> list[dict[str, Any]]:
-        """Fetch DVR recordings, merging the recorded and scheduled statuses.
+    async def async_get_recordings(self) -> dict[str, Any]:
+        """Fetch the recordings page of "Mes vidéos".
 
-        status=all returns an empty body, so each status is fetched separately
-        and merged, deduped by asset id. An account without a DVR quota returns
-        400, which surfaces here as an empty list.
+        It holds one card per show, linking the folder of its recorded
+        episodes, and one per recording that belongs to no show. The DVR list
+        that served this before answers 404 since November 2026.
         """
 
         await self.async_ensure_logged_in()
-        merged: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for status in ("recorded", "scheduled"):
-            try:
-                data = await self._request(
-                    "GET",
-                    "dvr/v2/list",
-                    auth=True,
-                    params={"sort": "date", "status": status},
-                )
-            except MolotovApiError as err:
-                _LOGGER.debug("DVR list (%s) failed: %s", status, err)
-                continue
-            for entry in data.get("response") or []:
-                asset_id = _dvr_entry_asset_id(entry)
-                if asset_id is not None:
-                    if asset_id in seen:
-                        continue
-                    seen.add(asset_id)
-                merged.append(entry)
-        return merged
+        return await self._request(
+            "GET", "papi/v1/my-stuff/status/recordings", auth=True
+        )
+
+    async def async_get_recordings_folder(self, series_id: str) -> dict[str, Any]:
+        """Fetch the folder of a show's recordings: one row per episode."""
+
+        await self.async_ensure_logged_in()
+        return await self._request(
+            "GET",
+            f"papi/v1/my-stuff/folder/seriesId/{quote(series_id, safe='')}",
+            auth=True,
+        )
 
     async def async_add_recording(
         self, asset_id: str, is_upcoming: bool = False
@@ -738,17 +730,3 @@ class MolotovApi:
             raise MolotovApiError(
                 f"Backend API request failed: {method} {url}"
             ) from err
-
-
-def _dvr_entry_asset_id(entry: dict[str, Any]) -> str | None:
-    """Return the dvr asset id of a /dvr/v2/list entry, for deduping."""
-
-    data = entry.get("data") if isinstance(entry, dict) else None
-    if not isinstance(data, dict):
-        return None
-    for asset in data.get("assets") or []:
-        if isinstance(asset, dict) and asset.get("type") == "dvr":
-            asset_id = asset.get("assetId")
-            if asset_id:
-                return str(asset_id)
-    return None

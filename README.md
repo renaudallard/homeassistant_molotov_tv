@@ -19,7 +19,7 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 *   **📺 TV en direct & EPG :** Parcourez toutes vos chaînes avec des guides de programmes en temps réel.
 *   **▶️ En direct :** Accédez rapidement à ce qui est diffusé en ce moment.
 *   **⏪ Replay & VOD :** Accédez à la télévision de rattrapage (Catch-up TV) et au contenu de vidéo à la demande associés à vos chaînes. Quand le programme en cours sur une chaîne est aussi disponible à la demande, la chaîne propose en tête « ⏮ Replay depuis le début », qui le lit depuis sa première minute, même s'il avait été commencé.
-*   **📼 Enregistrements :** Visualisez et lisez vos enregistrements dans le cloud, et programmez l'enregistrement d'un programme en direct depuis le navigateur (option « Programmer l'enregistrement », nécessite un quota DVR).
+*   **📼 Enregistrements :** Visualisez et lisez vos enregistrements dans le cloud, rangés par émission comme dans « Mes vidéos », et programmez l'enregistrement d'un programme en direct depuis le navigateur (option « Programmer l'enregistrement », nécessite un quota DVR).
 *   **🔒 Contenu réservé :** Les chaînes et programmes réservés à l'option payante « Molotov Extra » apparaissent grisés et non lisibles.
 *   **🔍 Recherche avancée :**
     *   **Entité Texte :** Tapez votre recherche directement depuis le tableau de bord.
@@ -85,7 +85,7 @@ Cliquez sur **Configurer** sur l'entrée de l'intégration pour accéder aux par
     *   **Recherche :** Utilisez la barre de recherche du navigateur de médias ou le clavier virtuel du dossier **Recherche** pour trouver du contenu.
     *   **En direct :** Voir les programmes en cours de diffusion.
     *   **Chaînes :** Parcourir la liste de toutes les chaînes.
-    *   **Enregistrements :** Accéder à vos bookmarks.
+    *   **Enregistrements :** Accéder à vos enregistrements, rangés par émission.
 4.  Cliquez sur un programme pour voir les détails et les options de lecture.
 
 ### Recherche via Entité
@@ -98,7 +98,7 @@ Une entité `text.molotov_tv_recherche` (ou similaire selon le nom de votre conf
 L'intégration ajoute automatiquement une entrée **Molotov TV** dans la barre latérale de Home Assistant. Ce panneau offre :
 *   **Onglet Direct :** Liste des chaînes avec le programme en cours et les horaires (EPG).
 *   **Onglet Ce soir :** Guide des programmes de la soirée par chaîne avec indicateur de direct. Affiche les programmes commençant entre 20h et minuit, ainsi que ceux commençant avant 20h s'ils se terminent après 21h. En journée, affiche les ~30 chaînes couvertes par l'EPG. Pendant le prime time (à partir de 20h), les programmes en cours de toutes les chaînes abonnées s'ajoutent automatiquement.
-*   **Onglet Enregistrements :** Accédez à vos bookmarks avec affichage de tous les épisodes disponibles pour chaque émission.
+*   **Onglet Enregistrements :** Vos enregistrements, rangés par émission comme dans « Mes vidéos » : une émission s'ouvre sur ses épisodes enregistrés, un enregistrement seul se lit directement.
 *   **Replay par chaîne :** Cliquez sur le bouton "Replay" d'une chaîne pour voir et lire les programmes disponibles en replay.
 *   **Recherche intégrée :** Barre de recherche pour trouver du contenu avec affichage des épisodes disponibles.
 *   **Sélecteur Chromecast :** Choisissez la cible de lecture (cet appareil ou un Chromecast) directement depuis l'en-tête.

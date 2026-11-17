@@ -46,7 +46,7 @@ app does the same thing with a UUID it keeps in its `DEVICE_PREFS` store.
 | Live guide | `GET /epg?startTime&endTime` (RFC3339 UTC) `&limit&ignoreEmpty=true` |
 | Search | `GET /papi/v1/search/content?category=top_results&fuzzy=true&query=` |
 | Detail / replays / episodes | `GET /papi/v1/program-details/{channel\|program\|series}/{id}` (`?tabID=id-tab-watch-now` for a series' episodes) |
-| Recordings | `GET /dvr/v2/list?sort=date&status={recorded\|scheduled}` (merge; `status=all` is empty) |
+| Recordings | `GET /papi/v1/my-stuff/status/recordings` ("Mes vidéos": a card per show linking `my-stuff/folder/seriesId/{id}`, or per recording linking `program-details/program/LIVE_…`), then `GET /papi/v1/my-stuff/folder/seriesId/{id}` for a show's recorded episodes. `/dvr/v2/list` answers 404 since November 2026 |
 | Playback | `GET /vapi/asset/v1?channelId=&type=live` or `?id=&type={vod\|dvr}` |
 
 `/papi` pages are server-driven: `content.sections[].components[]` cards carry an
@@ -72,12 +72,12 @@ to keep a stream alive.
 
 ## Module mapping
 
-- `api.py` — the Fubo HTTP client (auth, `/epg`, `/papi`, `/vapi`, `/dvr`) over a
+- `api.py` — the Fubo HTTP client (auth, `/epg`, `/papi`, `/vapi`) over a
   provider-agnostic transport (single 401 refresh-and-retry, 5xx/429 backoff).
 - `coordinator.py` — one `/epg` fetch → `EpgData`.
 - `helpers.py` — `parse_fubo_epg`, the papi card parser
   (`parse_papi_card`/`parse_papi_sections`/`parse_papi_search`),
-  `parse_papi_episodes`, `parse_papi_channel_replays`, `parse_fubo_recordings`,
+  `parse_papi_episodes`, `parse_papi_channel_replays`, `parse_papi_recordings`,
   and the RFC3339 branch of `parse_timestamp`.
 - `media_player.py` — resolves playback via `/vapi` and builds the receiver
   `customData` (`_extract_stream_attrs`).

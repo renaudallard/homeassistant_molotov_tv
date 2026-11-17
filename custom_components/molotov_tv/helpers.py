@@ -142,7 +142,7 @@ def parse_timestamp(value: Any) -> datetime | None:
         if text.isdigit():
             value = int(text)
         elif text:
-            # Fubo /epg and /dvr emit RFC3339 UTC strings (2026-06-13T19:10:00Z).
+            # Fubo /epg emits RFC3339 UTC strings (2026-06-13T19:10:00Z).
             parsed = dt_util.parse_datetime(text)
             if parsed is None:
                 return None
@@ -292,6 +292,7 @@ _PAPI_CHANNEL_RE = re.compile(r"program-details/channel/(\d+)")
 _PAPI_CHANNEL_DETAILS_RE = re.compile(r"channel-details/(\d+)")
 _PAPI_PROGRAM_RE = re.compile(r"program-details/program/([\w-]+)")
 _PAPI_SERIES_RE = re.compile(r"program-details/series/([\w-]+)")
+_PAPI_RECORDINGS_FOLDER_RE = re.compile(r"my-stuff/folder/seriesId/([\w-]+)")
 # UI chrome components carry no playable content; skip them.
 _PAPI_SKIP_TYPES = frozenset(
     {
@@ -544,47 +545,65 @@ def parse_papi_channel_replays(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     return assets
 
 
-def parse_fubo_recordings(entries: Any, api: MolotovApi) -> list[BrowseAsset]:
-    """Parse /dvr/v2/list entries (programWithAssets) into playable recordings."""
+def parse_papi_recordings(data: Any, api: MolotovApi) -> list[BrowseAsset]:
+    """Parse a "Mes vidéos" recordings page or a show's folder of recordings.
+
+    A card linking my-stuff/folder/seriesId/{id} is the folder of a show's
+    recorded episodes ("14 épisodes"); one linking program-details/program/
+    LIVE_... is a recording, played from the DVR. A folder's rows say when
+    each was recorded ("Enregistré: 30 sept.").
+    """
     assets: list[BrowseAsset] = []
-    if not isinstance(entries, list):
-        return assets
-    for entry in entries:
-        data = entry.get("data") if isinstance(entry, dict) else None
-        if not isinstance(data, dict):
-            continue
-        program = data.get("program")
-        if not isinstance(program, dict):
-            continue
-        dvr_asset = None
-        for asset in data.get("assets") or []:
-            if isinstance(asset, dict) and asset.get("type") == "dvr":
-                dvr_asset = asset
-                break
-        if dvr_asset is None:
-            continue
-        asset_id = dvr_asset.get("assetId")
-        if not asset_id:
-            continue
-        asset_id = str(asset_id)
-        channel = _as_dict(dvr_asset.get("channel"))
-        title = program.get("heading") or program.get("title") or asset_id
-        assets.append(
-            BrowseAsset(
-                # A recording is one captured airing, so it plays directly.
-                title=title,
-                asset_url=api.build_asset_url("recording", asset_id),
-                asset_type="dvr",
-                episode_id=asset_id,
-                episode_title=program.get("subheading"),
-                description=program.get("shortDescription"),
-                thumbnail=program.get("horizontalImage")
-                or program.get("verticalImage"),
-                channel_id=str(channel.get("id")) if channel.get("id") else None,
-                program_id=program.get("programId"),
-            )
-        )
+    content = _as_dict(_as_dict(data).get("content"))
+    for section in content.get("sections") or []:
+        for component in _as_dict(section).get("components") or []:
+            asset = _parse_papi_recording(component, api)
+            if asset is not None:
+                assets.append(asset)
     return assets
+
+
+def _parse_papi_recording(component: Any, api: MolotovApi) -> BrowseAsset | None:
+    if not isinstance(component, dict):
+        return None
+    if str(component.get("type") or "") in _PAPI_SKIP_TYPES:
+        return None
+    action_url = _papi_action_url(component)
+    if not action_url:
+        return None
+    path = action_url.split("?", 1)[0]
+    footer = _as_dict(component.get("footer"))
+    label = (
+        _papi_text(component.get("title"))
+        or _papi_text(footer.get("title"))
+        or _trk_title(action_url)
+    )
+    subtitle = _papi_text(footer.get("subtitle")) or _papi_text(component.get("info"))
+    image = _papi_image(component)
+    match = _PAPI_RECORDINGS_FOLDER_RE.search(path)
+    if match:
+        folder_id = match.group(1)
+        return BrowseAsset(
+            title=label or folder_id,
+            asset_url="",
+            asset_type="recording_folder",
+            program_id=folder_id,
+            episode_title=subtitle,
+            thumbnail=image,
+        )
+    match = _PAPI_PROGRAM_RE.search(path)
+    if match is None or not match.group(1).startswith("LIVE_"):
+        return None
+    asset_id = match.group(1)
+    return BrowseAsset(
+        # A recording is one captured airing, so it plays directly.
+        title=label or asset_id,
+        asset_url=api.build_asset_url("recording", asset_id),
+        asset_type="dvr",
+        episode_id=asset_id,
+        episode_title=subtitle,
+        thumbnail=image,
+    )
 
 
 def parse_papi_sections(data: Any, api: MolotovApi) -> list[BrowseAsset]:
@@ -623,15 +642,6 @@ def parse_papi_search(data: Any, api: MolotovApi) -> list[BrowseAsset]:
             seen.add(key)
         unique.append(asset)
     return unique
-
-
-def sort_assets(assets: list[BrowseAsset]) -> list[BrowseAsset]:
-    """Sort assets by start date, newest first."""
-    assets.sort(
-        key=lambda asset: asset.start or asset.end or dt_util.utc_from_timestamp(0),
-        reverse=True,
-    )
-    return assets
 
 
 # --- Cast discovery helpers ---

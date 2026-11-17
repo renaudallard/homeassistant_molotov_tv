@@ -1529,6 +1529,8 @@ class MolotovPanel extends LitElement {
             title: item.title,
             thumbnail: item.thumbnail,
             description: payload?.desc || null,
+            // A show's folder of recorded episodes, not a recording itself.
+            isFolder: Boolean(payload?.folder),
           };
         });
         console.log(`[Molotov Panel] Loaded ${this._recordings.length} recordings`);
@@ -1543,11 +1545,10 @@ class MolotovPanel extends LitElement {
     this._loadingRecordings = false;
     this.requestUpdate();
 
-    // Pre-fetch episodes for all recordings in parallel so we know counts
-    if (this._recordings.length > 0) {
-      await Promise.all(
-        this._recordings.map((rec) => this._fetchRecordingEpisodes(rec))
-      );
+    // Pre-fetch the episodes of every folder in parallel so we know counts
+    const folders = this._recordings.filter((rec) => rec.isFolder);
+    if (folders.length > 0) {
+      await Promise.all(folders.map((rec) => this._fetchRecordingEpisodes(rec)));
       this.requestUpdate();
     }
   }
@@ -1651,6 +1652,11 @@ class MolotovPanel extends LitElement {
       return;
     }
 
+    if (!recording.isFolder) {
+      await this._playRecordingDirectly(recording);
+      return;
+    }
+
     // Fetch episodes if not cached
     if (!this._recordingEpisodes[recordingId]) {
       await this._fetchRecordingEpisodes(recording);
@@ -1734,7 +1740,7 @@ class MolotovPanel extends LitElement {
       });
 
       if (result && result.children) {
-        const episodes = this._parseEpisodeChildren(result.children, { allowCast: true });
+        const episodes = this._parseEpisodeChildren(result.children);
 
         this._recordingEpisodes = { ...this._recordingEpisodes, [recordingId]: episodes };
         console.log(`[Molotov Panel] Found ${episodes.length} episodes for recording "${recording.title}"`);
@@ -1809,12 +1815,12 @@ class MolotovPanel extends LitElement {
     return this._selectedTarget === "local";
   }
 
-  _parseEpisodeChildren(children, { allowCast = false } = {}) {
+  _parseEpisodeChildren(children) {
     return children
       .filter((item) =>
         item.media_content_id.startsWith("episode:") ||
         item.media_content_id.startsWith("replay:") ||
-        (allowCast && item.media_content_id.startsWith("cast:")) ||
+        item.media_content_id.startsWith("recording:") ||
         item.can_play
       )
       .map((item) => {
@@ -3263,7 +3269,7 @@ class MolotovPanel extends LitElement {
     const episodes = this._recordingEpisodes[recordingId] || [];
     const isLoadingEpisodes = this._loadingRecordingEpisodes[recordingId];
     const hasFetched = this._recordingEpisodes[recordingId] !== undefined;
-    const isSingleEpisode = hasFetched && episodes.length <= 1;
+    const isSingleEpisode = !recording.isFolder || (hasFetched && episodes.length <= 1);
 
     return html`
       <div class="search-result-row">

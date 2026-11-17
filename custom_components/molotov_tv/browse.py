@@ -52,11 +52,10 @@ from .models import EpgData
 from .helpers import (
     encode_asset_payload,
     find_on_demand_copy,
-    parse_fubo_recordings,
     parse_papi_channel_replays,
     parse_papi_episodes,
     parse_papi_on_air,
-    sort_assets,
+    parse_papi_recordings,
 )
 from .models import BrowseAsset
 
@@ -157,6 +156,21 @@ def _asset_to_browse_child(asset: BrowseAsset, prefix: str) -> BrowseMedia:
             thumbnail=asset.thumbnail or asset.poster,
         )
 
+    if asset.asset_type == "recording_folder":
+        # A show's folder of recordings, browsed into for its episodes.
+        folder = encode_asset_payload(
+            {"folder": asset.program_id, "title": asset.title, "thumb": asset.thumbnail}
+        )
+        return BrowseMedia(
+            title=display_title,
+            media_class=MediaClass.TV_SHOW,
+            media_content_id=f"{prefix}:{folder}",
+            media_content_type="directory",
+            can_play=False,
+            can_expand=True,
+            thumbnail=asset.thumbnail,
+        )
+
     is_container = (
         (
             asset.asset_type in ("program", "serie")
@@ -208,8 +222,9 @@ def build_assets_browse(
     content_id: str,
     prefix: str,
     assets: list[BrowseAsset],
+    empty: str | None = None,
 ) -> BrowseMedia:
-    """Build a browse list from assets."""
+    """Build a browse list from assets, saying [empty] when there are none."""
     children: list[BrowseMedia] = [
         _asset_to_browse_child(asset, prefix) for asset in assets
     ]
@@ -217,7 +232,7 @@ def build_assets_browse(
     if not children:
         children.append(
             BrowseMedia(
-                title=f"Aucun {title.lower()} disponible",
+                title=empty or f"Aucun {title.lower()} disponible",
                 media_class=MediaClass.DIRECTORY,
                 media_content_id=MEDIA_ROOT,
                 media_content_type="directory",
@@ -461,18 +476,21 @@ def episode_browse_child(
     )
 
 
-async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
-    """Fetch all DVR recordings."""
-    assets: list[BrowseAsset] = []
-
+async def async_fetch_recordings(
+    api: MolotovApi, folder_id: str | None = None
+) -> list[BrowseAsset]:
+    """Fetch the recordings, or those in the folder of one show."""
     try:
-        entries = await api.async_get_all_recordings()
-        assets = parse_fubo_recordings(entries, api)
+        if folder_id is None:
+            data = await api.async_get_recordings()
+        else:
+            data = await api.async_get_recordings_folder(folder_id)
     except MolotovApiError as err:
-        _LOGGER.debug("Failed to fetch recordings: %s", err)
-
+        _LOGGER.warning("Failed to fetch recordings: %s", err)
+        return []
+    assets = parse_papi_recordings(data, api)
     _LOGGER.debug("Found %d recordings", len(assets))
-    return sort_assets(assets)
+    return assets
 
 
 async def async_fetch_program_episodes(
@@ -481,8 +499,6 @@ async def async_fetch_program_episodes(
     program_id: str,
     title: str | None,
     thumbnail: str | None,
-    *,
-    recordings_only: bool = False,
 ) -> BrowseMedia:
     """Fetch and display all episodes for a series."""
     children: list[BrowseMedia] = []
