@@ -20,7 +20,10 @@
     },
     "error": {
       "cannot_connect": "Échec de la connexion à Molotov.",
-      "invalid_auth": "Email ou mot de passe invalide."
+      "invalid_auth": "Email ou mot de passe invalide.",
+      "unavailable_here": "Molotov refuse le service depuis cette connexion (pays hors de sa zone, VPN ou abonnement sans ce service) : {message}",
+      "account_blocked": "Ce compte Molotov est bloqué : {message}",
+      "sign_in_refused": "Molotov a refusé la connexion : {message}"
     },
     "abort": {
       "reauth_successful": "Ré-authentification réussie."

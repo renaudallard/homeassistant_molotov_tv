@@ -53,6 +53,30 @@ from .helpers import async_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
+# The backend error code that alone means a wrong email or password: it also
+# answers 401 for an expired session, an expired two-factor code and more.
+WRONG_CREDENTIALS = "INVALID_USERNAME_PASSWORD"
+
+
+def _sign_in_error(err: MolotovApiError) -> tuple[str, str]:
+    """Return the form error key for a failed sign-in, and the backend's words.
+
+    The backend's own message comes in the language asked for (French), and
+    says more than a guess would: it is shown where the backend gave one.
+    """
+
+    said = err.user_message or err.code or (f"HTTP {err.status}" if err.status else "")
+    if err.status == 451:
+        # Region, VPN or subscription: the service is refused from here.
+        return "unavailable_here", said
+    if err.status == 403:
+        return "account_blocked", said
+    if isinstance(err, MolotovAuthError):
+        if err.code in (None, WRONG_CREDENTIALS):
+            return "invalid_auth", said
+        return "sign_in_refused", said
+    return "cannot_connect", said
+
 
 class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Molotov TV."""
@@ -61,17 +85,18 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict | None = None):
         errors: dict[str, str] = {}
+        said = ""
 
         if user_input is not None:
             try:
                 await _async_validate_input(self.hass, user_input)
             except MolotovAuthError as err:
-                errors["base"] = "invalid_auth"
+                errors["base"], said = _sign_in_error(err)
                 _LOGGER.warning(
                     "Molotov authentication failed during config flow: %s", err
                 )
             except MolotovApiError as err:
-                errors["base"] = "cannot_connect"
+                errors["base"], said = _sign_in_error(err)
                 _LOGGER.exception(
                     "Molotov API error during config flow validation: %s",
                     err,
@@ -101,6 +126,7 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
+            description_placeholders={"message": said},
             errors=errors,
         )
 
@@ -111,6 +137,7 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(self, user_input: dict | None = None):
         """Prompt for the password and update the existing entry."""
         errors: dict[str, str] = {}
+        said = ""
         reauth_entry = self._get_reauth_entry()
         email = reauth_entry.data.get(CONF_EMAIL, "")
 
@@ -119,10 +146,10 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 await _async_validate_input(self.hass, data)
             except MolotovAuthError as err:
-                errors["base"] = "invalid_auth"
+                errors["base"], said = _sign_in_error(err)
                 _LOGGER.warning("Molotov re-authentication failed: %s", err)
             except MolotovApiError as err:
-                errors["base"] = "cannot_connect"
+                errors["base"], said = _sign_in_error(err)
                 _LOGGER.exception("Molotov API error during reauth: %s", err)
             else:
                 return self.async_update_reload_and_abort(reauth_entry, data=data)
@@ -130,7 +157,7 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
-            description_placeholders={"email": email},
+            description_placeholders={"email": email, "message": said},
             errors=errors,
         )
 

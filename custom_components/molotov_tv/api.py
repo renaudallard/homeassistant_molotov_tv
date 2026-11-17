@@ -160,9 +160,13 @@ class MolotovApiError(Exception):
         message: str,
         user_message: str | None = None,
         code: str | None = None,
+        status: int | None = None,
     ) -> None:
         super().__init__(message)
         self.user_message = user_message
+        # The HTTP status, which tells a region block (451) or a blocked
+        # account (403) from a failure to reach the backend.
+        self.status = status
         # The backend error code, e.g. INVALID_USERNAME_PASSWORD. Only one of
         # the codes the backend answers 401 with actually means a wrong
         # password, so keep it for callers and for the logs.
@@ -659,6 +663,7 @@ class MolotovApi:
                         + (f": {user_message}" if user_message else ""),
                         user_message=user_message,
                         code=code,
+                        status=401,
                     )
                 # Decide whether to retry, but back off only after the response
                 # is released (below) so a pooled connection is not pinned.
@@ -692,6 +697,7 @@ class MolotovApi:
                         + (f": {error_body}" if error_body else ""),
                         user_message=user_message,
                         code=code,
+                        status=resp.status,
                     )
                 else:
                     return await reader(resp)
