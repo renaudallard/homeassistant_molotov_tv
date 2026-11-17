@@ -26,7 +26,7 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
     *   **Clavier virtuel :** Naviguez et recherchez directement dans le navigateur de médias.
 *   **📲 Casting :** Castez en toute fluidité vers les appareils Chromecast avec prise en charge de :
     *   **Récepteur officiel :** Utilise le récepteur natif de Molotov pour une prise en charge complète des DRM (TV en direct).
-    *   **Récepteur Arnor :** Récepteur personnalisé de secours, utilisé uniquement si le streamer natif Molotov est indisponible.
+    *   **Récepteur Arnor :** Récepteur personnalisé de secours, utilisé uniquement si le streamer natif Molotov est indisponible. Un programme en cours choisi dans le guide y démarre depuis son début, celui où il a réellement commencé (dans la limite des quatre heures de rembobinage du direct), et sa barre de lecture montre le programme à l'écran, en direct comme depuis le début.
 *   **💻 Lecture locale :** Regardez directement dans Home Assistant via le panneau latéral dédié avec lecteur dash.js intégré.
 *   **🔄 Auto-découverte :** Trouve automatiquement les appareils Chromecast sur votre réseau.
 *   **🇫🇷 Audio en français :** La piste audio française (VF) est sélectionnée par défaut lorsqu'elle est disponible.

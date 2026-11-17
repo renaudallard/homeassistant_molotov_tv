@@ -795,7 +795,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         try:
             asset_url, title, is_live = self._build_cast_request(media_id)
-            custom_data = self._build_cast_custom_data(asset_url)
+            custom_data = self._build_cast_custom_data(media_id)
 
             use_custom = (receiver_type == "custom") and (
                 CUSTOM_RECEIVER_APP_ID is not None
@@ -1846,7 +1846,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
 
             asset_url, title, is_live = self._build_cast_request(media_id)
-            custom_data = self._build_cast_custom_data(asset_url)
+            custom_data = self._build_cast_custom_data(media_id)
 
             use_custom = (receiver_type == "custom") and (
                 CUSTOM_RECEIVER_APP_ID is not None
@@ -2266,12 +2266,40 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         raise HomeAssistantError("Unsupported media identifier")
 
-    def _build_cast_custom_data(self, asset_url: str) -> dict[str, Any]:
-        # The receiver needs only stream_url/content_type and, for DRM, the
+    def _build_cast_custom_data(self, media_id: str) -> dict[str, Any]:
+        # The receiver needs stream_url/content_type and, for DRM, the
         # license_url + drm_token. Those are filled in by the cast path once the
         # manifest is resolved via /vapi; Fubo requires none of the old Molotov
         # session fields (version, molotov_agent, refresh_token, cast_connect).
-        return {}
+        # For live TV it also takes the air-window of the programme on screen,
+        # for its programme bar, and how far behind the live point to start.
+        now = dt_util.utcnow()
+        window: tuple[datetime, datetime] | None = None
+        start_over = False
+        if media_id.startswith(f"{MEDIA_PROGRAM_PREFIX}:"):
+            # A programme picked while it airs plays from its beginning. Its
+            # times come from the guide, which has when it really began, where
+            # the stream's own window starts with the planned slot.
+            parts = media_id.split("|", 1)[0].split(":")
+            if len(parts) == 4:
+                start = dt_util.utc_from_timestamp(int(parts[2]))
+                end = dt_util.utc_from_timestamp(int(parts[3]))
+                window = (start, end)
+                start_over = start < now <= end
+        elif media_id.startswith(f"{MEDIA_LIVE_PREFIX}:"):
+            channel = find_channel(self.coordinator.data, media_id.split(":", 1)[1])
+            program = find_current_program(channel, now) if channel else None
+            if program:
+                window = (program.start, program.end)
+        if window is None:
+            return {}
+        data: dict[str, Any] = {
+            "program_start_ms": int(window[0].timestamp() * 1000),
+            "program_end_ms": int(window[1].timestamp() * 1000),
+        }
+        if start_over:
+            data["live_rewind_sec"] = int((now - window[0]).total_seconds())
+        return data
 
     def _get_cached_replay(self, channel_id: str) -> list[BrowseAsset] | None:
         cached = self._replay_cache.get(channel_id)
