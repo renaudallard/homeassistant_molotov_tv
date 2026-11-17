@@ -472,6 +472,58 @@ def parse_papi_episodes(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     return episodes
 
 
+def _on_click_urls(node: Any) -> list[str]:
+    actions = _as_dict(_as_dict(node).get("actions"))
+    urls: list[str] = []
+    for item in actions.get("on_click") or []:
+        url = _as_dict(_as_dict(item).get("endpoint")).get("url")
+        if isinstance(url, str) and url:
+            urls.append(url)
+    return urls
+
+
+def parse_papi_on_air(data: Any) -> tuple[str, str] | None:
+    """Return the name and show id of what airs, from a channel detail page.
+
+    The name is the episode label the page gives ("S26 E16 Dans le coma"), or
+    the title of a programme that is no episode; the show is the one of its
+    "Détails du programme" link. The recommendation rows of the page link
+    other shows (tagged trkOriginComponent=section-), so they are passed over.
+    """
+    content = _as_dict(_as_dict(data).get("content"))
+    meta = _as_dict(content.get("metadata"))
+    name = _papi_text(meta.get("subtitle")) or _papi_text(meta.get("title"))
+    if not name:
+        return None
+    urls: list[str] = []
+    for cta in meta.get("ctas") or []:
+        for item in _as_dict(cta).get("action_items") or []:
+            urls.extend(_on_click_urls(item))
+    for section in content.get("sections") or []:
+        for component in _as_dict(section).get("components") or []:
+            urls.extend(_on_click_urls(component))
+    for url in urls:
+        if "trkOriginComponent=section-" in url:
+            continue
+        match = _PAPI_SERIES_RE.search(url)
+        if match:
+            return name, match.group(1)
+    return None
+
+
+def find_on_demand_copy(episodes: list[BrowseAsset], name: str) -> BrowseAsset | None:
+    """Return the on-demand episode of a show that goes by [name], if any.
+
+    A show's episodes list the airing on now as well, under the same name: an
+    airing (an id in LIVE_) is no copy of itself.
+    """
+    for episode in episodes:
+        program_id = episode.program_id or ""
+        if episode.title == name and program_id and not program_id.startswith("LIVE_"):
+            return episode
+    return None
+
+
 def parse_papi_channel_replays(data: Any, api: MolotovApi) -> list[BrowseAsset]:
     """Parse the 'En replay' catch-up section of a channel detail page."""
     assets: list[BrowseAsset] = []

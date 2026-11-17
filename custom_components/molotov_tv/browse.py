@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import string
+from typing import Any
 
 from homeassistant.components.media_player import BrowseMedia, MediaClass
 
@@ -50,9 +51,11 @@ from .const import (
 from .models import EpgData
 from .helpers import (
     encode_asset_payload,
+    find_on_demand_copy,
     parse_fubo_recordings,
     parse_papi_channel_replays,
     parse_papi_episodes,
+    parse_papi_on_air,
     sort_assets,
 )
 from .models import BrowseAsset
@@ -389,22 +392,73 @@ def build_search_input_browse(buffer: str) -> BrowseMedia:
     )
 
 
-async def async_fetch_channel_replays(
-    api: MolotovApi, channel_id: str, epg_data: EpgData | None
-) -> list[BrowseAsset]:
-    """Fetch replays (catch-up) for a channel from its detail page.
+async def async_fetch_channel_catch_up(
+    api: MolotovApi, channel_id: str
+) -> tuple[list[BrowseAsset], BrowseAsset | None]:
+    """Fetch a channel's replays, and the on-demand copy of what airs on it.
 
     The channel detail page carries an "En replay sur ..." card section whose
-    cards are catch-up programmes and series, resolved as VOD like episodes.
+    cards are catch-up programmes and series, resolved as VOD like episodes. It
+    also names the programme on air and its show, whose on-demand episodes may
+    hold that programme already, to watch from its beginning.
     """
     try:
         data = await api.async_get_program_details(channel_id, kind="channel", tab=None)
-        assets = parse_papi_channel_replays(data, api)
-        _LOGGER.debug("Found %d replays for channel %s", len(assets), channel_id)
-        return assets
     except MolotovApiError as err:
         _LOGGER.debug("Failed to fetch channel replays for %s: %s", channel_id, err)
-        return []
+        return [], None
+    assets = parse_papi_channel_replays(data, api)
+    _LOGGER.debug("Found %d replays for channel %s", len(assets), channel_id)
+    on_air = parse_papi_on_air(data)
+    if on_air is None:
+        return assets, None
+    name, series_id = on_air
+    try:
+        episodes = parse_papi_episodes(
+            await api.async_get_program_details(
+                series_id, kind="series", tab="id-tab-watch-now"
+            ),
+            api,
+        )
+    except MolotovApiError as err:
+        _LOGGER.debug("Failed to fetch the show on air on %s: %s", channel_id, err)
+        return assets, None
+    return assets, find_on_demand_copy(episodes, name)
+
+
+def episode_browse_child(
+    episode: BrowseAsset, *, title: str | None = None, from_start: bool = False
+) -> BrowseMedia:
+    """Build the browse entry of an on-demand episode.
+
+    [from_start] plays it from its beginning, wherever it was left before.
+    """
+    payload_data: dict[str, Any] = {
+        "url": episode.asset_url,
+        "title": episode.title,
+        "thumb": episode.thumbnail or episode.poster,
+        "live": episode.is_live,
+    }
+    if episode.description:
+        payload_data["desc"] = episode.description
+    if from_start:
+        payload_data["from_start"] = True
+    payload = encode_asset_payload(payload_data)
+    if title is None:
+        title = episode.title
+        if episode.episode_title:
+            title = f"{episode.episode_title} - {episode.title}"
+        if episode.start:
+            title = f"{episode.start.strftime('%d/%m %H:%M')} - {title}"
+    return BrowseMedia(
+        title=title,
+        media_class=MediaClass.VIDEO,
+        media_content_id=f"{MEDIA_EPISODE_PREFIX}:{payload}",
+        media_content_type=MEDIA_EPISODE_PREFIX,
+        can_play=False,
+        can_expand=True,
+        thumbnail=episode.thumbnail or episode.poster,
+    )
 
 
 async def async_fetch_recordings(api: MolotovApi) -> list[BrowseAsset]:
@@ -442,33 +496,7 @@ async def async_fetch_program_episodes(
         episodes = parse_papi_episodes(data, api)
         _LOGGER.debug("Found %d episodes for series %s", len(episodes), program_id)
 
-        for episode in episodes:
-            payload_data = {
-                "url": episode.asset_url,
-                "title": episode.title,
-                "thumb": episode.thumbnail or episode.poster,
-                "live": episode.is_live,
-            }
-            if episode.description:
-                payload_data["desc"] = episode.description
-            payload = encode_asset_payload(payload_data)
-            ep_title = episode.title
-            if episode.episode_title:
-                ep_title = f"{episode.episode_title} - {episode.title}"
-            if episode.start:
-                ep_title = f"{episode.start.strftime('%d/%m %H:%M')} - {ep_title}"
-
-            children.append(
-                BrowseMedia(
-                    title=ep_title,
-                    media_class=MediaClass.VIDEO,
-                    media_content_id=f"{MEDIA_EPISODE_PREFIX}:{payload}",
-                    media_content_type=MEDIA_EPISODE_PREFIX,
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=episode.thumbnail or episode.poster,
-                )
-            )
+        children.extend(episode_browse_child(episode) for episode in episodes)
     except MolotovApiError as err:
         _LOGGER.warning("Failed to fetch series episodes: %s", err)
 

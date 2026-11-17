@@ -59,10 +59,11 @@ from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi, MolotovApiError
 from .browse import (
-    async_fetch_channel_replays,
+    async_fetch_channel_catch_up,
     async_fetch_program_episodes,
     async_fetch_recordings,
     build_assets_browse,
+    episode_browse_child,
     build_channels_browse,
     build_root_browse,
     build_search_input_browse,
@@ -219,7 +220,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         self._attr_unique_id = entry.entry_id
         self._attr_name = None
         self._attr_has_entity_name = True
-        self._replay_cache: dict[str, tuple[datetime, list[BrowseAsset]]] = {}
+        # Per channel: when fetched, the start of the programme then on air,
+        # the channel's replays, and the on-demand copy of that programme.
+        self._replay_cache: dict[
+            str,
+            tuple[datetime, datetime | None, list[BrowseAsset], BrowseAsset | None],
+        ] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         # Multi-cast session tracking
@@ -1381,7 +1387,20 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         now = dt_util.utcnow()
         children: list[BrowseMedia] = []
-        if find_current_program(channel, now) is None:
+        on_air = find_current_program(channel, now)
+        replays, on_demand = await self._async_channel_catch_up(
+            channel_id, on_air.start if on_air else None
+        )
+        if on_air and on_demand:
+            # What airs now is also on demand: offered from its beginning.
+            children.append(
+                episode_browse_child(
+                    on_demand,
+                    title=f"⏮ Replay depuis le début - {on_demand.title}",
+                    from_start=True,
+                )
+            )
+        if on_air is None:
             children.append(
                 BrowseMedia(
                     title=f"▶ Direct - {channel.label}",
@@ -1423,10 +1442,6 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 )
             )
 
-        replays = self._get_cached_replay(channel_id)
-        if replays is None:
-            replays = await async_fetch_channel_replays(self._api, channel_id, data)
-            self._set_cached_replay(channel_id, replays)
         if replays:
             children.append(
                 BrowseMedia(
@@ -1947,8 +1962,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             await self._async_start_health_monitor_for(session)
 
-            # Check for resume position (VOD only)
-            if not is_live:
+            # Check for resume position (VOD only), unless asked from its start.
+            payload = decode_asset_payload_from_media_id(media_id) or {}
+            if not is_live and not payload.get("from_start"):
                 resume_data = await self._resume_store.async_get_position(media_id)
                 if resume_data:
                     saved_position = resume_data.get("position", 0)
@@ -2256,18 +2272,30 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             data["live_rewind_sec"] = int((now - window[0]).total_seconds())
         return data
 
-    def _get_cached_replay(self, channel_id: str) -> list[BrowseAsset] | None:
-        cached = self._replay_cache.get(channel_id)
-        if not cached:
-            return None
-        fetched_at, assets = cached
-        if dt_util.utcnow() - fetched_at > ASSET_CACHE_TTL:
-            self._replay_cache.pop(channel_id, None)
-            return None
-        return assets
+    async def _async_channel_catch_up(
+        self, channel_id: str, on_air_start: datetime | None
+    ) -> tuple[list[BrowseAsset], BrowseAsset | None]:
+        """Return a channel's replays and the on-demand copy of what airs on it.
 
-    def _set_cached_replay(self, channel_id: str, assets: list[BrowseAsset]) -> None:
-        self._replay_cache[channel_id] = (dt_util.utcnow(), assets)
+        Kept for a while, and for as long as the same programme airs: the copy
+        belongs to it.
+        """
+        cached = self._replay_cache.get(channel_id)
+        if cached:
+            fetched_at, start, replays, on_demand = cached
+            if (
+                dt_util.utcnow() - fetched_at <= ASSET_CACHE_TTL
+                and start == on_air_start
+            ):
+                return replays, on_demand
+        replays, on_demand = await async_fetch_channel_catch_up(self._api, channel_id)
+        self._replay_cache[channel_id] = (
+            dt_util.utcnow(),
+            on_air_start,
+            replays,
+            on_demand,
+        )
+        return replays, on_demand
 
     def _get_cached_assets(
         self, cached: tuple[datetime, list[BrowseAsset]] | None

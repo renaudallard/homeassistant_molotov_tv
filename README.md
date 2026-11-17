@@ -18,7 +18,7 @@ Intégration personnalisée non officielle qui apporte **Molotov TV** dans le na
 
 *   **📺 TV en direct & EPG :** Parcourez toutes vos chaînes avec des guides de programmes en temps réel.
 *   **▶️ En direct :** Accédez rapidement à ce qui est diffusé en ce moment.
-*   **⏪ Replay & VOD :** Accédez à la télévision de rattrapage (Catch-up TV) et au contenu de vidéo à la demande associés à vos chaînes.
+*   **⏪ Replay & VOD :** Accédez à la télévision de rattrapage (Catch-up TV) et au contenu de vidéo à la demande associés à vos chaînes. Quand le programme en cours sur une chaîne est aussi disponible à la demande, la chaîne propose en tête « ⏮ Replay depuis le début », qui le lit depuis sa première minute, même s'il avait été commencé.
 *   **📼 Enregistrements :** Visualisez et lisez vos enregistrements dans le cloud, et programmez l'enregistrement d'un programme en direct depuis le navigateur (option « Programmer l'enregistrement », nécessite un quota DVR).
 *   **🔒 Contenu réservé :** Les chaînes et programmes réservés à l'option payante « Molotov Extra » apparaissent grisés et non lisibles.
 *   **🔍 Recherche avancée :**
