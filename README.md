@@ -181,7 +181,7 @@ Le code suit une structure modulaire :
 *   **`models.py`** : Dataclasses partagées (`EpgProgram`, `EpgChannel`, `EpgData`, `BrowseAsset`).
 *   **`config_flow.py`** : Flux de configuration (email/mot de passe + options).
 *   **`api.py`** : Client HTTP Molotov avec retry automatique et gestion des tokens.
-*   **`coordinator.py`** : Coordinateur HA pour les mises à jour EPG, parsing des données brutes.
+*   **`coordinator.py`** : Coordinateur HA pour les mises à jour EPG, parsing des données brutes. Le guide arrive par pages de 100 chaînes, toutes lues.
 *   **`helpers.py`** : Identifiant d'appareil, parsing (timestamps, images, programmes EPG, assets) et découverte des cibles de cast.
 *   **`browse.py`** : Construction de l'arborescence du navigateur de médias.
 *   **`media_player.py`** : Entité media player HA, casting, lecture locale.

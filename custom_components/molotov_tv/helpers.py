@@ -166,6 +166,8 @@ def parse_fubo_epg(data: Any) -> EpgData:
     channels: list[EpgChannel] = []
     if not isinstance(data, dict):
         return EpgData(channels=channels)
+    # The guide comes in pages; a channel listed again on a later page is kept once.
+    seen: set[str] = set()
     for entry in data.get("response") or []:
         if not isinstance(entry, dict):
             continue
@@ -179,6 +181,9 @@ def parse_fubo_epg(data: Any) -> EpgData:
         if raw_id is None:
             continue
         channel_id = str(raw_id)
+        if channel_id in seen:
+            continue
+        seen.add(channel_id)
         label = (
             channel_raw.get("displayName")
             or channel_raw.get("name")

@@ -102,6 +102,19 @@ def _parse_error(error_body: str | None) -> tuple[str | None, str | None]:
     return (str(code) if code else None), (str(message) if message else None)
 
 
+def _epg_next_offset(page: dict[str, Any]) -> int | None:
+    """Return where the next page of the guide starts, or None on the last one."""
+
+    for meta in page.get("metadata") or []:
+        if not isinstance(meta, dict) or meta.get("type") != "paginationState":
+            continue
+        data = meta.get("data")
+        value = data.get("nextOffset") if isinstance(data, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
 def _rfc3339(value: datetime) -> str:
     """Format a datetime as the RFC3339 UTC string /epg requires."""
     return value.astimezone(dt_util.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -119,6 +132,9 @@ RETRY_DELAY_SECONDS = 1.0
 # Live guide window: how far ahead to fetch, and how many channels per page.
 EPG_WINDOW = timedelta(hours=6)
 EPG_CHANNEL_LIMIT = 100
+# The guide pages its channels (about 180 in November 2026). Bounds the paging
+# should the backend ever hand back an offset that does not move on.
+EPG_MAX_PAGES = 10
 
 # Playback reference scheme used by build_asset_url/async_get_asset_stream. The
 # value is opaque to callers and resolved to a fresh manifest at play time.
@@ -387,7 +403,11 @@ class MolotovApi:
         end: datetime | None = None,
         limit: int | None = None,
     ) -> dict[str, Any]:
-        """Fetch the live guide: channels with programmes over a time window."""
+        """Fetch the live guide: channels with programmes over a time window.
+
+        The guide comes in pages of [limit] channels: they are followed to the
+        last one and returned as one guide, with every channel in "response".
+        """
 
         await self.async_ensure_logged_in()
         now = dt_util.utcnow()
@@ -397,9 +417,23 @@ class MolotovApi:
             "limit": str(limit or EPG_CHANNEL_LIMIT),
             "ignoreEmpty": "true",
         }
-        return await self._request(
-            "GET", "epg", auth=True, params=params, timeout=LARGE_RESPONSE_TIMEOUT
-        )
+        entries: list[Any] = []
+        offset = 0
+        for _page in range(EPG_MAX_PAGES):
+            page_params = {**params, "offset": str(offset)} if offset else params
+            page = await self._request(
+                "GET",
+                "epg",
+                auth=True,
+                params=page_params,
+                timeout=LARGE_RESPONSE_TIMEOUT,
+            )
+            entries.extend(page.get("response") or [])
+            next_offset = _epg_next_offset(page)
+            if next_offset is None or next_offset <= offset:
+                break
+            offset = next_offset
+        return {"response": entries}
 
     # --- Recordings (DVR) -----------------------------------------------
 
