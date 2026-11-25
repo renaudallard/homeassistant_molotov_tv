@@ -36,14 +36,12 @@ from pathlib import Path
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
-from homeassistant.components.zeroconf import async_get_instance as async_get_zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import MolotovApi, MolotovApiError, MolotovAuthError
-from .chromecast import set_zeroconf_instance
 from .const import (
     CONF_DEVICE_ID,
     CONF_EMAIL,
@@ -67,10 +65,6 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Molotov TV from a config entry."""
-
-    # Set shared zeroconf instance for chromecast module
-    zeroconf = await async_get_zeroconf(hass)
-    set_zeroconf_instance(zeroconf)
 
     data = entry.data
     # An account linked by code has neither email nor password, only its

@@ -41,9 +41,6 @@ from homeassistant.core import HomeAssistant
 
 from .const import CAST_RECONNECT_ATTEMPTS, CAST_RECONNECT_DELAY
 
-# Shared zeroconf instance (set from async context)
-_zeroconf_instance: Any = None
-
 _LOGGER = logging.getLogger(__name__)
 
 # Timeout for blocking Chromecast operations (seconds)
@@ -101,13 +98,6 @@ class MediaStatusListener:
             self._callback(status)
         except Exception as err:
             _LOGGER.warning("Media status callback error: %s", err)
-
-
-def set_zeroconf_instance(zeroconf: Any) -> None:
-    """Set the shared zeroconf instance from Home Assistant."""
-    global _zeroconf_instance
-    _zeroconf_instance = zeroconf
-    _LOGGER.debug("Zeroconf instance set")
 
 
 def _disconnect_casts(casts: list[Any]) -> None:
@@ -389,75 +379,57 @@ async def async_attempt_reconnect(hass: HomeAssistant, host: str) -> bool:
     return await hass.async_add_executor_job(_attempt_reconnect, host)
 
 
+# The port Chromecasts take connections on.
+CAST_PORT = 8009
+
+
+def _chromecast_at(host: str) -> Any:
+    """Return the Chromecast at [host], and no other, not connected yet.
+
+    Its description (name, model, id) is asked of that address alone, over
+    HTTP, rather than found by a discovery of the network, which makes one for
+    every device that answers: a device at another address must never be the
+    one cast to.
+    """
+    import pychromecast
+    from pychromecast.dial import get_device_info
+    from pychromecast.models import CastInfo, HostServiceInfo
+
+    status = get_device_info(host, timeout=CAST_CONNECT_TIMEOUT)
+    if status is None or status.uuid is None:
+        raise MolotovCastError(f"Chromecast '{host}' did not answer")
+    info = CastInfo(
+        {HostServiceInfo(host, CAST_PORT)},
+        status.uuid,
+        status.model_name,
+        status.friendly_name,
+        host,
+        CAST_PORT,
+        status.cast_type,
+        status.manufacturer,
+    )
+    return pychromecast.Chromecast(cast_info=info)
+
+
 def _connect_to_chromecast(host: str) -> Any | None:
-    """Connect to a Chromecast by host. Returns cast object or None."""
+    """Connect to the Chromecast at [host]. Returns the cast object or None."""
     try:
-        import pychromecast
+        cast = _chromecast_at(host)
     except ImportError:
         _LOGGER.error("pychromecast is not available")
         return None
-
-    cast = None
-    browser = None
-
-    try:
-        # Try get_chromecasts with known_hosts and shared zeroconf
-        if hasattr(pychromecast, "get_chromecasts"):
-            try:
-                kwargs = {"known_hosts": [host], "timeout": 10}
-                # Use shared zeroconf if available
-                if _zeroconf_instance is not None:
-                    kwargs["zeroconf_instance"] = _zeroconf_instance
-                result = pychromecast.get_chromecasts(**kwargs)
-                if isinstance(result, tuple) and len(result) >= 2:
-                    chromecasts, browser = result[0], result[1]
-                else:
-                    chromecasts = result
-
-                for cc in chromecasts:
-                    cc_host = None
-                    if hasattr(cc, "host"):
-                        cc_host = cc.host
-                    elif hasattr(cc, "cast_info") and hasattr(cc.cast_info, "host"):
-                        cc_host = cc.cast_info.host
-
-                    if cc_host == host:
-                        cast = cc
-                        break
-
-                if cast is None and chromecasts:
-                    cast = chromecasts[0]
-
-            except Exception as err:
-                _LOGGER.debug("get_chromecasts failed: %s", err)
-
-        # Fallback: direct instantiation
-        if cast is None:
-            try:
-                cast = pychromecast.Chromecast(host)
-            except Exception:
-                try:
-                    cast = pychromecast.Chromecast(host=host)
-                except Exception as err:
-                    _LOGGER.debug("Direct Chromecast instantiation failed: %s", err)
-                    return None
-
-        if cast:
-            cast.wait(timeout=CAST_CONNECT_TIMEOUT)
-            if not cast.socket_client or not cast.socket_client.is_connected:
-                _LOGGER.warning("Chromecast %s connection timed out", host)
-                return None
-
-        return cast
-
-    finally:
-        if browser is not None:
-            try:
-                from pychromecast.discovery import stop_discovery
-
-                stop_discovery(browser)
-            except Exception:
-                pass
+    except Exception as err:
+        _LOGGER.debug("Chromecast %s not reachable: %s", host, err)
+        return None
+    cast.wait(timeout=CAST_CONNECT_TIMEOUT)
+    if not cast.socket_client or not cast.socket_client.is_connected:
+        _LOGGER.warning("Chromecast %s connection timed out", host)
+        try:
+            cast.disconnect()
+        except Exception as err:
+            _LOGGER.debug("Failed to disconnect: %s", err)
+        return None
+    return cast
 
 
 async def async_cast_media(
@@ -507,123 +479,16 @@ def _cast_media_blocking(
     )
 
     cast = None
-    browser = None
 
     try:
-        # Try to get stop_discovery function
         try:
-            from pychromecast.discovery import stop_discovery
-        except ImportError:
-            stop_discovery = None
-            _LOGGER.debug("stop_discovery not in pychromecast.discovery")
-
-        # Try different pychromecast APIs
-        chromecasts = None
-
-        # Method 1: get_chromecasts with known_hosts (pychromecast 14+)
-        if chromecasts is None and hasattr(pychromecast, "get_chromecasts"):
-            _LOGGER.debug("Trying get_chromecasts(known_hosts=[%s])", cast_target)
-            try:
-                import inspect
-
-                sig = inspect.signature(pychromecast.get_chromecasts)
-                params = list(sig.parameters.keys())
-                _LOGGER.debug("get_chromecasts params: %s", params)
-
-                if "known_hosts" in params:
-                    kwargs = {"known_hosts": [cast_target], "timeout": 10}
-                    # Use shared zeroconf if available
-                    if _zeroconf_instance is not None and "zeroconf_instance" in params:
-                        kwargs["zeroconf_instance"] = _zeroconf_instance
-                    result = pychromecast.get_chromecasts(**kwargs)
-                    if isinstance(result, tuple) and len(result) >= 2:
-                        chromecasts, browser = result[0], result[1]
-                    else:
-                        chromecasts = result
-                    _LOGGER.debug(
-                        "get_chromecasts result: chromecasts=%s, browser=%s",
-                        chromecasts,
-                        browser,
-                    )
-            except Exception as err:
-                _LOGGER.debug("get_chromecasts failed: %s", err)
-
-        # Method 2: get_listed_chromecasts (older API)
-        if chromecasts is None and hasattr(pychromecast, "get_listed_chromecasts"):
-            _LOGGER.debug("Trying get_listed_chromecasts")
-            try:
-                import inspect
-
-                sig = inspect.signature(pychromecast.get_listed_chromecasts)
-                params = list(sig.parameters.keys())
-                _LOGGER.debug("get_listed_chromecasts params: %s", params)
-
-                result = pychromecast.get_listed_chromecasts()
-                if isinstance(result, tuple) and len(result) >= 2:
-                    chromecasts, browser = result[0], result[1]
-                else:
-                    chromecasts = result
-                _LOGGER.debug(
-                    "get_listed_chromecasts result: %d devices",
-                    len(chromecasts) if chromecasts else 0,
-                )
-            except Exception as err:
-                _LOGGER.debug("get_listed_chromecasts failed: %s", err)
-
-        # Method 3: Direct Chromecast instantiation (legacy)
-        if chromecasts is None:
-            _LOGGER.debug("Trying direct Chromecast(%s)", cast_target)
-            try:
-                cast = pychromecast.Chromecast(cast_target)
-                chromecasts = [cast]
-                _LOGGER.debug("Direct Chromecast instantiation succeeded")
-            except Exception as err:
-                _LOGGER.debug("Direct Chromecast failed: %s", err)
-
-        # Method 4: Chromecast with host kwarg
-        if chromecasts is None:
-            _LOGGER.debug("Trying Chromecast(host=%s)", cast_target)
-            try:
-                cast = pychromecast.Chromecast(host=cast_target)
-                chromecasts = [cast]
-                _LOGGER.debug("Chromecast(host=) succeeded")
-            except Exception as err:
-                _LOGGER.debug("Chromecast(host=) failed: %s", err)
-
-        if not chromecasts:
+            cast = _chromecast_at(cast_target)
+        except MolotovCastError:
+            raise
+        except Exception as err:
             raise MolotovCastError(
-                f"Chromecast '{cast_target}' was not found on the network. "
-                f"pychromecast version: {getattr(pychromecast, '__version__', 'unknown')}"
-            )
-
-        # Find matching chromecast by host
-        cast = None
-        for cc in chromecasts:
-            cc_host = None
-            if hasattr(cc, "host"):
-                cc_host = cc.host
-            elif hasattr(cc, "cast_info") and hasattr(cc.cast_info, "host"):
-                cc_host = cc.cast_info.host
-            elif hasattr(cc, "socket_client") and hasattr(cc.socket_client, "host"):
-                cc_host = cc.socket_client.host
-
-            _LOGGER.debug(
-                "Found chromecast: name=%s, host=%s, type=%s, attrs=%s",
-                getattr(cc, "name", getattr(cc, "friendly_name", "unknown")),
-                cc_host,
-                type(cc).__name__,
-                [a for a in dir(cc) if not a.startswith("_")][:20],
-            )
-
-            if cc_host == cast_target or cast is None:
-                cast = cc
-                if cc_host == cast_target:
-                    break
-
-        if cast is None:
-            raise MolotovCastError(
-                f"Chromecast '{cast_target}' not in discovered devices"
-            )
+                f"Chromecast '{cast_target}' was not found on the network: {err}"
+            ) from err
 
         _LOGGER.debug("Using chromecast: %s", cast)
         _LOGGER.debug("Waiting for chromecast connection...")
@@ -706,12 +571,6 @@ def _cast_media_blocking(
         _LOGGER.exception("Unexpected error during cast")
         raise MolotovCastError(f"Cast failed: {err}") from err
     finally:
-        if browser is not None and stop_discovery is not None:
-            try:
-                _LOGGER.debug("Stopping discovery browser")
-                stop_discovery(browser)
-            except Exception as err:
-                _LOGGER.debug("Failed to stop discovery: %s", err)
         if cast is not None:
             try:
                 _LOGGER.debug("Disconnecting chromecast")
