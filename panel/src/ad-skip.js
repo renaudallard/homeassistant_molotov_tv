@@ -584,10 +584,11 @@
             // of several kilobytes where the next advert starts. A held picture in a cartoon looks alike
             // but its frames are mostly bigger, and comes alone or a few within a minute. So a black is
             // BLACK frames under TINY bytes, BLACK_MEAN at most on average, then one over KEY; a break is
-            // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next (a black
-            // missed, a few bytes over, leaves two adverts between two: 95 s seen), and runs from the
-            // second to the one before the last, which one stray black in the programme around it
-            // leaves in the adverts. As the etincelle apps' Separators.
+            // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next, or
+            // SEP_WIDE_GAP_S between two runs of SEP_PART or more (a black missed, a few bytes over,
+            // leaves two adverts between two: 95 s seen; not a cartoon's last black or two before a
+            // break), and runs from the second to the one before the last, which one stray black in
+            // the programme around it leaves in the adverts. As the etincelle apps' Separators.
             const TINY = 120;
             const BLACK_MEAN = 40;
             const KEY = 4000;
@@ -595,7 +596,9 @@
             const BLACK_MAX = 14;
             const SEP_LEAST = 6;
             const SEP_SPAN_S = 90;
-            const SEP_GAP_S = 100;
+            const SEP_GAP_S = 60;
+            const SEP_WIDE_GAP_S = 100;
+            const SEP_PART = 3;
             // The most bytes a segment's header is read to, and the most frames it may list.
             const MOOF_MAX = 65536;
             const MOST_FRAMES = 10000;
@@ -696,15 +699,19 @@
 
             // The breaks the blacks ending at `ends` (s) make, in order, as [start, end].
             function separatedBreaks(ends) {
-                const sorted = ends.slice().sort((x, y) => x - y);
-                const out = [];
-                let first = 0;
-                for (let i = 0; i < sorted.length; i++) {
-                    if (i < sorted.length - 1 && sorted[i + 1] - sorted[i] <= SEP_GAP_S) continue;
-                    if (i - first + 1 >= SEP_LEAST && sorted[i] - sorted[first] >= SEP_SPAN_S) out.push([sorted[first + 1], sorted[i - 1]]);
-                    first = i + 1;
+                const runs = [];
+                for (const end of ends.slice().sort((x, y) => x - y)) {
+                    const last = runs[runs.length - 1];
+                    if (last && end - last[last.length - 1] <= SEP_GAP_S) last.push(end);
+                    else runs.push([end]);
                 }
-                return out;
+                const joined = [];
+                for (const run of runs) {
+                    const last = joined[joined.length - 1];
+                    if (last && run[0] - last[last.length - 1] <= SEP_WIDE_GAP_S && last.length >= SEP_PART && run.length >= SEP_PART) last.push(...run);
+                    else joined.push(run);
+                }
+                return joined.filter(r => r.length >= SEP_LEAST && r[r.length - 1] - r[0] >= SEP_SPAN_S).map(r => [r[1], r[r.length - 2]]);
             }
 
             return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, BRIDGE, AROUND, LOGO_MAX_S };
