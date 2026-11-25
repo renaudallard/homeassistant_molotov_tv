@@ -103,6 +103,7 @@ from .const import (
     CONTENT_TYPE_DASH,
     CONTENT_TYPE_HLS,
     DOMAIN,
+    LIVE_PICTURE_EVERY_S,
     MAX_CONCURRENT_STREAMS,
     MEDIA_CAST_PREFIX,
     MEDIA_CHANNEL_PREFIX,
@@ -123,6 +124,7 @@ from .const import (
     MEDIA_SEARCH_INPUT_PREFIX,
     MEDIA_TONIGHT_EPG,
     CUSTOM_RECEIVER_APP_ID,
+    NO_GUESS_CHANNELS,
 )
 from .coordinator import MolotovEpgCoordinator
 from .helpers import (
@@ -825,6 +827,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 stream_url = attrs["stream_url"]
                 if not stream_url:
                     return False
+                asset_ref = asset_url
                 asset_url = stream_url
                 content_type = attrs["content_type"]
                 custom_data["stream_url"] = stream_url
@@ -833,6 +836,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     custom_data["license_url"] = attrs["license_url"]
                     custom_data["drm_token"] = attrs["drm_token"]
                 custom_data.update(self._playhead_custom_data(asset_data, credits_sec))
+                custom_data.update(self._break_custom_data(asset_ref, asset_data))
             else:
                 content_type = self._api.stream_content_type()
 
@@ -1911,6 +1915,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 if not stream_url:
                     raise MolotovApiError("No stream URL found in asset response")
 
+                asset_ref = asset_url
                 asset_url = stream_url
                 custom_data["stream_url"] = stream_url
                 custom_data["content_type"] = attrs["content_type"]
@@ -1924,6 +1929,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                         "Added DRM info to custom_data: %s", list(custom_data.keys())
                     )
                 custom_data.update(self._playhead_custom_data(asset_data, credits_sec))
+                custom_data.update(self._break_custom_data(asset_ref, asset_data))
 
             else:
                 cast_app_id = self._api.session_state.cast_app_id
@@ -2322,6 +2328,32 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             self._api.async_get_asset_stream(asset_url),
             async_fetch_credits_start(self._api, asset_url),
         )
+
+    def _break_custom_data(
+        self, asset_ref: str, asset_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """What the custom receiver needs to look for ad breaks the stream does not mark.
+
+        A live channel's pictures, one every few seconds at an address the playback
+        answer gives, which the receiver reads for the channel's logo; not for a
+        channel whose stream marks its breaks or that has none, where a guess could
+        only add what surrounds them. And whether the programme is a recording,
+        which the receiver searches only when told so: a replay has no adverts.
+        """
+        kind, video_id, _start_over = self._api.parse_asset_ref(asset_ref)
+        if kind == "dvr":
+            return {"recording": True}
+        if kind != "live" or video_id in NO_GUESS_CHANNELS:
+            return {}
+        thumbnails = asset_data.get("thumbnails")
+        if not isinstance(thumbnails, dict) or thumbnails.get("type") != "timestamp":
+            return {}
+        base_url = thumbnails.get("base_url")
+        if not isinstance(base_url, str) or not base_url.startswith("https://"):
+            return {}
+        if thumbnails.get("interval") != LIVE_PICTURE_EVERY_S:
+            return {}
+        return {"live_thumbnails_url": base_url}
 
     def _playhead_custom_data(
         self, asset_data: dict[str, Any], credits_sec: int | None

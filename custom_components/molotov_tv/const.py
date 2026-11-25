@@ -109,6 +109,30 @@ MEDIA_SEARCH_RESULT_PREFIX = "search_result"
 MEDIA_SEARCH_INPUT_PREFIX = "search_input"
 MEDIA_TONIGHT_EPG = "tonight_epg"
 
+# The channels whose ad breaks the custom receiver is not to guess from their pictures: TF1, TMC,
+# TFX, TF1 Séries Films, LCI, France 2, 3 and 5 mark their breaks in the stream, exactly; France 4,
+# franceinfo and Arte show no advert breaks, and a guess there offered trailers, the weather or a
+# short programme. Kept the same as etincelle's (core/model Playback.kt).
+NO_GUESS_CHANNELS = frozenset(
+    {
+        "600046",
+        "600036",
+        "600040",
+        "600067",
+        "600005",
+        "600019",
+        "600049",
+        "600018",
+        "600042",
+        "600136",
+        "600034",
+    }
+)
+
+# The receiver reads a channel's pictures for its logo only one every this many seconds, as the
+# service keeps them.
+LIVE_PICTURE_EVERY_S = 4
+
 # Panel configuration
 PANEL_URL_PATH = "molotov-tv"
 PANEL_TITLE = "Molotov TV"

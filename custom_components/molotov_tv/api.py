@@ -257,7 +257,7 @@ class MolotovApi:
         return ref
 
     @staticmethod
-    def _parse_asset_ref(ref: str) -> tuple[str, str, bool]:
+    def parse_asset_ref(ref: str) -> tuple[str, str, bool]:
         """Parse a build_asset_url reference into (kind, id, start_over)."""
 
         if not ref.startswith(_REF_PREFIX):
@@ -275,7 +275,7 @@ class MolotovApi:
 
         if not ref.startswith(_REF_PREFIX):
             return None
-        kind, video_id, _start_over = cls._parse_asset_ref(ref)
+        kind, video_id, _start_over = cls.parse_asset_ref(ref)
         return video_id if kind == "vod" and video_id else None
 
     def stream_content_type(self) -> str:
@@ -508,7 +508,7 @@ class MolotovApi:
         """Resolve a playback reference to a tokenized manifest + DRM info."""
 
         await self.async_ensure_logged_in()
-        kind, video_id, _start_over = self._parse_asset_ref(asset_url)
+        kind, video_id, _start_over = self.parse_asset_ref(asset_url)
         if not video_id:
             raise MolotovApiError(f"Invalid playback reference: {asset_url}")
         params: dict[str, Any] = {"wants_trackers": "true"}
