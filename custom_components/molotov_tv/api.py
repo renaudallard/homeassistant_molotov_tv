@@ -633,6 +633,20 @@ class MolotovApi:
             reader=self._read_discard,
         )
 
+    async def async_post_action(self, url: str, payload: dict[str, Any]) -> None:
+        """Make the call a page's button carries, as the page gives it.
+
+        For the record buttons (a recording or a series to record, a series to
+        stop recording). The caller makes sure [url] is the backend's own: the
+        call goes with the session's token.
+        """
+
+        await self.async_ensure_logged_in()
+        # The response body is unused; do not require a JSON content type.
+        await self._do_request(
+            "POST", url, auth=True, json=payload, reader=self._read_discard
+        )
+
     # --- Playback -------------------------------------------------------
 
     async def async_get_asset_stream(self, asset_url: str) -> dict[str, Any]:

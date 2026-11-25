@@ -32,6 +32,7 @@ import asyncio
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import hashlib
 import json
 import logging
 from typing import Any
@@ -113,6 +114,7 @@ from .const import (
     MEDIA_NOW_PLAYING,
     MEDIA_PROGRAM_EPISODES_PREFIX,
     MEDIA_PROGRAM_PREFIX,
+    MEDIA_RECORD_ACTION_PREFIX,
     MEDIA_RECORD_PREFIX,
     MEDIA_RECORDING_PREFIX,
     MEDIA_RECORDINGS,
@@ -139,9 +141,10 @@ from .helpers import (
     parse_fubo_epg,
     parse_manual_targets,
     parse_papi_search,
+    parse_record_actions,
     split_manual_target,
 )
-from .models import BrowseAsset, EpgChannel, EpgData
+from .models import BrowseAsset, EpgChannel, EpgData, RecordAction
 from .storage import ResumePositionStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -188,6 +191,10 @@ async def async_setup_entry(
     api: MolotovApi = data["api"]
     resume_store: ResumePositionStore = data["resume_store"]
     async_add_entities([MolotovTvMediaPlayer(entry, coordinator, api, resume_store)])
+
+
+# How long a record button offered in the browser stays playable.
+RECORD_ACTION_TTL = timedelta(minutes=30)
 
 
 def _is_backend_url(url: str) -> bool:
@@ -244,6 +251,9 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             tuple[datetime, datetime | None, list[BrowseAsset], BrowseAsset | None],
         ] = {}
         self._recording_cache: tuple[datetime, list[BrowseAsset]] | None = None
+        # The record buttons offered lately, by the key their browse item plays
+        # them with, and when they were offered (see _async_record_actions).
+        self._record_actions: dict[str, tuple[datetime, RecordAction]] = {}
         self._cast_discovery_cache: tuple[datetime, list[str]] | None = None
         # Multi-cast session tracking
         self._cast_sessions: dict[str, CastSessionState] = {}
@@ -711,6 +721,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             await self._async_perform_search(query)
             return
 
+        if media_id.startswith(f"{MEDIA_RECORD_ACTION_PREFIX}:"):
+            await self._async_record_action(media_id.split(":", 1)[1])
+            return
+
         if media_id.startswith(f"{MEDIA_RECORD_PREFIX}:"):
             await self._async_schedule_recording(media_id)
             return
@@ -990,6 +1004,58 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
             raise HomeAssistantError(message) from err
         _LOGGER.info("Scheduled recording for airing %s", asset_id)
+
+    async def _async_record_actions(
+        self, asset_id: str
+    ) -> list[tuple[str, RecordAction]]:
+        """Return the record buttons of an airing's page, with their keys.
+
+        The page says what can be done (the episode, the whole series, or stop
+        recording the series), with the call to make for each. Empty when the
+        page cannot be had or offers none: the episode recording alone is
+        offered then.
+        """
+        try:
+            page = await self._api.async_get_program_details(asset_id, kind="program")
+        except MolotovApiError as err:
+            _LOGGER.debug("No record buttons for %s: %s", asset_id, err)
+            return []
+        now = dt_util.utcnow()
+        self._record_actions = {
+            key: kept
+            for key, kept in self._record_actions.items()
+            if now - kept[0] < RECORD_ACTION_TTL
+        }
+        found: list[tuple[str, RecordAction]] = []
+        for action in parse_record_actions(page):
+            # Sent with the session's token: only to the backend's own hosts.
+            if not _is_backend_url(action.url):
+                continue
+            key = hashlib.sha256(
+                json.dumps([action.url, action.payload], sort_keys=True).encode()
+            ).hexdigest()[:16]
+            self._record_actions[key] = (now, action)
+            found.append((key, action))
+        return found
+
+    async def _async_record_action(self, key: str) -> None:
+        """Make the call of a record button offered in the browser."""
+        kept = self._record_actions.get(key)
+        if kept is None:
+            raise HomeAssistantError(
+                "Cette action n'est plus proposée : rouvrez le programme"
+            )
+        action = kept[1]
+        try:
+            await self._api.async_post_action(action.url, action.payload)
+        except MolotovApiError as err:
+            raise HomeAssistantError(
+                err.user_message or f"Échec : {action.label}"
+            ) from err
+        finally:
+            # The recordings may have changed, whatever the answer.
+            self._recording_cache = None
+        _LOGGER.info("Done: %s", action.label)
 
     async def _async_browse_now_playing(self, data: EpgData) -> BrowseMedia:
         channels = data.channels
@@ -1588,7 +1654,22 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             )
         )
 
-        if record_asset_id:
+        record_actions = (
+            await self._async_record_actions(record_asset_id) if record_asset_id else []
+        )
+        for key, action in record_actions:
+            stop = "stop" in str(action.payload.get("action_name", "")).lower()
+            children.append(
+                BrowseMedia(
+                    title=f"{'⏹' if stop else '⏺'} {action.label}",
+                    media_class=MediaClass.VIDEO,
+                    media_content_id=f"{MEDIA_RECORD_ACTION_PREFIX}:{key}",
+                    media_content_type=MEDIA_RECORD_PREFIX,
+                    can_play=True,
+                    can_expand=False,
+                )
+            )
+        if record_asset_id and not record_actions:
             children.append(
                 BrowseMedia(
                     title="⏺ Programmer l'enregistrement",

@@ -43,7 +43,7 @@ from homeassistant.helpers import instance_id
 from homeassistant.util import dt as dt_util
 
 from .api import MolotovApi
-from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram
+from .models import BrowseAsset, EpgChannel, EpgData, EpgProgram, RecordAction
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -672,6 +672,49 @@ def parse_papi_search(data: Any, api: MolotovApi) -> list[BrowseAsset]:
 
 
 # --- Cast discovery helpers ---
+
+
+def _record_action(item: Any) -> RecordAction | None:
+    """The record call of a page's action item or menu item, if it is one."""
+    node = _as_dict(item)
+    label = _papi_text(node.get("text"))
+    for click in _as_dict(node.get("actions")).get("on_click") or []:
+        click = _as_dict(click)
+        if click.get("type") != "api_call":
+            continue
+        endpoint = _as_dict(click.get("endpoint"))
+        url = endpoint.get("url")
+        payload = endpoint.get("payload")
+        if not isinstance(url, str) or not isinstance(payload, dict):
+            continue
+        # What the call does is in its action name (add-recording,
+        # record-new-episodes, stop-recording-series), not in an id.
+        if "record" not in str(payload.get("action_name", "")).lower():
+            continue
+        return RecordAction(label, url, payload) if label else None
+    return None
+
+
+def parse_record_actions(data: Any) -> list[RecordAction]:
+    """Return the record buttons of a programme page, in its order.
+
+    The backend serves them either as action items of their own or as the
+    items of a "record options" dropdown, so both are gathered.
+    """
+    metadata = _as_dict(_as_dict(_as_dict(data).get("content")).get("metadata"))
+    found: list[RecordAction] = []
+    for cta in metadata.get("ctas") or []:
+        for item in _as_dict(cta).get("action_items") or []:
+            action = _record_action(item)
+            if action is not None:
+                found.append(action)
+            for click in _as_dict(_as_dict(item).get("actions")).get("on_click") or []:
+                menu = _as_dict(_as_dict(click).get("content")).get("menu_items")
+                for menu_item in menu or []:
+                    action = _record_action(menu_item)
+                    if action is not None:
+                        found.append(action)
+    return found
 
 
 def discover_cast_targets_blocking(zconf: Any) -> list[str]:

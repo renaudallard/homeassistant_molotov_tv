@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -84,3 +85,17 @@ class BrowseAsset:
     available_from: datetime | None = None
     available_until: datetime | None = None
     is_locked: bool = False
+
+
+@dataclass(slots=True)
+class RecordAction:
+    """A record button of a programme page: its label and the call it makes.
+
+    The backend serves them with the page ("Enregistrer l'épisode",
+    "Enregistrer la série", "Arrêter d'enregistrer la série"), each with the
+    address and payload to send, which are sent as they are.
+    """
+
+    label: str
+    url: str
+    payload: dict[str, Any]
