@@ -133,9 +133,12 @@ NO_GUESS_CHANNELS = frozenset(
     }
 )
 
-# M6 and Gulli: 0.48 s of black between two adverts, which the custom receiver
-# and the panel find the breaks by (as etincelle's Playback.kt). Not W9 or 6ter.
-SEPARATED_CHANNELS = frozenset({"600045", "600058"})
+# M6, Gulli, Canal J, TIJI, Paris Première, Automoto, Toute l'Histoire and AB 1:
+# 0.48 s of black between two adverts, which the custom receiver and the panel
+# find the breaks by (as etincelle's Playback.kt). Not W9 or 6ter.
+SEPARATED_CHANNELS = frozenset(
+    {"600045", "600058", "600137", "600138", "600021", "600027", "600052", "600006"}
+)
 
 # The receiver reads a channel's pictures for its logo only one every this many seconds, as the
 # service keeps them.
