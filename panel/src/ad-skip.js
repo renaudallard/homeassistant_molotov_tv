@@ -584,17 +584,18 @@
             // of several kilobytes where the next advert starts. A held picture in a cartoon looks alike
             // but its frames are mostly bigger, and comes alone or a few within a minute. So a black is
             // BLACK frames under TINY bytes, BLACK_MEAN at most on average, then one over KEY; a break is
-            // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next, and runs
-            // from the second to the one before the last, which one stray black in the programme
-            // around it leaves in the adverts. As the etincelle apps' Separators.
+            // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next (a black
+            // missed, a few bytes over, leaves two adverts between two: 95 s seen), and runs from the
+            // second to the one before the last, which one stray black in the programme around it
+            // leaves in the adverts. As the etincelle apps' Separators.
             const TINY = 120;
             const BLACK_MEAN = 40;
-            const KEY = 5000;
+            const KEY = 4000;
             const BLACK_MIN = 10;
             const BLACK_MAX = 14;
             const SEP_LEAST = 6;
             const SEP_SPAN_S = 90;
-            const SEP_GAP_S = 60;
+            const SEP_GAP_S = 100;
             // The most bytes a segment's header is read to, and the most frames it may list.
             const MOOF_MAX = 65536;
             const MOST_FRAMES = 10000;
