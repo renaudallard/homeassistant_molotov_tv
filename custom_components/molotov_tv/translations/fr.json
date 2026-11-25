@@ -2,31 +2,24 @@
   "title": "Molotov TV",
   "config": {
     "step": {
-      "user": {
-        "title": "Connexion à Molotov",
-        "description": "Connectez-vous avec votre compte Molotov.",
-        "data": {
-          "email": "Email",
-          "password": "Mot de passe"
-        }
-      },
       "reauth_confirm": {
-        "title": "Ré-authentification Molotov",
-        "description": "Saisissez le mot de passe pour {email}.",
-        "data": {
-          "password": "Mot de passe"
-        }
+        "title": "Relier de nouveau le compte Molotov",
+        "description": "La session Molotov ne peut plus être renouvelée. Validez pour obtenir un code à saisir sur {url}."
+      },
+      "expired": {
+        "title": "Code expiré",
+        "description": "Le code n'a pas été saisi à temps. Validez pour en obtenir un nouveau."
       }
     },
-    "error": {
-      "cannot_connect": "Échec de la connexion à Molotov.",
-      "invalid_auth": "Email ou mot de passe invalide.",
-      "unavailable_here": "Molotov refuse le service depuis cette connexion (pays hors de sa zone, VPN ou abonnement sans ce service) : {message}",
-      "account_blocked": "Ce compte Molotov est bloqué : {message}",
-      "sign_in_refused": "Molotov a refusé la connexion : {message}"
+    "progress": {
+      "link": "Sur **{url}** (ou dans etincelle : Paramètres > Connecter une TV), connectez-vous à votre compte Molotov et saisissez le code :\n\n# {code}\n\nIl est valable {minutes} minutes. Cette page continue toute seule une fois le code saisi."
     },
     "abort": {
-      "reauth_successful": "Ré-authentification réussie."
+      "already_configured": "Ce compte Molotov est déjà configuré.",
+      "reauth_successful": "Compte relié de nouveau.",
+      "cannot_connect": "Échec de la connexion à Molotov.",
+      "unavailable_here": "Molotov refuse le service depuis cette connexion (pays hors de sa zone, VPN ou abonnement sans ce service). {message}",
+      "wrong_account": "Le code a été saisi avec un autre compte Molotov que celui de cette entrée."
     }
   },
   "options": {

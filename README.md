@@ -65,10 +65,11 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 
 1.  Allez dans **Paramètres** > **Appareils et services**.
 2.  Cliquez sur **+ Ajouter une intégration** et recherchez **Molotov TV**.
-3.  Entrez votre **Email Molotov** et votre **Mot de passe**.
-    *   *Note : la connexion se fait via le backend Fubo. En cas d'échec, le formulaire dit lequel : identifiants invalides, service refusé depuis cette connexion (pays hors de sa zone, VPN ou abonnement, par exemple `NO_SERVICE_IN_COUNTRY` hors de France), compte bloqué, ou autre refus du backend, avec le message qu'il donne. Le code d'erreur renvoyé par le backend est aussi repris dans les journaux de Home Assistant.*
-    *   *Ré-authentification : une session expirée est renouvelée automatiquement à partir des identifiants enregistrés. Si le mot de passe lui-même change, Home Assistant propose une demande de ré-authentification pour le saisir à nouveau, sans avoir à supprimer puis recréer l'intégration.*
-    *   *Appareil déclaré : l'intégration s'annonce auprès du backend avec un identifiant d'appareil dérivé de l'identifiant de votre installation Home Assistant et de votre email. Il reste le même après un redémarrage, un rechargement ou une ré-authentification, donc le compte ne se remplit plus d'appareils. L'appareil est déclaré sous le nom « Home Assistant ». Cet identifiant étant nouveau, un dernier mail « nouvel appareil » arrive à la première connexion qui suit la mise à jour, puis plus aucun.*
+3.  L'intégration affiche un **code** : sur **molotov.tv/tv** (ou dans etincelle : Paramètres > Connecter une TV), connectez-vous à votre compte Molotov et saisissez-le, comme pour relier un téléviseur. La page de Home Assistant continue d'elle-même une fois le code saisi ; un code non saisi à temps (cinq minutes) est remplacé par un nouveau à la demande.
+    *   *Aucun mot de passe n'est demandé ni conservé : un compte qui exige un code reçu par email à chaque connexion se relie de la même façon. Si Molotov refuse le service depuis cette connexion (pays hors de sa zone, VPN ou abonnement), l'intégration le dit.*
+    *   *Session : seul le jeton de rafraîchissement de la session est conservé, et l'intégration le renouvelle elle-même ; un redémarrage de Home Assistant ne demande donc rien. Si Molotov ne l'accepte plus, Home Assistant propose de relier le compte de nouveau avec un nouveau code, sans avoir à supprimer puis recréer l'intégration.*
+    *   *Appareil déclaré : l'intégration s'annonce auprès du backend avec un identifiant d'appareil créé pour elle à la liaison et conservé ensuite. Il reste le même après un redémarrage, un rechargement ou une nouvelle liaison, donc le compte ne se remplit pas d'appareils. L'appareil est déclaré sous le nom « Home Assistant ».*
+    *   *Une intégration configurée avant avec un email et un mot de passe continue de s'en servir ; si Molotov demande alors un code par email, elle propose de relier le compte par code, et le mot de passe est oublié.*
 
 ### Options & Ajustements
 
@@ -172,8 +173,8 @@ L'intégration mémorise automatiquement votre position pour le contenu VOD (rep
 
 *   **Encodage des entrées :** Les requêtes de recherche sont correctement encodées (URL-encoding) avant d'être envoyées à l'API pour éviter toute injection de paramètres.
 *   **HTTPS uniquement :** Toutes les communications avec l'API Molotov utilisent HTTPS.
-*   **Stockage sécurisé :** Les identifiants sont stockés via le système de configuration chiffré de Home Assistant.
-*   **Tokens en mémoire :** Les tokens d'accès et de rafraîchissement sont conservés uniquement en mémoire et ne sont pas persistés sur le disque.
+*   **Pas de mot de passe :** Le compte est relié par un code, comme un téléviseur ; l'intégration ne connaît pas le mot de passe (une intégration configurée avant par mot de passe le garde jusqu'à sa prochaine liaison par code).
+*   **Jeton de session :** Le jeton de rafraîchissement de la session est conservé dans la configuration de l'intégration, dans le stockage de Home Assistant, pour rouvrir la session après un redémarrage sans rien demander ; le jeton d'accès reste en mémoire.
 *   **Récepteur personnalisé :** Pour envoyer la position de lecture à Molotov, il reçoit le token d'accès de la session, et seulement pour une adresse de Molotov (fubo.tv ou molotov.tv). Il garde ce token, comme le jeton DRM, hors de l'état que le Chromecast donne aux autres appareils du réseau.
 
 ## 🏗️ Architecture
@@ -182,7 +183,7 @@ Le code suit une structure modulaire :
 *   **`__init__.py`** : Configuration de l'intégration, enregistrement du panneau latéral et des plateformes.
 *   **`const.py`** : Constantes, préfixes d'identifiants médias, chaîne user-agent.
 *   **`models.py`** : Dataclasses partagées (`EpgProgram`, `EpgChannel`, `EpgData`, `BrowseAsset`).
-*   **`config_flow.py`** : Flux de configuration (email/mot de passe + options).
+*   **`config_flow.py`** : Flux de configuration (liaison par code + options).
 *   **`api.py`** : Client HTTP Molotov avec retry automatique et gestion des tokens.
 *   **`coordinator.py`** : Coordinateur HA pour les mises à jour EPG, parsing des données brutes. Le guide arrive par pages de 100 chaînes, toutes lues.
 *   **`helpers.py`** : Identifiant d'appareil, parsing (timestamps, images, programmes EPG, assets) et découverte des cibles de cast.

@@ -35,12 +35,14 @@ refresh-and-retry, 5xx/429 backoff, auth locking) is provider-agnostic.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
 import random
 from typing import Any
+import uuid
 from urllib.parse import quote, urljoin
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
@@ -177,6 +179,13 @@ class MolotovAuthError(MolotovApiError):
     """Authentication failed."""
 
 
+# Why a session could not be opened without the user: the backend asks for a
+# code it sent by email, or there is no password to sign in with (an entry
+# linked by code). Either way the account has to be linked again.
+MFA_REQUIRED = "MFA_REQUIRED"
+LINK_REQUIRED = "LINK_REQUIRED"
+
+
 @dataclass
 class MolotovSession:
     """Holds session-level data for the Fubo backend."""
@@ -184,6 +193,8 @@ class MolotovSession:
     access_token: str | None = None
     refresh_token: str | None = None
     user_id: str | None = None
+    # The account's email, when the backend gives it with the user.
+    email: str | None = None
     profile_id: str | None = None
     # None for Fubo (no official receiver app id); the media player then falls
     # back to the custom receiver, which is what handles Fubo's Widevine DRM.
@@ -197,15 +208,22 @@ class MolotovApi:
     def __init__(
         self,
         session: ClientSession,
-        email: str,
-        password: str,
+        email: str | None,
+        password: str | None,
         environment: str,
         language: str,
         device_id: str,
+        refresh_token: str | None = None,
+        on_refresh_token: Callable[[str], None] | None = None,
     ) -> None:
         self._session = session
         self._email = email
+        # None for an account linked by code, which signs in only with its
+        # refresh token.
         self._password = password
+        # Told each new refresh token, for the caller to keep: the next start
+        # opens its session with it rather than by signing in.
+        self._on_refresh_token = on_refresh_token
         if environment not in ENVIRONMENTS:
             environment = DEFAULT_ENVIRONMENT
         self._environment = environment
@@ -220,8 +238,13 @@ class MolotovApi:
         # defaulted to keep a forgetful caller from silently registering a new
         # device on every setup.
         self._device_id = device_id
-        self._session_state = MolotovSession(device_id=self._device_id)
+        self._session_state = MolotovSession(
+            device_id=self._device_id, refresh_token=refresh_token
+        )
         self._lock = asyncio.Lock()
+        # The device id the last link code was asked for with (see
+        # async_request_link_code).
+        self._link_device_id = device_id
 
     @property
     def session_state(self) -> MolotovSession:
@@ -285,14 +308,28 @@ class MolotovApi:
 
     # --- Authentication -------------------------------------------------
 
-    async def async_login(self) -> None:
-        """Sign in and load the user/profile ids."""
+    async def async_start_session(self) -> None:
+        """Open a session: with the kept refresh token, else by signing in."""
 
         async with self._lock:
+            refresh_token = self._session_state.refresh_token
+            if refresh_token:
+                try:
+                    if await self._async_refresh(refresh_token):
+                        await self._async_load_user()
+                        return
+                except MolotovAuthError as err:
+                    _LOGGER.debug("Kept refresh token rejected: %s", err)
             await self._async_login()
 
     async def _async_login(self) -> None:
         """Sign in and load the user/profile ids; the caller holds the lock."""
+
+        if not self._email or not self._password:
+            raise MolotovAuthError(
+                "No session left and no password to sign in with: link again",
+                code=LINK_REQUIRED,
+            )
 
         # The account email goes in a "username" field and the tokens come
         # back wrapped in a {type, payload} envelope. The older flat
@@ -304,12 +341,22 @@ class MolotovApi:
             auth=False,
             json={"username": self._email, "password": self._password},
         )
+        if str(data.get("type", "")).upper() == "MFA":
+            # The account wants a code it sent by email, which a sign-in
+            # without the user cannot give: it has to be linked by code.
+            raise MolotovAuthError(
+                "Molotov asks for a code sent by email: link again",
+                code=MFA_REQUIRED,
+            )
         tokens = data.get("payload", data)
         access_token = tokens.get("access_token")
         if not access_token:
             raise MolotovAuthError("Login response did not include access token")
-        self._session_state.access_token = access_token
-        self._session_state.refresh_token = tokens.get("refresh_token")
+        self._set_tokens(access_token, tokens.get("refresh_token"))
+        await self._async_load_user()
+
+    async def _async_load_user(self) -> None:
+        """Load the user and profile ids for a fresh access token."""
 
         # The fresh token cannot 401, so disable the refresh-and-retry path
         # here to avoid re-entering the auth lock we already hold.
@@ -324,6 +371,72 @@ class MolotovApi:
             raise MolotovAuthError("Account has no usable profile")
         self._session_state.user_id = str(user_id)
         self._session_state.profile_id = str(profile_id)
+        email = account.get("email")
+        self._session_state.email = email if isinstance(email, str) and email else None
+
+    def _set_tokens(self, access_token: str, refresh_token: str | None) -> None:
+        """Take a fresh pair of tokens; a new refresh token is passed on."""
+
+        self._session_state.access_token = access_token
+        if refresh_token and refresh_token != self._session_state.refresh_token:
+            self._session_state.refresh_token = refresh_token
+            if self._on_refresh_token is not None:
+                self._on_refresh_token(refresh_token)
+
+    # --- Linking by code, as a TV does ----------------------------------
+
+    async def async_request_link_code(self) -> tuple[str, int]:
+        """Ask for a code to confirm on molotov.tv/tv, and how long it lasts (s).
+
+        The backend ties a code to the device id it is asked with, and asked
+        again with the same id it hands back the same code, expired or not:
+        each code is asked for with an id of its own, as the TV apps do, which
+        only its poll uses. The session it opens goes on with this client's
+        device id.
+        """
+
+        self._link_device_id = str(uuid.uuid4())
+        data = await self._request(
+            "GET",
+            "signin/code",
+            auth=False,
+            headers={"x-device-id": self._link_device_id},
+        )
+        code = data.get("code")
+        if not isinstance(code, str) or not code:
+            raise MolotovApiError("No link code in the backend's answer")
+        try:
+            lifetime = int(data["expires_at"]) - int(data["issued_at"])
+        except (KeyError, TypeError, ValueError):
+            lifetime = 0
+        return code, max(lifetime, 60)
+
+    async def async_poll_link_code(self, code: str) -> bool:
+        """Whether [code] was confirmed; the session is then open.
+
+        While it waits the backend answers without tokens, or with an error,
+        which the caller takes as not yet.
+        """
+
+        data = await self._request(
+            "POST",
+            "signin/code",
+            auth=False,
+            json={"code": code},
+            headers={"x-device-id": self._link_device_id},
+            _retry=False,
+        )
+        signin = data.get("data")
+        if not isinstance(signin, dict):
+            return False
+        tokens = signin.get("payload", signin)
+        access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
+        if not access_token:
+            return False
+        async with self._lock:
+            self._set_tokens(access_token, tokens.get("refresh_token"))
+            await self._async_load_user()
+        return True
 
     async def async_refresh_token(
         self, force: bool = False, used_token: str | None = None
@@ -350,9 +463,11 @@ class MolotovApi:
                     # propagates; only a rejected token falls through.
                     _LOGGER.debug("Refresh token rejected: %s", err)
 
-            # The refresh token is missing or no longer accepted. The stored
-            # credentials are still good, so open a new session rather than
-            # making the user re-enter a password that has not changed.
+            # The refresh token is missing or no longer accepted. Stored
+            # credentials, where there are any, are still good, so open a new
+            # session rather than making the user re-enter a password that has
+            # not changed. An account linked by code has none: it is linked
+            # again (LINK_REQUIRED).
             _LOGGER.debug("Signing in again to replace the expired session")
             await self._async_login()
 
@@ -370,17 +485,14 @@ class MolotovApi:
         access_token = tokens.get("access_token")
         if not access_token:
             return False
-        self._session_state.access_token = access_token
-        new_refresh = tokens.get("refresh_token")
-        if new_refresh:
-            self._session_state.refresh_token = new_refresh
+        self._set_tokens(access_token, tokens.get("refresh_token"))
         return True
 
     async def async_ensure_logged_in(self) -> None:
         """Ensure an access token is present; a stale one is refreshed on 401."""
 
         if not self._session_state.access_token:
-            await self.async_login()
+            await self.async_start_session()
 
     # --- Content (server-driven page API) -------------------------------
 

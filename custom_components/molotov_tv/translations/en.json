@@ -2,31 +2,24 @@
   "title": "Molotov TV",
   "config": {
     "step": {
-      "user": {
-        "title": "Connect to Molotov",
-        "description": "Sign in with your Molotov account.",
-        "data": {
-          "email": "Email",
-          "password": "Password"
-        }
-      },
       "reauth_confirm": {
-        "title": "Re-authenticate with Molotov",
-        "description": "Enter the password for {email}.",
-        "data": {
-          "password": "Password"
-        }
+        "title": "Link the Molotov account again",
+        "description": "The Molotov session can no longer be renewed. Submit to get a code to enter at {url}."
+      },
+      "expired": {
+        "title": "Code expired",
+        "description": "The code was not entered in time. Submit to get a new one."
       }
     },
-    "error": {
-      "cannot_connect": "Failed to connect to Molotov.",
-      "invalid_auth": "Invalid email or password.",
-      "unavailable_here": "Molotov refuses the service from this connection (a country outside its area, a VPN, or a subscription without it): {message}",
-      "account_blocked": "This Molotov account is blocked: {message}",
-      "sign_in_refused": "Molotov refused the sign-in: {message}"
+    "progress": {
+      "link": "At **{url}** (or in etincelle: Paramètres > Connecter une TV), sign in to your Molotov account and enter the code:\n\n# {code}\n\nIt is valid for {minutes} minutes. This page goes on by itself once the code is entered."
     },
     "abort": {
-      "reauth_successful": "Re-authentication was successful."
+      "already_configured": "This Molotov account is already configured.",
+      "reauth_successful": "Account linked again.",
+      "cannot_connect": "Failed to connect to Molotov.",
+      "unavailable_here": "Molotov refuses the service from this connection (a country outside its area, a VPN, or a subscription without it). {message}",
+      "wrong_account": "The code was entered with another Molotov account than this entry's."
     }
   },
   "options": {

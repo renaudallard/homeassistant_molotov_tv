@@ -24,28 +24,39 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Config flow for Molotov TV."""
+"""Config flow for Molotov TV.
+
+The account is linked as a TV is: the flow shows a code, the user confirms it
+on molotov.tv/tv (or in etincelle, under Connecter une TV), and the backend
+hands over a session. No password is asked for or kept, and an account that
+asks for a code by email at each sign-in links all the same. Only the refresh
+token is kept, with a device id made for the entry.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
 import logging
+import time
+import uuid
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import MolotovApi, MolotovApiError, MolotovAuthError
+from .api import MolotovApi, MolotovApiError
 from .const import (
+    CONF_CAST_HOSTS,
     CONF_CAST_TARGET,
     CONF_CAST_TARGETS,
-    CONF_CAST_HOSTS,
+    CONF_DEVICE_ID,
     CONF_EMAIL,
     CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     DEFAULT_ENVIRONMENT,
     DOMAIN,
 )
@@ -53,29 +64,22 @@ from .helpers import async_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
-# The backend error code that alone means a wrong email or password: it also
-# answers 401 for an expired session, an expired two-factor code and more.
-WRONG_CREDENTIALS = "INVALID_USERNAME_PASSWORD"
+# Where the user confirms the code, as shown in the flow.
+LINK_URL = "molotov.tv/tv"
+
+# How often the flow asks whether the code was confirmed, and how long before
+# the code runs out it stops asking (a confirmation then would come too late).
+LINK_POLL_S = 4
+LINK_MARGIN_S = 10
 
 
-def _sign_in_error(err: MolotovApiError) -> tuple[str, str]:
-    """Return the form error key for a failed sign-in, and the backend's words.
+def _request_error(err: MolotovApiError) -> str:
+    """Return the abort reason for a code that could not be had."""
 
-    The backend's own message comes in the language asked for (French), and
-    says more than a guess would: it is shown where the backend gave one.
-    """
-
-    said = err.user_message or err.code or (f"HTTP {err.status}" if err.status else "")
     if err.status == 451:
         # Region, VPN or subscription: the service is refused from here.
-        return "unavailable_here", said
-    if err.status == 403:
-        return "account_blocked", said
-    if isinstance(err, MolotovAuthError):
-        if err.code in (None, WRONG_CREDENTIALS):
-            return "invalid_auth", said
-        return "sign_in_refused", said
-    return "cannot_connect", said
+        return "unavailable_here"
+    return "cannot_connect"
 
 
 class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -83,87 +87,149 @@ class MolotovTvConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        self._api: MolotovApi | None = None
+        self._device_id: str | None = None
+        self._code = ""
+        self._lifetime = 0
+        self._wait: asyncio.Task[bool] | None = None
+
     async def async_step_user(self, user_input: dict | None = None):
-        errors: dict[str, str] = {}
-        said = ""
-
-        if user_input is not None:
-            try:
-                await _async_validate_input(self.hass, user_input)
-            except MolotovAuthError as err:
-                errors["base"], said = _sign_in_error(err)
-                _LOGGER.warning(
-                    "Molotov authentication failed during config flow: %s", err
-                )
-            except MolotovApiError as err:
-                errors["base"], said = _sign_in_error(err)
-                _LOGGER.exception(
-                    "Molotov API error during config flow validation: %s",
-                    err,
-                )
-            else:
-                email = user_input[CONF_EMAIL].strip()
-                for entry in self._async_current_entries():
-                    if entry.data.get(CONF_EMAIL, "").lower() == email.lower():
-                        return self.async_abort(reason="already_configured")
-                await self.async_set_unique_id(email.lower())
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"Molotov TV ({email})",
-                    data={
-                        CONF_EMAIL: email,
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    },
-                )
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_EMAIL): str,
-                vol.Required(CONF_PASSWORD): str,
-            }
-        )
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=data_schema,
-            description_placeholders={"message": said},
-            errors=errors,
-        )
+        """Link a new account with a device id of its own."""
+        self._device_id = str(uuid.uuid4())
+        return await self.async_step_link()
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
-        """Handle re-authentication when the stored credentials stop working."""
+        """Link the account again when its session can no longer be renewed."""
+        # The same device as before: an entry set up with a password has its
+        # id derived from the email.
+        self._device_id = entry_data.get(CONF_DEVICE_ID) or await async_device_id(
+            self.hass, entry_data.get(CONF_EMAIL) or ""
+        )
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input: dict | None = None):
-        """Prompt for the password and update the existing entry."""
-        errors: dict[str, str] = {}
-        said = ""
-        reauth_entry = self._get_reauth_entry()
-        email = reauth_entry.data.get(CONF_EMAIL, "")
-
+        """Say why the account is to be linked again, then show a code."""
         if user_input is not None:
-            data = {CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]}
-            try:
-                await _async_validate_input(self.hass, data)
-            except MolotovAuthError as err:
-                errors["base"], said = _sign_in_error(err)
-                _LOGGER.warning("Molotov re-authentication failed: %s", err)
-            except MolotovApiError as err:
-                errors["base"], said = _sign_in_error(err)
-                _LOGGER.exception("Molotov API error during reauth: %s", err)
-            else:
-                return self.async_update_reload_and_abort(reauth_entry, data=data)
-
+            return await self.async_step_link()
         return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
-            description_placeholders={"email": email, "message": said},
-            errors=errors,
+            step_id="reauth_confirm", description_placeholders={"url": LINK_URL}
         )
+
+    async def async_step_link(self, user_input: dict | None = None):
+        """Show a code and wait for the user to confirm it."""
+        if self._wait is None:
+            assert self._device_id is not None
+            self._api = MolotovApi(
+                async_get_clientsession(self.hass),
+                email=None,
+                password=None,
+                environment=DEFAULT_ENVIRONMENT,
+                language="fr",
+                device_id=self._device_id,
+            )
+            try:
+                self._code, self._lifetime = await self._api.async_request_link_code()
+            except MolotovApiError as err:
+                _LOGGER.warning("Could not get a Molotov link code: %s", err)
+                return self.async_abort(
+                    reason=_request_error(err),
+                    description_placeholders={"message": err.user_message or ""},
+                )
+            self._wait = self.hass.async_create_task(self._async_wait_for_link())
+        if not self._wait.done():
+            return self.async_show_progress(
+                step_id="link",
+                progress_action="link",
+                progress_task=self._wait,
+                description_placeholders={
+                    "code": self._code,
+                    "url": LINK_URL,
+                    "minutes": str(max(1, self._lifetime // 60)),
+                },
+            )
+        try:
+            linked = self._wait.result()
+        except Exception:  # a failed wait is a code not confirmed
+            _LOGGER.exception("Waiting for the Molotov link code failed")
+            linked = False
+        self._wait = None
+        return self.async_show_progress_done(
+            next_step_id="finish" if linked else "expired"
+        )
+
+    async def async_step_expired(self, user_input: dict | None = None):
+        """The code ran out before it was confirmed: offer a new one."""
+        if user_input is not None:
+            return await self.async_step_link()
+        return self.async_show_form(step_id="expired")
+
+    async def async_step_finish(self, user_input: dict | None = None):
+        """Keep what the linked session needs and create or update the entry."""
+        assert self._api is not None
+        state = self._api.session_state
+        if not state.user_id or not state.refresh_token:
+            return self.async_abort(reason="cannot_connect")
+        data: dict[str, Any] = {
+            CONF_DEVICE_ID: self._device_id,
+            CONF_REFRESH_TOKEN: state.refresh_token,
+        }
+        if self.source == config_entries.SOURCE_REAUTH:
+            entry = self._get_reauth_entry()
+            if not _same_account(entry, state.user_id, state.email):
+                return self.async_abort(reason="wrong_account")
+            # A password kept from before linking existed is not needed any more.
+            kept = {k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
+            return self.async_update_reload_and_abort(entry, data={**kept, **data})
+        await self.async_set_unique_id(state.user_id)
+        self._abort_if_unique_id_configured()
+        if state.email:
+            for entry in self._async_current_entries():
+                if entry.data.get(CONF_EMAIL, "").lower() == state.email.lower():
+                    return self.async_abort(reason="already_configured")
+            data[CONF_EMAIL] = state.email
+        title = f"Molotov TV ({state.email})" if state.email else "Molotov TV"
+        return self.async_create_entry(title=title, data=data)
+
+    async def _async_wait_for_link(self) -> bool:
+        """Ask whether the code was confirmed until it is, or runs out."""
+        assert self._api is not None
+        deadline = time.monotonic() + max(LINK_POLL_S, self._lifetime - LINK_MARGIN_S)
+        while time.monotonic() < deadline:
+            await asyncio.sleep(LINK_POLL_S)
+            try:
+                if await self._api.async_poll_link_code(self._code):
+                    return True
+            except MolotovApiError as err:
+                _LOGGER.debug("Molotov link code not confirmed yet: %s", err)
+        return False
+
+    @callback
+    def async_remove(self) -> None:
+        """Stop waiting for a code when the flow is closed."""
+        if self._wait is not None and not self._wait.done():
+            self._wait.cancel()
 
     @staticmethod
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         return MolotovTvOptionsFlowHandler(config_entry)
+
+
+def _same_account(
+    entry: config_entries.ConfigEntry, user_id: str, email: str | None
+) -> bool:
+    """Whether the account just linked is the one [entry] is for.
+
+    An entry linked by code is known by the account id; one set up with a
+    password by its email, which the backend may not give back: it is then
+    taken on trust.
+    """
+    if entry.unique_id == user_id:
+        return True
+    known = entry.data.get(CONF_EMAIL)
+    if not known:
+        return False
+    return email is None or bool(known.lower() == email.lower())
 
 
 class MolotovTvOptionsFlowHandler(config_entries.OptionsFlow):
@@ -208,16 +274,3 @@ class MolotovTvOptionsFlowHandler(config_entries.OptionsFlow):
         )
 
         return self.async_show_form(step_id="init", data_schema=data_schema)
-
-
-async def _async_validate_input(hass: HomeAssistant, data: dict) -> None:
-    session = async_get_clientsession(hass)
-    api = MolotovApi(
-        session,
-        email=data[CONF_EMAIL],
-        password=data[CONF_PASSWORD],
-        environment=DEFAULT_ENVIRONMENT,
-        language="fr",
-        device_id=await async_device_id(hass, data[CONF_EMAIL]),
-    )
-    await api.async_login()

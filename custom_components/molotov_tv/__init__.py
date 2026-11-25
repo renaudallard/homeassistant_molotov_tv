@@ -38,16 +38,18 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.components.zeroconf import async_get_instance as async_get_zeroconf
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import MolotovApi, MolotovApiError, MolotovAuthError
 from .chromecast import set_zeroconf_instance
 from .const import (
+    CONF_DEVICE_ID,
     CONF_EMAIL,
     CONF_ENVIRONMENT,
     CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     DEFAULT_ENVIRONMENT,
     DOMAIN,
     ENVIRONMENTS,
@@ -71,8 +73,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     set_zeroconf_instance(zeroconf)
 
     data = entry.data
-    email = data[CONF_EMAIL]
-    password = data[CONF_PASSWORD]
+    # An account linked by code has neither email nor password, only its
+    # device id and refresh token; one set up with a password before linking
+    # existed has its email, password and a device id derived from the email.
+    email = data.get(CONF_EMAIL)
+    password = data.get(CONF_PASSWORD)
+    device_id = data.get(CONF_DEVICE_ID) or await async_device_id(hass, email or "")
     environment = data.get(CONF_ENVIRONMENT, DEFAULT_ENVIRONMENT)
     if environment not in ENVIRONMENTS:
         _LOGGER.warning(
@@ -82,17 +88,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         environment = DEFAULT_ENVIRONMENT
     session = async_get_clientsession(hass)
 
+    @callback
+    def keep_refresh_token(token: str) -> None:
+        # The next start opens its session with it, without signing in: an
+        # account that asks for a code by email could not sign in unattended.
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_REFRESH_TOKEN: token}
+        )
+
     api = MolotovApi(
         session,
         email=email,
         password=password,
         environment=environment,
         language="fr",
-        device_id=await async_device_id(hass, email),
+        device_id=device_id,
+        refresh_token=data.get(CONF_REFRESH_TOKEN),
+        on_refresh_token=keep_refresh_token,
     )
 
     try:
-        await api.async_login()
+        await api.async_start_session()
     except MolotovAuthError as err:
         raise ConfigEntryAuthFailed(str(err)) from err
     except MolotovApiError as err:

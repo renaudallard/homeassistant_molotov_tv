@@ -37,6 +37,8 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER, Platform.TEXT]
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
+CONF_DEVICE_ID = "device_id"
+CONF_REFRESH_TOKEN = "refresh_token"
 CONF_ENVIRONMENT = "environment"
 CONF_CAST_TARGET = "cast_target"
 CONF_CAST_TARGETS = "cast_targets"
