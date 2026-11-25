@@ -33,6 +33,7 @@ from datetime import datetime
 import json
 import logging
 import re
+import time
 from typing import Any
 import uuid
 from urllib.parse import unquote_plus
@@ -674,122 +675,39 @@ def parse_papi_search(data: Any, api: MolotovApi) -> list[BrowseAsset]:
 
 
 def discover_cast_targets_blocking(zconf: Any) -> list[str]:
-    """Discover Chromecast targets using pychromecast (blocking)."""
+    """Return the Chromecasts announced on the network, as name=host.
+
+    Read from their mDNS announcements alone, which carry name and address:
+    nothing is connected to, and no device is asked anything.
+    """
     try:
-        import pychromecast
-    except Exception:
+        from pychromecast.discovery import (
+            DISCOVER_TIMEOUT,
+            CastBrowser,
+            SimpleCastListener,
+        )
+    except ImportError:
         _LOGGER.debug("pychromecast import failed")
         return []
-
-    _LOGGER.debug(
-        "Discovering chromecasts, pychromecast version: %s",
-        getattr(pychromecast, "__version__", "unknown"),
-    )
-
-    try:
-        from pychromecast.discovery import stop_discovery
-    except ImportError:
-        stop_discovery = None
-        _LOGGER.debug("stop_discovery not available")
-
-    browser = None
-    chromecasts = None
-
-    try:
-        # Method 1: get_chromecasts (modern API)
-        if hasattr(pychromecast, "get_chromecasts"):
-            _LOGGER.debug("Trying get_chromecasts()")
-            try:
-                import inspect
-
-                sig = inspect.signature(pychromecast.get_chromecasts)
-                params = list(sig.parameters.keys())
-                _LOGGER.debug("get_chromecasts params: %s", params)
-
-                kwargs: dict[str, Any] = {"timeout": 10}
-                if zconf is not None and "zeroconf_instance" in params:
-                    kwargs["zeroconf_instance"] = zconf
-                result = pychromecast.get_chromecasts(**kwargs)
-                if isinstance(result, tuple) and len(result) >= 2:
-                    chromecasts, browser = result[0], result[1]
-                else:
-                    chromecasts = result
-                _LOGGER.debug(
-                    "get_chromecasts found %d devices",
-                    len(chromecasts) if chromecasts else 0,
-                )
-            except Exception as err:
-                _LOGGER.debug("get_chromecasts failed: %s", err)
-
-        # Method 2: get_listed_chromecasts (older API)
-        if chromecasts is None and hasattr(pychromecast, "get_listed_chromecasts"):
-            _LOGGER.debug("Trying get_listed_chromecasts()")
-            try:
-                import inspect
-
-                sig = inspect.signature(pychromecast.get_listed_chromecasts)
-                params = list(sig.parameters.keys())
-                _LOGGER.debug("get_listed_chromecasts params: %s", params)
-
-                kwargs2: dict[str, Any] = {}
-                if zconf is not None and "zeroconf_instance" in params:
-                    kwargs2["zeroconf_instance"] = zconf
-                result = pychromecast.get_listed_chromecasts(**kwargs2)
-                if isinstance(result, tuple) and len(result) >= 2:
-                    chromecasts, browser = result[0], result[1]
-                else:
-                    chromecasts = result
-                _LOGGER.debug(
-                    "get_listed_chromecasts found %d devices",
-                    len(chromecasts) if chromecasts else 0,
-                )
-            except Exception as err:
-                _LOGGER.debug("get_listed_chromecasts failed: %s", err)
-
-        if not chromecasts:
-            _LOGGER.debug("No chromecasts discovered")
-            return []
-
-        targets: list[str] = []
-        for cast in chromecasts:
-            host = getattr(cast, "host", None)
-            if not host and hasattr(cast, "cast_info"):
-                host = getattr(cast.cast_info, "host", None)
-            if not host and getattr(cast, "socket_client", None):
-                host = getattr(cast.socket_client, "host", None)
-            if not host:
-                _LOGGER.debug("Skipping cast without host: %s", cast)
-                continue
-
-            name = getattr(cast, "name", None)
-            if not name and hasattr(cast, "cast_info"):
-                name = getattr(cast.cast_info, "friendly_name", None)
-            if not name and getattr(cast, "device", None):
-                name = getattr(cast.device, "friendly_name", None)
-
-            # Strip the separators that split_manual_target uses (= and @) so
-            # a name containing one does not corrupt the alias=host round-trip.
-            safe_name = name.replace("=", " ").replace("@", " ").strip() if name else ""
-            if safe_name:
-                targets.append(f"{safe_name}={host}")
-                _LOGGER.debug("Discovered: %s=%s", safe_name, host)
-            else:
-                targets.append(str(host))
-                _LOGGER.debug("Discovered: %s", host)
-        return targets
-
-    except Exception as err:
-        _LOGGER.debug("Chromecast discovery failed: %s", err)
+    if zconf is None:
         return []
+    browser = CastBrowser(SimpleCastListener(), zconf)
+    browser.start_discovery()
+    try:
+        time.sleep(DISCOVER_TIMEOUT)
+        devices = list(browser.devices.values())
     finally:
-        if browser is not None and stop_discovery is not None:
-            try:
-                stop_discovery(browser)
-            except Exception:
-                pass
-
-
-# --- Device registry helpers ---
+        browser.stop_discovery()
+    targets: list[str] = []
+    for info in devices:
+        if not info.host:
+            continue
+        # Strip the separators that split_manual_target uses (= and @) so a
+        # name containing one does not corrupt the alias=host round-trip.
+        name = (info.friendly_name or "").replace("=", " ").replace("@", " ").strip()
+        targets.append(f"{name}={info.host}" if name else str(info.host))
+        _LOGGER.debug("Discovered: %s at %s", name, info.host)
+    return targets
 
 
 def extract_host_from_device_info(device_info: Any) -> str | None:
