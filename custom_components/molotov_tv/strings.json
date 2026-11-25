@@ -26,8 +26,9 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Select Chromecast media players or add hostnames for per-play casting.",
+        "description": "The Molotov profile the integration uses (continue watching, home), Chromecast media players, or hostnames for per-play casting.",
         "data": {
+          "profile": "Profile",
           "cast_targets": "Chromecast media players",
           "cast_hosts": "Chromecast hosts (one per line, optional name=host)"
         }

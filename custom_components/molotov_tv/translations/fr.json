@@ -26,8 +26,9 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Sélectionnez les lecteurs média Chromecast ou ajoutez des noms d'hôtes pour le casting par lecture.",
+        "description": "Le profil Molotov que l'intégration utilise (Continuer à regarder, accueil), les lecteurs média Chromecast, ou des noms d'hôtes pour le casting par lecture.",
         "data": {
+          "profile": "Profil",
           "cast_targets": "Lecteurs média Chromecast",
           "cast_hosts": "Hôtes Chromecast (un par ligne, optionnel nom=hôte)"
         }

@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
 import logging
@@ -195,6 +195,8 @@ class MolotovSession:
     user_id: str | None = None
     # The account's email, when the backend gives it with the user.
     email: str | None = None
+    # The account's profiles, as (id, name), the one in use among them.
+    profiles: list[tuple[str, str]] = field(default_factory=list)
     profile_id: str | None = None
     # None for Fubo (no official receiver app id); the media player then falls
     # back to the custom receiver, which is what handles Fubo's Widevine DRM.
@@ -215,6 +217,7 @@ class MolotovApi:
         device_id: str,
         refresh_token: str | None = None,
         on_refresh_token: Callable[[str], None] | None = None,
+        profile_id: str | None = None,
     ) -> None:
         self._session = session
         self._email = email
@@ -224,6 +227,9 @@ class MolotovApi:
         # Told each new refresh token, for the caller to keep: the next start
         # opens its session with it rather than by signing in.
         self._on_refresh_token = on_refresh_token
+        # The profile chosen in the options, used while the account has it; the
+        # backend answers continue watching and the home pages for it.
+        self._chosen_profile = profile_id
         if environment not in ENVIRONMENTS:
             environment = DEFAULT_ENVIRONMENT
         self._environment = environment
@@ -365,12 +371,25 @@ class MolotovApi:
         user_id = account.get("id")
         if not user_id:
             raise MolotovAuthError("Login response did not include user id")
-        profiles = account.get("profiles") or []
-        profile_id = profiles[0].get("id") if profiles else None
-        if not profile_id:
+        profiles = [
+            (str(p["id"]), str(p.get("name") or p["id"]))
+            for p in account.get("profiles") or []
+            if isinstance(p, dict) and p.get("id")
+        ]
+        if not profiles:
             raise MolotovAuthError("Account has no usable profile")
+        ids = [profile_id for profile_id, _name in profiles]
+        profile_id = ids[0]
+        if self._chosen_profile in ids:
+            profile_id = self._chosen_profile
+        elif self._chosen_profile:
+            _LOGGER.warning(
+                "The Molotov profile chosen in the options is gone, using %s",
+                profiles[0][1],
+            )
         self._session_state.user_id = str(user_id)
-        self._session_state.profile_id = str(profile_id)
+        self._session_state.profile_id = profile_id
+        self._session_state.profiles = profiles
         email = account.get("email")
         self._session_state.email = email if isinstance(email, str) and email else None
 

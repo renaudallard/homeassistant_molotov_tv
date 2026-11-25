@@ -56,6 +56,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_EMAIL,
     CONF_PASSWORD,
+    CONF_PROFILE,
     CONF_REFRESH_TOKEN,
     DEFAULT_ENVIRONMENT,
     DOMAIN,
@@ -232,8 +233,8 @@ def _same_account(
     return email is None or bool(known.lower() == email.lower())
 
 
-class MolotovTvOptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle Molotov TV options."""
+class MolotovTvOptionsFlowHandler(config_entries.OptionsFlowWithReload):
+    """Handle Molotov TV options; a change reloads the entry."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -256,8 +257,30 @@ class MolotovTvOptionsFlowHandler(config_entries.OptionsFlow):
         elif not isinstance(existing_hosts, str):
             existing_hosts = ""
 
+        fields: dict[Any, Any] = {}
+        # The profile, among those the running entry's session knows of: only
+        # an account with more than one has a choice to make.
+        loaded = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        state = loaded["api"].session_state if loaded else None
+        if state is not None and len(state.profiles) > 1:
+            fields[
+                vol.Optional(
+                    CONF_PROFILE,
+                    default=self._config_entry.options.get(CONF_PROFILE)
+                    or state.profile_id,
+                )
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=profile_id, label=name)
+                        for profile_id, name in state.profiles
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
         data_schema = vol.Schema(
             {
+                **fields,
                 vol.Optional(
                     CONF_CAST_TARGETS,
                     default=existing_targets or [],

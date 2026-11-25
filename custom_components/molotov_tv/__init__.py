@@ -47,6 +47,7 @@ from .const import (
     CONF_EMAIL,
     CONF_ENVIRONMENT,
     CONF_PASSWORD,
+    CONF_PROFILE,
     CONF_REFRESH_TOKEN,
     DEFAULT_ENVIRONMENT,
     DOMAIN,
@@ -99,6 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_id=device_id,
         refresh_token=data.get(CONF_REFRESH_TOKEN),
         on_refresh_token=keep_refresh_token,
+        profile_id=entry.options.get(CONF_PROFILE),
     )
 
     try:

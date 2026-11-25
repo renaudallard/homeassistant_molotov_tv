@@ -74,6 +74,7 @@ Cette intégration n'est pas (encore) incluse par défaut dans HACS. Vous devez 
 ### Options & Ajustements
 
 Cliquez sur **Configurer** sur l'entrée de l'intégration pour accéder aux paramètres :
+*   **Profil :** Pour un compte qui en a plusieurs, le profil Molotov que l'intégration utilise : « Continuer à regarder » et les pages d'accueil sont celles de ce profil. Par défaut, le premier du compte. Le changer recharge l'intégration.
 *   **Cibles de cast :** Sélectionnez manuellement des entités `media_player` spécifiques si l'auto-découverte les manque.
 *   **Hôtes de cast :** Ajoutez manuellement les adresses IP des appareils Chromecast (une par ligne) s'ils se trouvent sur un sous-réseau différent.
 
