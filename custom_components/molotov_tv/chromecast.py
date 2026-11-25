@@ -65,6 +65,9 @@ class CastConnection:
     last_title: str | None = None
     is_live: bool = False
     listeners: list[Any] = field(default_factory=list)
+    # What passes on the custom receiver's ad break report (see
+    # _ad_skip_handler), registered again on a reconnection.
+    ad_skip_handler: Any = None
 
 
 # Store active cast connections for control: host -> CastConnection
@@ -79,6 +82,39 @@ _callbacks_lock = threading.Lock()
 
 class MolotovCastError(Exception):
     """Raised when Chromecast casting fails."""
+
+
+# The Cast media namespace, whose statuses the custom receiver puts its ad
+# break report in.
+MEDIA_NAMESPACE = "urn:x-cast:com.google.cast.media"
+
+
+def _ad_skip_handler(callback: Callable[[dict[str, Any]], None]) -> Any:
+    """Return a handler of the media messages passing on the ad break report.
+
+    The custom receiver says in its media status's own customData (ad_skip)
+    whether it offers to skip an ad break, and where to (skip_to, media time).
+    pychromecast's media controller keeps only the media's customData, so the
+    statuses are read here as well, beside it.
+    """
+    from pychromecast.controllers import BaseController
+
+    class AdSkipHandler(BaseController):
+        def __init__(self) -> None:
+            super().__init__(MEDIA_NAMESPACE)
+
+        def receive_message(self, _message: Any, data: dict) -> bool:
+            if data.get("type") != "MEDIA_STATUS":
+                return False
+            for entry in data.get("status") or []:
+                custom = entry.get("customData") if isinstance(entry, dict) else None
+                report = custom.get("ad_skip") if isinstance(custom, dict) else None
+                if isinstance(report, dict):
+                    # pychromecast logs what a handler raises.
+                    callback(report)
+            return True
+
+    return AdSkipHandler()
 
 
 class MediaStatusListener:
@@ -327,6 +363,11 @@ def _attempt_reconnect(host: str) -> bool:
                     cast.media_controller.register_status_listener(listener)
                 except Exception as err:
                     _LOGGER.debug("Failed to re-register listener: %s", err)
+            if conn.ad_skip_handler is not None:
+                try:
+                    cast.register_handler(conn.ad_skip_handler)
+                except Exception as err:
+                    _LOGGER.debug("Failed to re-register the ad break handler: %s", err)
 
             # Update connection only if it's still registered
             old_cast = None
@@ -799,10 +840,15 @@ async def async_cast_skip_back(
 
 
 async def async_cast_register_listener(
-    hass: HomeAssistant, host: str, callback: Any
+    hass: HomeAssistant,
+    host: str,
+    callback: Any,
+    on_ad_skip: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
-    """Register a status listener for the active cast."""
-    await hass.async_add_executor_job(_cast_register_listener, host, callback)
+    """Register a status listener for the active cast, and an ad break one."""
+    await hass.async_add_executor_job(
+        _cast_register_listener, host, callback, on_ad_skip
+    )
 
 
 async def async_cast_select_track(
@@ -812,7 +858,11 @@ async def async_cast_select_track(
     await hass.async_add_executor_job(_cast_select_track, host, track_id)
 
 
-def _cast_register_listener(host: str, callback: Any) -> None:
+def _cast_register_listener(
+    host: str,
+    callback: Any,
+    on_ad_skip: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
     conn = get_cast_connection(host)
     if not conn:
         return
@@ -828,6 +878,11 @@ def _cast_register_listener(host: str, callback: Any) -> None:
             if listener not in conn.listeners:
                 conn.listeners.append(listener)
         _LOGGER.debug("Registered status listener for %s", host)
+        if on_ad_skip is not None:
+            handler = _ad_skip_handler(on_ad_skip)
+            conn.cast.register_handler(handler)
+            with _cast_lock:
+                conn.ad_skip_handler = handler
     except Exception as err:
         _LOGGER.warning("Failed to register listener: %s", err)
 

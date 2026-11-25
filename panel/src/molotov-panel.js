@@ -4,6 +4,7 @@
  */
 
 import { LitElement, html, css } from "lit-element";
+import { makeAdSkip } from "./ad-skip.js";
 
 const VERSION = "0.1.22";
 
@@ -1274,6 +1275,12 @@ class MolotovPanel extends LitElement {
     this._player = null;
     this._entityUnsubscribe = null;
     this._showPlayOverlay = false;
+    // The ad break search of the stream played here (the receiver's, see
+    // ad-skip.js), whether it offers to skip the break playback is in, and
+    // where the receiver of the focused cast offers to skip to (media time).
+    this._adSkip = null;
+    this._adOffer = false;
+    this._castSkipTo = null;
     // Player state
     this._currentTime = 0;
     this._duration = 0;
@@ -2293,6 +2300,12 @@ class MolotovPanel extends LitElement {
           drm: drm,
           selectedTrack: selectedTrack,
           title: state.attributes.media_title || "En direct",
+          // What the ad break search needs, as the receiver is given it.
+          breakSearch: {
+            live_thumbnails_url: myStream.live_thumbnails_url,
+            recording: myStream.recording,
+            separated_breaks: myStream.separated_breaks,
+          },
         };
         this._playing = true;
         this._localMinimized = false;
@@ -2331,6 +2344,8 @@ class MolotovPanel extends LitElement {
 
       this._activeCasts = activeCasts;
       this._focusedCastHost = castTarget || null;
+      const skipTo = castTarget ? activeCasts[castTarget]?.skip_to : null;
+      this._castSkipTo = typeof skipTo === "number" ? skipTo : null;
 
       if (!this._castPlaying || this._castTarget !== castTarget) {
         this._castPlaying = true;
@@ -2365,6 +2380,7 @@ class MolotovPanel extends LitElement {
         this._castLoading = false;
         this._activeCasts = {};
         this._focusedCastHost = null;
+        this._castSkipTo = null;
         this._stopCastProgressUpdate();
       }
     }
@@ -2425,6 +2441,8 @@ class MolotovPanel extends LitElement {
       this._player.reset();
       this._player = null;
     }
+    this._adSkip = null;
+    this._adOffer = false;
 
     if (this._updateInterval) {
       clearInterval(this._updateInterval);
@@ -2468,6 +2486,7 @@ class MolotovPanel extends LitElement {
 
       // Initialize player
       player.initialize(video, this._streamData.url, true);
+      this._adSkip = makeAdSkip(this._adSkipEnv(video, player));
 
       // Set audio language
       const selectedTrack = this._streamData.selectedTrack;
@@ -2492,6 +2511,10 @@ class MolotovPanel extends LitElement {
 
       player.on(window.dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
         console.log("[Molotov Panel] Stream initialized");
+        // Once the player knows whether the stream is live.
+        if (this._player === player && this._adSkip) {
+          this._adSkip.load({ contentId: this._streamData.url }, this._streamData.breakSearch);
+        }
         this._enforceAudioLanguage(player, selectedTrack);
         this._updateTracks();
         this._startProgressUpdate();
@@ -2540,6 +2563,53 @@ class MolotovPanel extends LitElement {
     }
   }
 
+  // What the ad break search knows of the player (see makeAdSkip in ad-skip.js):
+  // the video element's times, which dash.js turns into times of day.
+  _adSkipEnv(video, player) {
+    const utc = () => {
+      try {
+        const time = player.timeAsUTC();
+        return typeof time === "number" && isFinite(time) ? time : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    return {
+      isLive: () => {
+        try {
+          return player.isDynamic();
+        } catch (e) {
+          return false;
+        }
+      },
+      joining: () => this._playerLoading,
+      state: () => (video.paused ? "paused" : video.readyState >= 2 ? "playing" : "other"),
+      currentTime: () => video.currentTime,
+      liveRange: () =>
+        video.seekable && video.seekable.length
+          ? { start: video.seekable.start(0), end: video.seekable.end(video.seekable.length - 1) }
+          : null,
+      absoluteTime: (media) => {
+        const now = utc();
+        return now === null ? null : now + (media - video.currentTime);
+      },
+      mediaTime: (absolute) => {
+        const now = utc();
+        return now === null ? null : video.currentTime + (absolute - now);
+      },
+      show: (on) => {
+        if (this._adOffer !== on) {
+          this._adOffer = on;
+          this.requestUpdate();
+        }
+        return on;
+      },
+      seek: (media) => {
+        video.currentTime = media;
+      },
+    };
+  }
+
   _startProgressUpdate() {
     if (this._updateInterval) {
       clearInterval(this._updateInterval);
@@ -2557,6 +2627,7 @@ class MolotovPanel extends LitElement {
     this._currentTime = video.currentTime;
     this._duration = video.duration || 0;
     this._paused = video.paused;
+    if (this._adSkip) this._adSkip.tick();
 
     // Track how far behind the live edge we are
     if (this._isLive && video.seekable && video.seekable.length > 0) {
@@ -2715,6 +2786,8 @@ class MolotovPanel extends LitElement {
       }
       this._player = null;
     }
+    this._adSkip = null;
+    this._adOffer = false;
 
     this._audioTracks = [];
     this._textTracks = [];
@@ -2823,7 +2896,10 @@ class MolotovPanel extends LitElement {
   _localSkipBack30() { this._localSeek(-30); }
   _localSkipBack10() { this._localSeek(-10); }
   _localSkipForward30() { this._localSeek(30); }
-  _localSkipPubs() { this._localSeek(480); }
+  // To the end of the ad break the search offers to skip.
+  _localSkipAd() {
+    if (this._adSkip) this._adSkip.skip();
+  }
 
   _handleProgressClick(e) {
     const progressBar = e.currentTarget;
@@ -3615,10 +3691,12 @@ class MolotovPanel extends LitElement {
                   <button class="icon-btn" @click=${this._localSkipForward30}>
                     <ha-icon icon="mdi:fast-forward-30"></ha-icon>
                   </button>
-                  <button class="icon-btn pubs-btn" @click=${this._localSkipPubs}>
-                    <ha-icon icon="mdi:fast-forward"></ha-icon>
-                    <span class="pubs-label">Pubs</span>
-                  </button>
+                  ${this._adOffer
+                    ? html`<button class="icon-btn pubs-btn" @click=${this._localSkipAd}>
+                        <ha-icon icon="mdi:skip-forward"></ha-icon>
+                        <span class="pubs-label">Passer la pub</span>
+                      </button>`
+                    : ""}
 
                   <div class="volume-container">
                     <button class="icon-btn" @click=${this._toggleMute}>
@@ -3788,10 +3866,12 @@ class MolotovPanel extends LitElement {
                   <button class="icon-btn" @click=${this._castSkipForward}>
                     <ha-icon icon="mdi:fast-forward-30"></ha-icon>
                   </button>
-                  <button class="icon-btn pubs-btn" @click=${this._castSkipPubs}>
-                    <ha-icon icon="mdi:fast-forward"></ha-icon>
-                    <span class="pubs-label">Pubs</span>
-                  </button>
+                  ${this._castSkipTo !== null
+                    ? html`<button class="icon-btn pubs-btn" @click=${this._castSkipAd}>
+                        <ha-icon icon="mdi:skip-forward"></ha-icon>
+                        <span class="pubs-label">Passer la pub</span>
+                      </button>`
+                    : ""}
 
                   <div class="volume-container">
                     <button class="icon-btn" @click=${this._toggleCastMute}>
@@ -3938,6 +4018,7 @@ class MolotovPanel extends LitElement {
     this._castTitle = null;
     this._activeCasts = {};
     this._focusedCastHost = null;
+    this._castSkipTo = null;
     this._stopCastProgressUpdate();
     this._castMinimized = false;
     this._castLoading = false;
@@ -4010,8 +4091,9 @@ class MolotovPanel extends LitElement {
     await this._castSeek(Math.max(0, this._currentTime - 10));
   }
 
-  async _castSkipPubs() {
-    await this._castSeek(Math.min(this._duration || Infinity, this._currentTime + 480));
+  // To where the receiver offers to skip the ad break, as its pill on the TV does.
+  async _castSkipAd() {
+    if (this._castSkipTo !== null) await this._castSeek(this._castSkipTo);
   }
 
   async _handleCastSeek(e) {

@@ -127,6 +127,7 @@ from .const import (
     MEDIA_TONIGHT_EPG,
     CUSTOM_RECEIVER_APP_ID,
     NO_GUESS_CHANNELS,
+    SEPARATED_CHANNELS,
 )
 from .coordinator import MolotovEpgCoordinator
 from .helpers import (
@@ -179,6 +180,9 @@ class CastSessionState:
     player_state: MediaPlayerState = MediaPlayerState.IDLE
     tracks: dict = field(default_factory=dict)
     current_track_id: int | None = None
+    # Where the custom receiver offers to skip the ad break playback is in
+    # (media time, s); None when it offers none.
+    skip_to: float | None = None
 
 
 async def async_setup_entry(
@@ -192,6 +196,10 @@ async def async_setup_entry(
     resume_store: ResumePositionStore = data["resume_store"]
     async_add_entities([MolotovTvMediaPlayer(entry, coordinator, api, resume_store)])
 
+
+# Where a local stream's entry keeps what the panel needs for its ad break
+# search (see _break_custom_data).
+LOCAL_BREAK_SEARCH = "_break_search"
 
 # How long a record button offered in the browser stays playable.
 RECORD_ACTION_TTL = timedelta(minutes=30)
@@ -585,7 +593,10 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         if self._local_streams:
             local_streams = {}
             for session_id, asset_data in self._local_streams.items():
-                local_streams[session_id] = self._extract_stream_attrs(asset_data)
+                local_streams[session_id] = {
+                    **self._extract_stream_attrs(asset_data),
+                    **asset_data.get(LOCAL_BREAK_SEARCH, {}),
+                }
             attrs["local_streams"] = local_streams
 
         # Multi-cast session status
@@ -600,6 +611,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                     "muted": s.muted,
                     "connected": s.connected,
                     "state": s.player_state,
+                    "skip_to": s.skip_to,
                 }
                 for host, s in self._cast_sessions.items()
             }
@@ -911,7 +923,12 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             # Store under the actual slot id so the slot can be released on
             # stop (legacy no-session plays use the generated slot id, not a
             # placeholder key that would make the release a no-op).
-            self._local_streams[slot_id] = asset_data
+            # With what the panel needs to look for the ad breaks, as the custom
+            # receiver does.
+            self._local_streams[slot_id] = {
+                **asset_data,
+                LOCAL_BREAK_SEARCH: self._break_custom_data(asset_url, asset_data),
+            }
 
             # Only change entity state if no cast is active
             # (cast-driven state takes priority for the entity)
@@ -1853,6 +1870,31 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if info is not None:
                 await async_cast_select_track(self.hass, session.host, info["id"])
 
+    def _make_ad_skip_handler(self, host: str):
+        """Create a per-host ad break report callback (pychromecast thread)."""
+
+        def handler(report: dict[str, Any]) -> None:
+            self.hass.loop.call_soon_threadsafe(self._on_ad_skip_for_host, host, report)
+
+        return handler
+
+    def _on_ad_skip_for_host(self, host: str, report: dict[str, Any]) -> None:
+        """Keep where the receiver offers to skip, for the panel to offer it."""
+        if self._removed:
+            return
+        session = self._cast_sessions.get(host)
+        if not session:
+            return
+        value = report.get("skip_to")
+        skip_to = (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else None
+        )
+        if skip_to != session.skip_to:
+            session.skip_to = skip_to
+            self.async_write_ha_state()
+
     def _make_cast_status_handler(self, host: str):
         """Create a per-host status callback (called from pychromecast thread)."""
 
@@ -2083,6 +2125,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 self.hass,
                 resolved_target,
                 self._make_cast_status_handler(resolved_target),
+                self._make_ad_skip_handler(resolved_target),
             )
             await self._async_start_health_monitor_for(session)
 
@@ -2418,23 +2461,31 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         A live channel's pictures, one every few seconds at an address the playback
         answer gives, which the receiver reads for the channel's logo; not for a
         channel whose stream marks its breaks or that has none, where a guess could
-        only add what surrounds them. And whether the programme is a recording,
+        only add what surrounds them. Whether the channel puts blacks between its
+        adverts (separated_breaks). And whether the programme is a recording,
         which the receiver searches only when told so: a replay has no adverts.
+        The panel gets the same for what it plays itself.
         """
         kind, video_id, _start_over = self._api.parse_asset_ref(asset_ref)
         if kind == "dvr":
             return {"recording": True}
-        if kind != "live" or video_id in NO_GUESS_CHANNELS:
+        if kind != "live":
             return {}
+        data: dict[str, Any] = {}
+        # M6 and Gulli give their breaks away by the blacks between adverts.
+        if video_id in SEPARATED_CHANNELS:
+            data["separated_breaks"] = True
+        if video_id in NO_GUESS_CHANNELS:
+            return data
         thumbnails = asset_data.get("thumbnails")
         if not isinstance(thumbnails, dict) or thumbnails.get("type") != "timestamp":
-            return {}
+            return data
         base_url = thumbnails.get("base_url")
         if not isinstance(base_url, str) or not base_url.startswith("https://"):
-            return {}
-        if thumbnails.get("interval") != LIVE_PICTURE_EVERY_S:
-            return {}
-        return {"live_thumbnails_url": base_url}
+            return data
+        if thumbnails.get("interval") == LIVE_PICTURE_EVERY_S:
+            data["live_thumbnails_url"] = base_url
+        return data
 
     def _playhead_custom_data(
         self, asset_data: dict[str, Any], credits_sec: int | None
