@@ -791,10 +791,11 @@
             const KEPT_S = FAR_S + MORE_S;
             const TRIES = 3;
             // A channel's blacks between adverts (see AdRule.separatorEnds) are read from the first
-            // bytes of each segment, this far on each side of the playhead: further than a break lasts,
-            // so that one the playhead is in is known from end to end. The last segments are not
-            // there yet.
-            const HEAD_BYTES = 8192;
+            // bytes of each segment, its header (2609 bytes in every rendition of these channels in
+            // November 2026; more is read when it is longer), this far on each side of the playhead:
+            // further than a break lasts, so that one the playhead is in is known from end to end. The
+            // last segments are not there yet.
+            const HEAD_BYTES = 4096;
             const SEPARATED_FAR_S = 480;
             const SEGMENT_NOT_YET_S = 8;
             const MARKED_EVERY_MS = 30000;
