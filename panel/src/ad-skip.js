@@ -586,9 +586,11 @@
             // BLACK frames under TINY bytes, BLACK_MEAN at most on average, then one over KEY; a break is
             // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next, or
             // SEP_WIDE_GAP_S between two runs of SEP_PART or more (a black missed, a few bytes over,
-            // leaves two adverts between two: 95 s seen; not a cartoon's last black or two before a
-            // break), and runs from the second to the one before the last, which one stray black in
-            // the programme around it leaves in the adverts. As the etincelle apps' Separators.
+            // leaves two adverts between two: 95 s seen), and so across a run of one or two between
+            // them, each side as far (a card in the break, M6's "Publicité" among trailers or Gulli's
+            // sponsor, has no black; but not a cartoon's last black or two before a break), and runs
+            // from the second to the one before the last, which one stray black in the programme
+            // around it leaves in the adverts. As the etincelle apps' Separators.
             const TINY = 120;
             const BLACK_MEAN = 40;
             const KEY = 4000;
@@ -706,10 +708,16 @@
                     else runs.push([end]);
                 }
                 const joined = [];
-                for (const run of runs) {
-                    const last = joined[joined.length - 1];
-                    if (last && run[0] - last[last.length - 1] <= SEP_WIDE_GAP_S && last.length >= SEP_PART && run.length >= SEP_PART) last.push(...run);
-                    else joined.push(run);
+                for (let i = 0; i < runs.length; i++) {
+                    const run = runs[i];
+                    const next = runs[i + 1];
+                    let last = joined[joined.length - 1];
+                    if (last && !(last.length >= SEP_PART && run[0] - last[last.length - 1] <= SEP_WIDE_GAP_S)) last = null;
+                    if (last && run.length >= SEP_PART) last.push(...run);
+                    else if (last && next && next.length >= SEP_PART && next[0] - run[run.length - 1] <= SEP_WIDE_GAP_S) {
+                        last.push(...run, ...next);
+                        i++;
+                    } else joined.push(run);
                 }
                 return joined.filter(r => r.length >= SEP_LEAST && r[r.length - 1] - r[0] >= SEP_SPAN_S).map(r => [r[1], r[r.length - 2]]);
             }
