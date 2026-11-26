@@ -854,13 +854,16 @@
             // The blacks between adverts, on a channel that has them as the sender says
             // (separated_breaks): the live video segments the manifest last listed, the blacks found in
             // each segment read by its key (its rendition's height and its time) with its time (s since
-            // 1970), those that could not be read with how many times, and the breaks they make.
+            // 1970), those that could not be read with how many times, and the breaks they make. For the
+            // status: how many reads failed, and why the last one did.
             let separating = false;
             let separatorsState = 'none';
             let videoSegments = [];
             let blacks = new Map();
             let blackMisses = new Map();
             let separated = [];
+            let readFailures = 0;
+            let readFailure = '';
 
             function pathOf(url) {
                 const q = String(url).indexOf('?');
@@ -909,6 +912,8 @@
                     blacks = new Map();
                     blackMisses = new Map();
                     separated = [];
+                    readFailures = 0;
+                    readFailure = '';
                     // Once it plays (see tick): its start is not to be slowed by the search.
                     wanted = record ? { url: manifestUrl, name: key, mine: playing } : null;
                     recordingFails = 0;
@@ -1264,33 +1269,34 @@
                 return out;
             }
 
-            // The first length bytes at url; null when they cannot be had.
+            // The first length bytes at url, or why they cannot be had: the answer's status or the
+            // error's name, as a string.
             async function head(url, length) {
                 const abort = new AbortController();
                 const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
                 try {
                     const response = await fetch(url, { credentials: 'omit', headers: { Range: 'bytes=0-' + (length - 1) }, signal: abort.signal });
-                    if (!response.ok) return null;
+                    if (!response.ok) return 'http ' + response.status;
                     const bytes = new Uint8Array(await response.arrayBuffer());
                     // A server that sends all of it, not heeding the range.
                     return bytes.length > length ? bytes.subarray(0, length) : bytes;
                 } catch (e) {
-                    return null;
+                    return String((e && e.name) || 'error');
                 } finally {
                     clearTimeout(timer);
                 }
             }
 
-            // Where the blacks in a segment end; null when it cannot be read.
+            // Where the blacks in a segment end, or why it cannot be read, as a string.
             async function blacksOf(segment) {
                 let bytes = await head(segment.url, HEAD_BYTES);
-                if (bytes === null) return null;
+                if (typeof bytes === 'string') return bytes;
                 const end = AdRule.moofEnd(bytes);
-                if (end === null) return null;
+                if (end === null) return 'no header';
                 if (end > bytes.length) bytes = await head(segment.url, end);
-                if (bytes === null) return null;
+                if (typeof bytes === 'string') return bytes;
                 const sizes = AdRule.frameSizes(bytes);
-                if (sizes === null || sizes.length === 0) return null;
+                if (sizes === null || sizes.length === 0) return 'no frames';
                 return AdRule.separatorEnds(sizes, segment.time, segment.duration / sizes.length, AdRule.BLACKS[segment.height]);
             }
 
@@ -1305,9 +1311,15 @@
                 const got = await each(todo, 6, blacksOf);
                 if (mine !== playing) return;
                 todo.forEach((s, i) => {
-                    if (got[i] === null) blackMisses.set(s.key, (blackMisses.get(s.key) || 0) + 1);
-                    else blackMisses.delete(s.key);
-                    blacks.set(s.key, { time: s.time, ends: got[i] || [] });
+                    const failed = typeof got[i] === 'string';
+                    if (failed) {
+                        blackMisses.set(s.key, (blackMisses.get(s.key) || 0) + 1);
+                        readFailures++;
+                        readFailure = got[i];
+                    } else {
+                        blackMisses.delete(s.key);
+                    }
+                    blacks.set(s.key, { time: s.time, ends: failed ? [] : got[i] });
                 });
                 // A break longer than the reach keeps its start: what is read stays twice as long.
                 for (const k of Array.from(blacks.keys())) {
@@ -1318,7 +1330,8 @@
                 const ends = [];
                 for (const read of blacks.values()) for (const e of read.ends) ends.push(e);
                 separated = AdRule.separatedBreaks(ends);
-                separatorsState = 'segments ' + blacks.size + ', breaks ' + separated.length;
+                separatorsState = 'segments ' + blacks.size + ', blacks ' + ends.length + ', breaks ' + separated.length +
+                    (readFailures > 0 ? ', failed ' + readFailures + ' (' + readFailure + ')' : '');
             }
 
             // What each picture of a live channel has of its logo, read where it is not known yet, for
