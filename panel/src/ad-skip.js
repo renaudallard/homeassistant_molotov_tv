@@ -1320,14 +1320,16 @@
                     (!blacks.has(s.key) || (blackMisses.has(s.key) && blackMisses.get(s.key) < TRIES)));
                 const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, blacksOf);
                 if (mine !== playing) return;
-                // Every read refused by the browser: when a segment read whole is not, part of one
-                // cannot be read here, and the lowest rendition's are read whole from the next look.
-                // The newest segment in reach is tried: the oldest may be gone from the window.
+                // Every read refused by the browser: when a segment read whole is not, and part of it
+                // still is, part of one cannot be read here (a lost network refuses both, or neither
+                // once back), and the lowest rendition's are read whole from the next look. The newest
+                // segment in reach is tried: the oldest may be gone from the window.
                 if (!whole && todo.length > 0 && got.every(g => g === 'TypeError')) {
                     const probe = todo.filter(s => s.height === WHOLE_HEIGHT).pop();
-                    const bytes = probe ? await head(probe.url, null) : 'none';
+                    const all = probe ? await head(probe.url, null) : 'none';
+                    const part = typeof all === 'string' ? all : await head(probe.url, HEAD_BYTES);
                     if (mine !== playing) return;
-                    if (typeof bytes !== 'string') {
+                    if (typeof all !== 'string' && part === 'TypeError') {
                         whole = true;
                         readFailures += todo.length;
                         readFailure = 'TypeError';
