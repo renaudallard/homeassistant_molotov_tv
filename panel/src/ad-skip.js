@@ -581,22 +581,29 @@
             }
 
             // M6 and Gulli put 0.48 s of black between two adverts, which the size of the frames gives
-            // away though the pictures are encrypted: a dozen frames of 32 to 36 bytes, then a key frame
-            // of several kilobytes where the next advert starts. A held picture in a cartoon looks alike
-            // but its frames are mostly bigger, and comes alone or a few within a minute. So a black is
-            // BLACK frames under TINY bytes, BLACK_MEAN at most on average, then one over KEY; a break is
-            // SEP_LEAST of them over SEP_SPAN_S or more, none more than SEP_GAP_S from the next, or
-            // SEP_WIDE_GAP_S between two runs of SEP_PART or more (a black missed, a few bytes over,
-            // leaves two adverts between two: 95 s seen), and so across a run of one or two between
-            // them, each side as far (a card in the break, M6's "Publicité" among trailers or Gulli's
-            // sponsor, has no black; but not a cartoon's last black or two before a break), and runs
-            // from the second to the one before the last, which one stray black in the programme
-            // around it leaves in the adverts. As the etincelle apps' Separators.
-            const TINY = 120;
-            const BLACK_MEAN = 40;
-            const KEY = 4000;
+            // away though the pictures are encrypted: at 270 lines, a dozen frames of 32 to 36 bytes,
+            // then a key frame of several kilobytes where the next advert starts. A held picture in a
+            // cartoon looks alike but its frames are mostly bigger, and comes alone or a few within a
+            // minute. So a black is BLACK_MIN to BLACK_MAX frames under `tiny` bytes, `mean` at most on
+            // average, then one over `key`, as BLACKS has them for the rendition's height: the same
+            // blacks are in the higher renditions, in bigger frames, and each rendition misses some that
+            // another finds, so three are read and a black any of them finds counts once (SEP_SAME_S);
+            // 432 lines found blacks in cartoons. A break is SEP_LEAST of them over SEP_SPAN_S or more,
+            // none more than SEP_GAP_S from the next, or SEP_WIDE_GAP_S between two runs of SEP_PART or
+            // more (a black missed, a few bytes over, leaves two adverts between two: 95 s seen), and so
+            // across a run of one or two between them, each side as far (a card in the break, M6's
+            // "Publicité" among trailers or Gulli's sponsor, has no black; but not a cartoon's last
+            // black or two before a break), and runs from the second to the one before the last, which
+            // one stray black in the programme around it leaves in the adverts. As the etincelle apps'
+            // Separators.
+            const BLACKS = {
+                270: { tiny: 120, mean: 40, key: 4000 },
+                540: { tiny: 172, mean: 86, key: 8000 },
+                1080: { tiny: 430, mean: 172, key: 12000 },
+            };
             const BLACK_MIN = 10;
             const BLACK_MAX = 14;
+            const SEP_SAME_S = 0.2;
             const SEP_LEAST = 6;
             const SEP_SPAN_S = 90;
             const SEP_GAP_S = 60;
@@ -681,30 +688,33 @@
             }
 
             // Where the blacks in a segment end, the next advert starting: sizes are its frames', the
-            // first at start (s), each frame s long.
-            function separatorEnds(sizes, start, frame) {
+            // first at start (s), each frame s long, in a rendition where a black is `black` (one of
+            // BLACKS).
+            function separatorEnds(sizes, start, frame, black) {
                 const out = [];
                 let tiny = 0;
                 let bytes = 0;
                 for (let i = 0; i < sizes.length; i++) {
                     const size = sizes[i];
-                    if (size >= 0 && size < TINY) {
+                    if (size >= 0 && size < black.tiny) {
                         tiny++;
                         bytes += size;
                         continue;
                     }
-                    if (tiny >= BLACK_MIN && tiny <= BLACK_MAX && bytes <= BLACK_MEAN * tiny && size > KEY) out.push(start + i * frame);
+                    if (tiny >= BLACK_MIN && tiny <= BLACK_MAX && bytes <= black.mean * tiny && size > black.key) out.push(start + i * frame);
                     tiny = 0;
                     bytes = 0;
                 }
                 return out;
             }
 
-            // The breaks the blacks ending at `ends` (s) make, in order, as [start, end].
+            // The breaks the blacks ending at `ends` (s) make, in order, as [start, end]; one found in
+            // several renditions counts once.
             function separatedBreaks(ends) {
                 const runs = [];
                 for (const end of ends.slice().sort((x, y) => x - y)) {
                     const last = runs[runs.length - 1];
+                    if (last && end - last[last.length - 1] <= SEP_SAME_S) continue;
                     if (last && end - last[last.length - 1] <= SEP_GAP_S) last.push(end);
                     else runs.push([end]);
                 }
@@ -731,7 +741,7 @@
                 return same ? [b[0], same[1]] : b;
             }
 
-            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BRIDGE, AROUND, LOGO_MAX_S };
+            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BLACKS, BRIDGE, AROUND, LOGO_MAX_S };
         })();
         // </ad-rule>
 
@@ -842,8 +852,8 @@
             let canvas = null;
             // The blacks between adverts, on a channel that has them as the sender says
             // (separated_breaks): the live video segments the manifest last listed, the blacks found in
-            // each segment read by its time (s since 1970), those that could not be read with how many
-            // times, and the breaks they make.
+            // each segment read by its key (its rendition's height and its time) with its time (s since
+            // 1970), those that could not be read with how many times, and the breaks they make.
             let separating = false;
             let separatorsState = 'none';
             let videoSegments = [];
@@ -1219,33 +1229,36 @@
                 }
             }
 
-            // The segments of the lowest video rendition of a live manifest, as {time (s since 1970),
-            // duration, url}: only from a timeline, whose times are the segments' own.
+            // The segments of the video renditions of a live manifest that AdRule.BLACKS lists, the
+            // lowest of each height there, as {time (s since 1970), duration, url, height, key}: only
+            // from a timeline, whose times are the segments' own.
             function videoSegmentsOf(mpd, zero) {
                 const out = [];
                 const now = Date.now() / 1000;
                 const top = baseOf(mpd, manifestUrl);
                 for (const period of children(mpd, 'Period')) {
                     const start = zero + (seconds(period.getAttribute('start')) || 0);
-                    let set = null;
-                    let lowest = null;
+                    // The set and representation read for each height.
+                    const chosen = new Map();
                     for (const s of children(period, 'AdaptationSet')) {
                         if (s.getAttribute('contentType') !== 'video' && !/^video\//.test(s.getAttribute('mimeType') || '')) continue;
                         for (const r of children(s, 'Representation')) {
                             const bandwidth = Number(r.getAttribute('bandwidth'));
-                            if (bandwidth > 0 && (lowest === null || bandwidth < Number(lowest.getAttribute('bandwidth')))) {
-                                set = s;
-                                lowest = r;
-                            }
+                            const height = Number(r.getAttribute('height') || s.getAttribute('height'));
+                            if (!(bandwidth > 0) || !AdRule.BLACKS[height]) continue;
+                            const was = chosen.get(height);
+                            if (!was || bandwidth < Number(was.rep.getAttribute('bandwidth'))) chosen.set(height, { set: s, rep: r });
                         }
                     }
-                    if (lowest === null) continue;
-                    const template = children(set, 'SegmentTemplate')[0] || children(lowest, 'SegmentTemplate')[0];
-                    if (!template || !children(template, 'SegmentTimeline')[0]) continue;
-                    const base = baseOf(lowest, baseOf(set, baseOf(period, top)));
-                    for (const segment of segmentsOf(set, base, now - start, lowest)) {
-                        out.push({ time: start + segment.time, duration: segment.duration, url: segment.url });
-                    }
+                    chosen.forEach((of, height) => {
+                        const template = children(of.set, 'SegmentTemplate')[0] || children(of.rep, 'SegmentTemplate')[0];
+                        if (!template || !children(template, 'SegmentTimeline')[0]) return;
+                        const base = baseOf(of.rep, baseOf(of.set, baseOf(period, top)));
+                        for (const segment of segmentsOf(of.set, base, now - start, of.rep)) {
+                            const time = start + segment.time;
+                            out.push({ time, duration: segment.duration, url: segment.url, height, key: height + ' ' + time });
+                        }
+                    });
                 }
                 return out;
             }
@@ -1277,7 +1290,7 @@
                 if (bytes === null) return null;
                 const sizes = AdRule.frameSizes(bytes);
                 if (sizes === null || sizes.length === 0) return null;
-                return AdRule.separatorEnds(sizes, segment.time, segment.duration / sizes.length);
+                return AdRule.separatorEnds(sizes, segment.time, segment.duration / sizes.length, AdRule.BLACKS[segment.height]);
             }
 
             // The blacks around the playhead (at, with the live point at end, s since 1970), read where
@@ -1287,19 +1300,22 @@
                 const from = at - SEPARATED_FAR_S;
                 const to = Math.min(end - SEGMENT_NOT_YET_S, at + SEPARATED_FAR_S);
                 const todo = videoSegments.filter(s => s.time + s.duration > from && s.time < to &&
-                    (!blacks.has(s.time) || (blackMisses.has(s.time) && blackMisses.get(s.time) < TRIES)));
+                    (!blacks.has(s.key) || (blackMisses.has(s.key) && blackMisses.get(s.key) < TRIES)));
                 const got = await each(todo, 6, blacksOf);
                 if (mine !== playing) return;
                 todo.forEach((s, i) => {
-                    if (got[i] === null) blackMisses.set(s.time, (blackMisses.get(s.time) || 0) + 1);
-                    else blackMisses.delete(s.time);
-                    blacks.set(s.time, got[i] || []);
+                    if (got[i] === null) blackMisses.set(s.key, (blackMisses.get(s.key) || 0) + 1);
+                    else blackMisses.delete(s.key);
+                    blacks.set(s.key, { time: s.time, ends: got[i] || [] });
                 });
                 // A break longer than the reach keeps its start: what is read stays twice as long.
-                for (const time of Array.from(blacks.keys())) if (time < at - 2 * SEPARATED_FAR_S) blacks.delete(time);
-                for (const time of Array.from(blackMisses.keys())) if (time < at - 2 * SEPARATED_FAR_S) blackMisses.delete(time);
+                for (const k of Array.from(blacks.keys())) {
+                    if (blacks.get(k).time >= at - 2 * SEPARATED_FAR_S) continue;
+                    blacks.delete(k);
+                    blackMisses.delete(k);
+                }
                 const ends = [];
-                for (const list of blacks.values()) for (const e of list) ends.push(e);
+                for (const read of blacks.values()) for (const e of read.ends) ends.push(e);
                 separated = AdRule.separatedBreaks(ends);
                 separatorsState = 'segments ' + blacks.size + ', breaks ' + separated.length;
             }
