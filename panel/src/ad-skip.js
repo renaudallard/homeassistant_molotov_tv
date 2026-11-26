@@ -1333,7 +1333,7 @@
                         whole = true;
                         readFailures += todo.length;
                         readFailure = 'TypeError';
-                        separatorsState = 'segments 0, whole ' + WHOLE_HEIGHT + 'p next, failed ' + readFailures + ' (' + readFailure + ')';
+                        separatorsState = 'segments ' + blacks.size + ', whole ' + WHOLE_HEIGHT + 'p next, failed ' + readFailures + ' (' + readFailure + ')';
                         return;
                     }
                 }
