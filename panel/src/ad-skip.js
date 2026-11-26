@@ -796,6 +796,12 @@
             // further than a break lasts, so that one the playhead is in is known from end to end. The
             // last segments are not there yet.
             const HEAD_BYTES = 4096;
+            // A browser that refuses to read part of a segment, as a Chromecast's does with these
+            // (the Range header has it ask the server first, which does not allow it), reads the
+            // lowest rendition's segments whole instead, a few at a time: some 135 MB an hour.
+            const WHOLE_HEIGHT = Math.min.apply(null, Object.keys(AdRule.BLACKS).map(Number));
+            const AT_ONCE = 6;
+            const WHOLE_AT_ONCE = 2;
             const SEPARATED_FAR_S = 480;
             const SEGMENT_NOT_YET_S = 8;
             const MARKED_EVERY_MS = 30000;
@@ -855,7 +861,7 @@
             // (separated_breaks): the live video segments the manifest last listed, the blacks found in
             // each segment read by its key (its rendition's height and its time) with its time (s since
             // 1970), those that could not be read with how many times, and the breaks they make. For the
-            // status: how many reads failed, and why the last one did.
+            // status: how many reads failed, and why the last one did. Whether segments are read whole.
             let separating = false;
             let separatorsState = 'none';
             let videoSegments = [];
@@ -864,6 +870,7 @@
             let separated = [];
             let readFailures = 0;
             let readFailure = '';
+            let whole = false;
 
             function pathOf(url) {
                 const q = String(url).indexOf('?');
@@ -914,6 +921,7 @@
                     separated = [];
                     readFailures = 0;
                     readFailure = '';
+                    whole = false;
                     // Once it plays (see tick): its start is not to be slowed by the search.
                     wanted = record ? { url: manifestUrl, name: key, mine: playing } : null;
                     recordingFails = 0;
@@ -1269,17 +1277,19 @@
                 return out;
             }
 
-            // The first length bytes at url, or why they cannot be had: the answer's status or the
-            // error's name, as a string.
+            // The first length bytes at url, all of it when length is null, or why they cannot be had:
+            // the answer's status or the error's name, as a string.
             async function head(url, length) {
                 const abort = new AbortController();
                 const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
                 try {
-                    const response = await fetch(url, { credentials: 'omit', headers: { Range: 'bytes=0-' + (length - 1) }, signal: abort.signal });
+                    const ask = { credentials: 'omit', signal: abort.signal };
+                    if (length !== null) ask.headers = { Range: 'bytes=0-' + (length - 1) };
+                    const response = await fetch(url, ask);
                     if (!response.ok) return 'http ' + response.status;
                     const bytes = new Uint8Array(await response.arrayBuffer());
                     // A server that sends all of it, not heeding the range.
-                    return bytes.length > length ? bytes.subarray(0, length) : bytes;
+                    return length !== null && bytes.length > length ? bytes.subarray(0, length) : bytes;
                 } catch (e) {
                     return String((e && e.name) || 'error');
                 } finally {
@@ -1289,7 +1299,7 @@
 
             // Where the blacks in a segment end, or why it cannot be read, as a string.
             async function blacksOf(segment) {
-                let bytes = await head(segment.url, HEAD_BYTES);
+                let bytes = await head(segment.url, whole ? null : HEAD_BYTES);
                 if (typeof bytes === 'string') return bytes;
                 const end = AdRule.moofEnd(bytes);
                 if (end === null) return 'no header';
@@ -1306,10 +1316,24 @@
             async function readSeparators(at, end, mine) {
                 const from = at - SEPARATED_FAR_S;
                 const to = Math.min(end - SEGMENT_NOT_YET_S, at + SEPARATED_FAR_S);
-                const todo = videoSegments.filter(s => s.time + s.duration > from && s.time < to &&
+                const todo = videoSegments.filter(s => (!whole || s.height === WHOLE_HEIGHT) && s.time + s.duration > from && s.time < to &&
                     (!blacks.has(s.key) || (blackMisses.has(s.key) && blackMisses.get(s.key) < TRIES)));
-                const got = await each(todo, 6, blacksOf);
+                const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, blacksOf);
                 if (mine !== playing) return;
+                // Every read refused by the browser: when a segment read whole is not, part of one
+                // cannot be read here, and the lowest rendition's are read whole from the next look.
+                if (!whole && todo.length > 0 && got.every(g => g === 'TypeError')) {
+                    const probe = todo.filter(s => s.height === WHOLE_HEIGHT)[0];
+                    const bytes = probe ? await head(probe.url, null) : 'none';
+                    if (mine !== playing) return;
+                    if (typeof bytes !== 'string') {
+                        whole = true;
+                        readFailures += todo.length;
+                        readFailure = 'TypeError';
+                        separatorsState = 'segments 0, whole ' + WHOLE_HEIGHT + 'p next, failed ' + readFailures + ' (' + readFailure + ')';
+                        return;
+                    }
+                }
                 todo.forEach((s, i) => {
                     const failed = typeof got[i] === 'string';
                     if (failed) {
@@ -1330,8 +1354,8 @@
                 const ends = [];
                 for (const read of blacks.values()) for (const e of read.ends) ends.push(e);
                 separated = AdRule.separatedBreaks(ends);
-                separatorsState = 'segments ' + blacks.size + ', blacks ' + ends.length + ', breaks ' + separated.length +
-                    (readFailures > 0 ? ', failed ' + readFailures + ' (' + readFailure + ')' : '');
+                separatorsState = 'segments ' + blacks.size + (whole ? ' whole ' + WHOLE_HEIGHT + 'p' : '') + ', blacks ' + ends.length +
+                    ', breaks ' + separated.length + (readFailures > 0 ? ', failed ' + readFailures + ' (' + readFailure + ')' : '');
             }
 
             // What each picture of a live channel has of its logo, read where it is not known yet, for
