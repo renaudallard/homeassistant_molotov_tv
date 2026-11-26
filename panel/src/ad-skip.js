@@ -714,7 +714,15 @@
                 return joined.filter(r => r.length >= SEP_LEAST && r[r.length - 1] - r[0] >= SEP_SPAN_S).map(r => [r[1], r[r.length - 2]]);
             }
 
-            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, BRIDGE, AROUND, LOGO_MAX_S };
+            // The logo break `b` [start, end], where one of the `separated` begun before its end is the
+            // same break, whose end is in the adverts: to that end when further. As the etincelle
+            // apps' AdBreaks.liveEnd.
+            function reachSeparated(b, separated) {
+                const same = separated.filter(s => s[0] < b[1] && s[1] > b[1])[0];
+                return same ? [b[0], same[1]] : b;
+            }
+
+            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BRIDGE, AROUND, LOGO_MAX_S };
         })();
         // </ad-rule>
 
@@ -1525,9 +1533,10 @@
                             const times = liveTimes();
                             if (times !== null) {
                                 // What the manifest marks is exact, and comes first; then the blacks between
-                                // adverts, whose ends are in them; then what the logo finds.
+                                // adverts, whose ends are in them; then what the logo finds, to the end of
+                                // those blacks when it runs into them.
                                 const here = b => times.at >= b[0] && times.at < b[1] - LAST_MOMENT_S && b[1] <= times.end - LIVE_MARGIN_S;
-                                const inside = marked.filter(here)[0] || separated.filter(here)[0] || found.map(early).filter(here)[0];
+                                const inside = marked.filter(here)[0] || separated.filter(here)[0] || found.map(early).map(b => AdRule.reachSeparated(b, separated)).filter(here)[0];
                                 if (inside) {
                                     const target = env.mediaTime(inside[1]);
                                     if (typeof target === 'number' && isFinite(target) && target > now) end = target;
