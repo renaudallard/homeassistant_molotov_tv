@@ -59,11 +59,12 @@
             // How many of the corners, the first ones, are the upper ones.
             const UPPER = 2;
             // Marked breaks this close are one; and the shape of a break on a stream that marks
-            // nothing but cuts itself at each one: a jingle between two stretches of adverts.
+            // nothing but cuts itself at each one: a jingle between two stretches of adverts, of one
+            // to seven minutes (just over six in BFMTV's long breaks at night).
             const MERGE_GAP_S = 10;
             const JINGLE_MAX_S = 10;
             const HALF_MIN_S = 60;
-            const HALF_MAX_S = 330;
+            const HALF_MAX_S = 420;
 
             // The runs of true in flags, each as [first, last], holding up to bridge false in a row.
             function runs(flags, bridge) {
