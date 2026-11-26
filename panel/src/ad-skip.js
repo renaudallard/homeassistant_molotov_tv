@@ -1322,8 +1322,9 @@
                 if (mine !== playing) return;
                 // Every read refused by the browser: when a segment read whole is not, part of one
                 // cannot be read here, and the lowest rendition's are read whole from the next look.
+                // The newest segment in reach is tried: the oldest may be gone from the window.
                 if (!whole && todo.length > 0 && got.every(g => g === 'TypeError')) {
-                    const probe = todo.filter(s => s.height === WHOLE_HEIGHT)[0];
+                    const probe = todo.filter(s => s.height === WHOLE_HEIGHT).pop();
                     const bytes = probe ? await head(probe.url, null) : 'none';
                     if (mine !== playing) return;
                     if (typeof bytes !== 'string') {
