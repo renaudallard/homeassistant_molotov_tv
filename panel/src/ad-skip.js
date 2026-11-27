@@ -741,7 +741,7 @@
                 return same ? [b[0], same[1]] : b;
             }
 
-            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BLACKS, BRIDGE, AROUND, LOGO_MAX_S };
+            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BLACKS, SEP_WIDE_GAP_S, BRIDGE, AROUND, LOGO_MAX_S };
         })();
         // </ad-rule>
 
@@ -823,6 +823,9 @@
             const MAX_SEGMENTS = 10000;
             // A recording that could not be read is searched again after this long while it plays.
             const RECORDING_RETRY_MS = 5 * 60 * 1000;
+            // A recording's blacks between its adverts are told only when all but one in this many of
+            // the segments read for them could be read: one that cannot be read could hide a black.
+            const RECORDING_MISSED_IN = 10;
             // What is asked of the network and does not come is given up on after this long.
             const TIMEOUT_MS = 20000;
             // Pictures are read at half their size, which the logo survives.
@@ -835,9 +838,11 @@
             let live = false;
             let manifestUrl = null;
             let thumbnailsUrl = null;
-            // A recording's breaks, as [start, end] in its own time; the search's outcome for the status;
-            // and the search still to be made, once the recording plays.
+            // A recording's breaks, as [start, end] in its own time, by its pictures and captions, and by
+            // the blacks between its adverts within those; the search's outcome for the status; and the
+            // search still to be made, once the recording plays.
             let recorded = [];
+            let recordedSeparated = [];
             let recordedState = 'none';
             let wanted = null;
             // The searches of the recording loaded that failed, for each to wait twice as long as the one before.
@@ -914,6 +919,7 @@
                     offered = null;
                     shown = env.show(false);
                     recorded = [];
+                    recordedSeparated = [];
                     recordedState = record ? 'waiting' : 'none';
                     marked = [];
                     markedAt = 0;
@@ -1164,7 +1170,8 @@
 
             async function searchRecording(url, name, mine) {
                 if (known.has(name)) {
-                    recorded = known.get(name);
+                    recorded = known.get(name).breaks;
+                    recordedSeparated = known.get(name).separated;
                     recordedState = 'known';
                     return;
                 }
@@ -1197,12 +1204,19 @@
                         if (mine !== playing) return;
                     }
                     const breaks = AdRule.combine(captions, logoBreaks).filter(b => b[0] > 0 && b[1] < total);
-                    known.set(name, breaks);
+                    const found = { breaks, separated: [] };
+                    known.set(name, found);
                     if (known.size > 20) known.delete(known.keys().next().value);
                     if (mine !== playing) return;
                     recorded = breaks;
                     recordedState = 'found ' + breaks.length + ' (captions ' + (captions === null ? 'none' : captions.length) +
                         ', logo ' + (logoBreaks === null ? 'none' : logoBreaks.length) + ')';
+                    // Then the blacks between the adverts, read about those breaks only.
+                    if (breaks.length === 0) return;
+                    const separated = await recordingBlacks(periods[0], base, total, breaks, mine);
+                    if (separated === null) return;
+                    found.separated = separated;
+                    if (mine === playing) recordedSeparated = separated;
                 } catch (e) {
                     // Not remembered: asked again a while later while it plays, less and less often, as the
                     // next time it is loaded.
@@ -1214,6 +1228,48 @@
                         }, RECORDING_RETRY_MS * 2 ** Math.min(recordingFails++, 12));
                     }
                 }
+            }
+
+            // The breaks the blacks between the adverts of a recording give within its breaks guessed from
+            // the pictures and captions (only those count: blacks in a programme, on a channel with none
+            // between its adverts, make none), by place in it; null when too many could not be read to
+            // tell. Read about those breaks only, from the lowest rendition of each height AdRule.BLACKS
+            // lists, or from the whole segments of the lowest where part of one cannot be read.
+            async function recordingBlacks(period, base, total, guessed, mine) {
+                // As far beyond each as a run of blacks reaches, so that one across its edge is read whole.
+                const reach = AdRule.SEP_WIDE_GAP_S;
+                const about = s => guessed.some(b => s.time + s.duration > b[0] - reach && s.time < b[1] + reach);
+                let todo = [];
+                lowestVideo(period).forEach((of, height) => {
+                    if (whole && height !== WHOLE_HEIGHT) return;
+                    for (const s of segmentsOf(of.set, baseOf(of.rep, baseOf(of.set, base)), total, of.rep)) {
+                        if (about(s)) todo.push({ time: s.time, duration: s.duration, url: s.url, height });
+                    }
+                });
+                if (todo.length === 0) return null;
+                let tried = todo.length;
+                const ends = [];
+                for (let round = 0; round < TRIES && todo.length > 0; round++) {
+                    const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, s => (mine === playing ? blacksOf(s) : 'stopped'));
+                    if (mine !== playing) return null;
+                    const refused = await partRefused(todo, got);
+                    if (mine !== playing) return null;
+                    if (refused) {
+                        whole = true;
+                        todo = todo.filter(s => s.height === WHOLE_HEIGHT);
+                        tried = todo.length;
+                        round = -1;
+                        continue;
+                    }
+                    got.forEach(g => { if (typeof g !== 'string') ends.push(...g); });
+                    todo = todo.filter((s, i) => typeof got[i] === 'string');
+                }
+                separatorsState = 'segments ' + tried + (whole ? ' whole ' + WHOLE_HEIGHT + 'p' : '') + ', blacks ' + ends.length +
+                    (todo.length > 0 ? ', failed ' + todo.length : '');
+                if (todo.length * RECORDING_MISSED_IN > tried) return null;
+                const within = AdRule.separatedBreaks(ends).filter(s => guessed.some(b => b[0] <= s[0] && s[1] <= b[1]));
+                separatorsState += ', breaks ' + within.length;
+                return within;
             }
 
             // The breaks a live manifest marks, in seconds since 1970, which is where its times start.
@@ -1269,19 +1325,7 @@
                 const top = baseOf(mpd, manifestUrl);
                 for (const period of children(mpd, 'Period')) {
                     const start = zero + (seconds(period.getAttribute('start')) || 0);
-                    // The set and representation read for each height.
-                    const chosen = new Map();
-                    for (const s of children(period, 'AdaptationSet')) {
-                        if (s.getAttribute('contentType') !== 'video' && !/^video\//.test(s.getAttribute('mimeType') || '')) continue;
-                        for (const r of children(s, 'Representation')) {
-                            const bandwidth = Number(r.getAttribute('bandwidth'));
-                            const height = Number(r.getAttribute('height') || s.getAttribute('height'));
-                            if (!(bandwidth > 0) || !AdRule.BLACKS[height]) continue;
-                            const was = chosen.get(height);
-                            if (!was || bandwidth < Number(was.rep.getAttribute('bandwidth'))) chosen.set(height, { set: s, rep: r });
-                        }
-                    }
-                    chosen.forEach((of, height) => {
+                    lowestVideo(period).forEach((of, height) => {
                         const template = children(of.set, 'SegmentTemplate')[0] || children(of.rep, 'SegmentTemplate')[0];
                         if (!template || !children(template, 'SegmentTimeline')[0]) return;
                         const base = baseOf(of.rep, baseOf(of.set, baseOf(period, top)));
@@ -1292,6 +1336,23 @@
                     });
                 }
                 return out;
+            }
+
+            // The video set and representation read for each height of a period that AdRule.BLACKS
+            // lists, the lowest there, as {set, rep} by height.
+            function lowestVideo(period) {
+                const chosen = new Map();
+                for (const s of children(period, 'AdaptationSet')) {
+                    if (s.getAttribute('contentType') !== 'video' && !/^video\//.test(s.getAttribute('mimeType') || '')) continue;
+                    for (const r of children(s, 'Representation')) {
+                        const bandwidth = Number(r.getAttribute('bandwidth'));
+                        const height = Number(r.getAttribute('height') || s.getAttribute('height'));
+                        if (!(bandwidth > 0) || !AdRule.BLACKS[height]) continue;
+                        const was = chosen.get(height);
+                        if (!was || bandwidth < Number(was.rep.getAttribute('bandwidth'))) chosen.set(height, { set: s, rep: r });
+                    }
+                }
+                return chosen;
             }
 
             // The first length bytes at url, all of it when length is null, or why they cannot be had:
@@ -1327,6 +1388,18 @@
                 return AdRule.separatorEnds(sizes, segment.time, segment.duration / sizes.length, AdRule.BLACKS[segment.height]);
             }
 
+            // Whether part of a segment cannot be read here when the whole of one can, once the browser
+            // refused every read of todo (got): a Chromecast's refuses any read in part, a lost network
+            // refuses both, or neither once back. Tried on the newest of the lowest rendition: the oldest
+            // may be gone from a live window.
+            async function partRefused(todo, got) {
+                if (whole || todo.length === 0 || !got.every(g => g === 'TypeError')) return false;
+                const probe = todo.filter(s => s.height === WHOLE_HEIGHT).pop();
+                const all = probe ? await head(probe.url, null) : 'none';
+                const part = typeof all === 'string' ? all : await head(probe.url, HEAD_BYTES);
+                return typeof all !== 'string' && part === 'TypeError';
+            }
+
             // Whether a segment that could not be read, as miss ({times, at}) says, is asked for again:
             // at the next looks, TRIES times in all, then SEGMENT_AGAIN_S later, twice as long after
             // each later try, SEGMENT_LATER times.
@@ -1348,22 +1421,16 @@
                     (!blacks.has(s.key) || readAgain(blackMisses.get(s.key))));
                 const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, blacksOf);
                 if (mine !== playing) return;
-                // Every read refused by the browser: when a segment read whole is not, and part of it
-                // still is, part of one cannot be read here (a lost network refuses both, or neither
-                // once back), and the lowest rendition's are read whole from the next look. The newest
-                // segment in reach is tried: the oldest may be gone from the window.
-                if (!whole && todo.length > 0 && got.every(g => g === 'TypeError')) {
-                    const probe = todo.filter(s => s.height === WHOLE_HEIGHT).pop();
-                    const all = probe ? await head(probe.url, null) : 'none';
-                    const part = typeof all === 'string' ? all : await head(probe.url, HEAD_BYTES);
-                    if (mine !== playing) return;
-                    if (typeof all !== 'string' && part === 'TypeError') {
-                        whole = true;
-                        readFailures += todo.length;
-                        readFailure = 'TypeError';
-                        separatorsState = 'segments ' + blacks.size + ', whole ' + WHOLE_HEIGHT + 'p next, failed ' + readFailures + ' (' + readFailure + ')';
-                        return;
-                    }
+                // Every read refused, and part of a segment cannot be read here: the lowest rendition's
+                // are read whole from the next look.
+                const refused = await partRefused(todo, got);
+                if (mine !== playing) return;
+                if (refused) {
+                    whole = true;
+                    readFailures += todo.length;
+                    readFailure = 'TypeError';
+                    separatorsState = 'segments ' + blacks.size + ', whole ' + WHOLE_HEIGHT + 'p next, failed ' + readFailures + ' (' + readFailure + ')';
+                    return;
                 }
                 todo.forEach((s, i) => {
                     const failed = typeof got[i] === 'string';
@@ -1619,7 +1686,10 @@
                         }
                         const early = b => [b[0], b[1] - GUESS_EARLY_S];
                         if (!live) {
-                            const inside = recorded.map(early).filter(b => now >= b[0] && now < b[1] - LAST_MOMENT_S)[0];
+                            // The blacks between the adverts first, whose ends are in them, then the
+                            // pictures and captions, to some seconds before where they end.
+                            const here = b => now >= b[0] && now < b[1] - LAST_MOMENT_S;
+                            const inside = recordedSeparated.filter(here)[0] || recorded.map(early).filter(here)[0];
                             if (inside) end = inside[1];
                         } else if (!env.joining()) {
                             // Not while the stream is still joining the live point: it stands at the start
@@ -1677,6 +1747,8 @@
                 } else {
                     out.recording = recordedState;
                     out.breaks = recorded.map(b => [Math.round(b[0]), Math.round(b[1])]);
+                    out.separators = separatorsState;
+                    out.separated = recordedSeparated.map(b => [Math.round(b[0]), Math.round(b[1])]);
                 }
                 return out;
             }
