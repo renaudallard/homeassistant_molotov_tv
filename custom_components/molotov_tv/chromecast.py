@@ -146,8 +146,8 @@ def _disconnect_casts(casts: list[Any]) -> None:
     for cast in casts:
         try:
             cast.disconnect()
-        except Exception:
-            pass
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Failed to disconnect: %s", err)
 
 
 def _cleanup_stale_casts() -> list[Any]:
