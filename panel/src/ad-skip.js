@@ -757,7 +757,14 @@
                 return same ? [b[0], same[1]] : b;
             }
 
-            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, BLACKS, SEP_WIDE_GAP_S, BRIDGE, AROUND, LOGO_MAX_S };
+            // Where a skip in the break s by the blacks between its adverts goes: on to where one of the
+            // logo's breaks, guesses, that it lies in is taken to end, when later, as the cards and
+            // trailers after the last advert go too. As the etincelle apps' AdBreaks.askedEnd.
+            function askedEnd(s, guesses) {
+                return guesses.filter(g => g[0] < s[1] && g[1] > s[1]).reduce((end, g) => Math.max(end, g[1]), s[1]);
+            }
+
+            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, askedEnd, BLACKS, SEP_WIDE_GAP_S, BRIDGE, AROUND, LOGO_MAX_S };
         })();
         // </ad-rule>
 
@@ -1744,7 +1751,8 @@
                             // The blacks between the adverts first, whose ends are in them, then the
                             // pictures and captions, to some seconds before where they end.
                             const here = b => now >= b[0] && now < b[1] - LAST_MOMENT_S;
-                            const inside = recordedSeparated.filter(here)[0] || recorded.map(early).filter(here)[0];
+                            const s = recordedSeparated.filter(here)[0];
+                            const inside = s ? [s[0], AdRule.askedEnd(s, recorded.map(early))] : recorded.map(early).filter(here)[0];
                             if (inside) end = inside[1];
                         } else if (!env.joining()) {
                             // Not while the stream is still joining the live point: it stands at the start
@@ -1755,7 +1763,11 @@
                                 // adverts, whose ends are in them; then what the logo finds, to the end of
                                 // those blacks when it runs into them.
                                 const here = b => times.at >= b[0] && times.at < b[1] - LAST_MOMENT_S && b[1] <= times.end - LIVE_MARGIN_S;
-                                const inside = marked.filter(here)[0] || separated.filter(here)[0] || found.map(early).map(b => AdRule.reachSeparated(b, separated)).filter(here)[0];
+                                const guesses = found.map(early).map(b => AdRule.reachSeparated(b, separated));
+                                // In the blacks of a break, as far as the logo's break it lies in, once that ends.
+                                const s = separated.filter(here)[0];
+                                const reached = guesses.filter(g => g[1] <= times.end - LIVE_MARGIN_S);
+                                const inside = marked.filter(here)[0] || (s && [s[0], AdRule.askedEnd(s, reached)]) || guesses.filter(here)[0];
                                 if (inside) {
                                     const target = env.mediaTime(inside[1]);
                                     if (typeof target === 'number' && isFinite(target) && target > now) end = target;
