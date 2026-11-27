@@ -746,7 +746,8 @@
                         i++;
                     } else joined.push(run);
                 }
-                return joined.filter(r => r.length >= SEP_LEAST && r[r.length - 1] - r[0] >= SEP_SPAN_S).map(r => [r[1], r[r.length - 2]]);
+                // Each with where its first black is, as first.
+                return joined.filter(r => r.length >= SEP_LEAST && r[r.length - 1] - r[0] >= SEP_SPAN_S).map(r => Object.assign([r[1], r[r.length - 2]], { first: r[0] }));
             }
 
             // The logo break `b` [start, end], where one of the `separated` begun before its end is the
@@ -757,6 +758,14 @@
                 return same ? [b[0], same[1]] : b;
             }
 
+            // Where the logo's break b [start, end] is offered from: the first black of a break of separated
+            // within it, once known, rather than where the logo goes, as cards and trailers come between
+            // the programme and the adverts. As the etincelle apps' AdBreaks.offeredFrom.
+            function offeredFrom(b, separated) {
+                const firsts = separated.filter(s => s.first !== undefined && s[0] < b[1] && s[1] > b[0]).map(s => s.first);
+                return firsts.length > 0 ? Math.max(b[0], Math.min.apply(null, firsts)) : b[0];
+            }
+
             // Where a skip in the break s by the blacks between its adverts goes: on to where one of the
             // logo's breaks, guesses, that it lies in is taken to end, when later, as the cards and
             // trailers after the last advert go too. As the etincelle apps' AdBreaks.askedEnd.
@@ -764,7 +773,7 @@
                 return guesses.filter(g => g[0] < s[1] && g[1] > s[1]).reduce((end, g) => Math.max(end, g[1]), s[1]);
             }
 
-            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, askedEnd, BLACKS, SEP_WIDE_GAP_S, BRIDGE, AROUND, LOGO_MAX_S };
+            return { runs, captionBreaks, gone, solid, logoBreaks, combine, track, score, alone, seenIn, opens, markedBreaks, merge, moofEnd, frameSizes, separatorEnds, separatedBreaks, reachSeparated, offeredFrom, askedEnd, BLACKS, SEP_WIDE_GAP_S, BRIDGE, AROUND, LOGO_MAX_S };
         })();
         // </ad-rule>
 
@@ -1752,7 +1761,8 @@
                             // pictures and captions, to some seconds before where they end.
                             const here = b => now >= b[0] && now < b[1] - LAST_MOMENT_S;
                             const s = recordedSeparated.filter(here)[0];
-                            const inside = s ? [s[0], AdRule.askedEnd(s, recorded.map(early))] : recorded.map(early).filter(here)[0];
+                            const guesses = recorded.map(b => [AdRule.offeredFrom(b, recordedSeparated), early(b)[1]]);
+                            const inside = s ? [s[0], AdRule.askedEnd(s, guesses)] : guesses.filter(here)[0];
                             if (inside) end = inside[1];
                         } else if (!env.joining()) {
                             // Not while the stream is still joining the live point: it stands at the start
@@ -1763,7 +1773,7 @@
                                 // adverts, whose ends are in them; then what the logo finds, to the end of
                                 // those blacks when it runs into them.
                                 const here = b => times.at >= b[0] && times.at < b[1] - LAST_MOMENT_S && b[1] <= times.end - LIVE_MARGIN_S;
-                                const guesses = found.map(early).map(b => AdRule.reachSeparated(b, separated));
+                                const guesses = found.map(b => [AdRule.offeredFrom(b, separated), AdRule.reachSeparated(early(b), separated)[1]]);
                                 // In the blacks of a break, as far as the logo's break it lies in, once that ends.
                                 const s = separated.filter(here)[0];
                                 const reached = guesses.filter(g => g[1] <= times.end - LIVE_MARGIN_S);
