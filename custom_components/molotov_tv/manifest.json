@@ -2,6 +2,7 @@
   "domain": "molotov_tv",
   "name": "Molotov TV",
   "after_dependencies": ["http", "frontend", "zeroconf"],
+  "categories": ["media_entertainment.tv_streaming"],
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/renaudallard/homeassistant_molotov_tv",
