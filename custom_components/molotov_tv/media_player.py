@@ -2381,11 +2381,13 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             asset_url = self._api.build_asset_url("channel", channel_id)
             return asset_url, title, True
 
-        if (
-            media_id.startswith(f"{MEDIA_REPLAY_PREFIX}:")
-            or media_id.startswith(f"{MEDIA_RECORDING_PREFIX}:")
-            or media_id.startswith(f"{MEDIA_SEARCH_RESULT_PREFIX}:")
-            or media_id.startswith(f"{MEDIA_EPISODE_PREFIX}:")
+        if media_id.startswith(
+            (
+                f"{MEDIA_REPLAY_PREFIX}:",
+                f"{MEDIA_RECORDING_PREFIX}:",
+                f"{MEDIA_SEARCH_RESULT_PREFIX}:",
+                f"{MEDIA_EPISODE_PREFIX}:",
+            )
         ):
             payload = decode_asset_payload_from_media_id(media_id)
             if not payload:
