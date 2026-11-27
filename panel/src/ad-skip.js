@@ -1252,40 +1252,67 @@
             // tell. Read about those breaks only, from the lowest rendition of each height AdRule.BLACKS
             // lists, or from the whole segments of the lowest where part of one cannot be read.
             async function recordingBlacks(period, base, total, guessed, mine) {
-                // As far beyond each as a run of blacks reaches, so that one across its edge is read whole.
-                const reach = AdRule.SEP_WIDE_GAP_S;
-                const about = s => guessed.some(b => s.time + s.duration > b[0] - reach && s.time < b[1] + reach);
-                let todo = [];
+                const segments = [];
                 lowestVideo(period).forEach((of, height) => {
-                    if (whole && height !== WHOLE_HEIGHT) return;
                     for (const s of segmentsOf(of.set, baseOf(of.rep, baseOf(of.set, base)), total, of.rep)) {
-                        if (about(s)) todo.push({ time: s.time, duration: s.duration, url: s.url, height });
+                        segments.push({ time: s.time, duration: s.duration, url: s.url, height });
                     }
                 });
-                if (todo.length === 0) return null;
-                let tried = todo.length;
-                const ends = [];
-                for (let round = 0; round < TRIES && todo.length > 0; round++) {
-                    const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, s => (mine === playing ? blacksOf(s) : 'stopped'));
-                    if (mine !== playing) return null;
-                    const refused = await partRefused(todo, got);
-                    if (mine !== playing) return null;
-                    if (refused) {
-                        whole = true;
-                        todo = todo.filter(s => s.height === WHOLE_HEIGHT);
-                        tried = todo.length;
-                        round = -1;
-                        continue;
+                // What was read of each, by its place there: where its blacks end, or why it could not be read.
+                const read = new Map();
+                // As far beyond each break as a run of blacks reaches, so that one across its edge is read
+                // whole, then further while one is found near an edge (see widened).
+                const reach = AdRule.SEP_WIDE_GAP_S;
+                let places = guessed.map(b => [Math.max(0, b[0] - reach), Math.min(total, b[1] + reach)]);
+                const ends = () => {
+                    const out = [];
+                    read.forEach(g => { if (typeof g !== 'string') out.push(...g); });
+                    return out;
+                };
+                for (;;) {
+                    let todo = [];
+                    segments.forEach((s, i) => {
+                        if (!read.has(i) && (!whole || s.height === WHOLE_HEIGHT) && places.some(p => s.time + s.duration > p[0] && s.time < p[1])) todo.push(i);
+                    });
+                    for (let round = 0; round < TRIES && todo.length > 0; round++) {
+                        const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, i => (mine === playing ? blacksOf(segments[i]) : 'stopped'));
+                        if (mine !== playing) return null;
+                        const refused = await partRefused(todo.map(i => segments[i]), got);
+                        if (mine !== playing) return null;
+                        if (refused) {
+                            whole = true;
+                            todo = todo.filter(i => segments[i].height === WHOLE_HEIGHT);
+                            round = -1;
+                            continue;
+                        }
+                        todo.forEach((i, k) => read.set(i, got[k]));
+                        todo = todo.filter((i, k) => typeof got[k] === 'string');
                     }
-                    got.forEach(g => { if (typeof g !== 'string') ends.push(...g); });
-                    todo = todo.filter((s, i) => typeof got[i] === 'string');
+                    const wider = widened(places, ends(), total);
+                    if (wider.every((p, k) => p[0] === places[k][0] && p[1] === places[k][1])) break;
+                    places = wider;
                 }
-                separatorsState = 'segments ' + tried + (whole ? ' whole ' + WHOLE_HEIGHT + 'p' : '') + ', blacks ' + ends.length +
-                    (todo.length > 0 ? ', failed ' + todo.length : '');
-                if (todo.length * RECORDING_MISSED_IN > tried) return null;
-                const within = AdRule.separatedBreaks(ends).filter(s => guessed.some(b => b[0] <= s[0] && s[1] <= b[1]));
+                const counted = Array.from(read.entries()).filter(([i]) => !whole || segments[i].height === WHOLE_HEIGHT);
+                if (counted.length === 0) return null;
+                const failed = counted.filter(([, g]) => typeof g === 'string').length;
+                const found = ends();
+                separatorsState = 'segments ' + counted.length + (whole ? ' whole ' + WHOLE_HEIGHT + 'p' : '') + ', blacks ' + found.length +
+                    (failed > 0 ? ', failed ' + failed : '');
+                if (failed * RECORDING_MISSED_IN > counted.length) return null;
+                const within = AdRule.separatedBreaks(found).filter(s => guessed.some(b => b[0] <= s[0] && s[1] <= b[1]));
                 separatorsState += ', breaks ' + within.length;
                 return within;
+            }
+
+            // The stretches of a recording total seconds long read for their blacks, places, once those
+            // ends are known: each edge with a black nearer than a run of blacks reaches goes that much
+            // further, as the run may go on past it. A run cut short by an edge could end a break on a
+            // black of the programme after it, where reading the whole recording finds it ends outside
+            // the guessed break, and leaves it out.
+            function widened(places, ends, total) {
+                const reach = AdRule.SEP_WIDE_GAP_S;
+                const near = edge => ends.some(e => e > edge - reach && e < edge + reach);
+                return places.map(p => [p[0] > 0 && near(p[0]) ? Math.max(0, p[0] - reach) : p[0], p[1] < total && near(p[1]) ? Math.min(total, p[1] + reach) : p[1]]);
             }
 
             // The breaks a live manifest marks, in seconds since 1970, which is where its times start.
