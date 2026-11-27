@@ -1186,9 +1186,12 @@
 
             async function searchRecording(url, name, mine) {
                 if (known.has(name)) {
-                    recorded = known.get(name).breaks;
-                    recordedSeparated = known.get(name).separated;
+                    const was = known.get(name);
+                    recorded = was.breaks;
+                    recordedSeparated = was.separated || [];
                     recordedState = 'known';
+                    // Its blacks, when they could not be read or their search was cut short: read again.
+                    if (was.separated === null) await separate(was, mine);
                     return;
                 }
                 recordedState = 'searching';
@@ -1220,7 +1223,7 @@
                         if (mine !== playing) return;
                     }
                     const breaks = AdRule.combine(captions, logoBreaks).filter(b => b[0] > 0 && b[1] < total);
-                    const found = { breaks, separated: [] };
+                    const found = { breaks, separated: null, period: periods[0], base, total };
                     known.set(name, found);
                     if (known.size > 20) known.delete(known.keys().next().value);
                     if (mine !== playing) return;
@@ -1228,11 +1231,7 @@
                     recordedState = 'found ' + breaks.length + ' (captions ' + (captions === null ? 'none' : captions.length) +
                         ', logo ' + (logoBreaks === null ? 'none' : logoBreaks.length) + ')';
                     // Then the blacks between the adverts, read about those breaks only.
-                    if (breaks.length === 0) return;
-                    const separated = await recordingBlacks(periods[0], base, total, breaks, mine);
-                    if (separated === null) return;
-                    found.separated = separated;
-                    if (mine === playing) recordedSeparated = separated;
+                    await separate(found, mine);
                 } catch (e) {
                     // Not remembered: asked again a while later while it plays, less and less often, as the
                     // next time it is loaded.
@@ -1244,6 +1243,19 @@
                         }, RECORDING_RETRY_MS * 2 ** Math.min(recordingFails++, 12));
                     }
                 }
+            }
+
+            // The blacks between the adverts of a recording, about the breaks known has of it (found): kept
+            // once read, left to be read again at its next load when they could not be.
+            async function separate(found, mine) {
+                if (found.breaks.length === 0) {
+                    found.separated = [];
+                    return;
+                }
+                const separated = await recordingBlacks(found.period, found.base, found.total, found.breaks, mine);
+                if (separated === null) return;
+                found.separated = separated;
+                if (mine === playing) recordedSeparated = separated;
             }
 
             // The breaks the blacks between the adverts of a recording give within its breaks guessed from
