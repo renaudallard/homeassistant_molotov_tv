@@ -581,10 +581,10 @@
             }
 
             // M6 and Gulli put 0.48 s of black between two adverts, which the size of the frames gives
-            // away though the pictures are encrypted: at 270 lines, a dozen frames of 32 to 36 bytes,
-            // then a key frame of several kilobytes where the next advert starts. A held picture in a
-            // cartoon looks alike but its frames are mostly bigger, and comes alone or a few within a
-            // minute. So a black is BLACK_MIN to BLACK_MAX frames under `tiny` bytes, `mean` at most on
+            // away though the pictures are encrypted: at 270 lines, a dozen frames of 32 to 36 bytes (now
+            // and then up to 20), then a key frame of several kilobytes where the next advert starts. A
+            // held picture in a cartoon looks alike but its frames are mostly bigger, and comes alone or
+            // a few within a minute. So a black is BLACK_MIN to BLACK_MAX frames under `tiny` bytes, `mean` at most on
             // average, then one over `key`, as BLACKS has them for the rendition's height: the same
             // blacks are in the higher renditions, in bigger frames, and each rendition misses some that
             // another finds, so three are read and a black any of them finds counts once (SEP_SAME_S);
@@ -602,7 +602,7 @@
                 1080: { tiny: 430, mean: 172, key: 12000 },
             };
             const BLACK_MIN = 10;
-            const BLACK_MAX = 14;
+            const BLACK_MAX = 20;
             const SEP_SAME_S = 0.2;
             const SEP_LEAST = 6;
             const SEP_SPAN_S = 90;
