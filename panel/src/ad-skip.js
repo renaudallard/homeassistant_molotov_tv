@@ -793,8 +793,7 @@
             // A channel's blacks between adverts (see AdRule.separatorEnds) are read from the first
             // bytes of each segment, its header (2609 bytes in every rendition of these channels in
             // November 2026; more is read when it is longer), this far on each side of the playhead:
-            // further than a break lasts, so that one the playhead is in is known from end to end. The
-            // last segments are not there yet.
+            // further than a break lasts, so that one the playhead is in is known from end to end.
             const HEAD_BYTES = 4096;
             // A browser that refuses to read part of a segment, as a Chromecast's does with these
             // (the Range header has it ask the server first, which does not allow it), reads the
@@ -803,7 +802,13 @@
             const AT_ONCE = 6;
             const WHOLE_AT_ONCE = 2;
             const SEPARATED_FAR_S = 480;
-            const SEGMENT_NOT_YET_S = 8;
+            // Segments are read up to this close to the live point, and none that starts closer than
+            // SEGMENT_FRESH_S to where the newest one ends by now (the newest of the list, which is
+            // read again only every MARKED_EVERY_MS, plus the time since): a Chromecast's live point
+            // is some 13 s behind that, a browser player's can be on it, and a segment is not always
+            // readable the moment it is listed.
+            const SEGMENT_NOT_YET_S = 1;
+            const SEGMENT_FRESH_S = 8;
             const MARKED_EVERY_MS = 30000;
             const LOOK_EVERY_MS = 4000;
             // A recording has no more strips of thumbnails, nor caption segments.
@@ -865,6 +870,7 @@
             let separating = false;
             let separatorsState = 'none';
             let videoSegments = [];
+            let videoSegmentsAt = 0;
             let blacks = new Map();
             let blackMisses = new Map();
             let separated = [];
@@ -916,6 +922,7 @@
                     missed = new Map();
                     separatorsState = separating ? 'waiting' : 'none';
                     videoSegments = [];
+                    videoSegmentsAt = 0;
                     blacks = new Map();
                     blackMisses = new Map();
                     separated = [];
@@ -1237,7 +1244,10 @@
                     });
                     marked = AdRule.markedBreaks(stretches);
                     markedState = 'periods ' + periods.length + ', breaks ' + marked.length;
-                    if (separating) videoSegments = videoSegmentsOf(mpd, zero);
+                    if (separating) {
+                        videoSegments = videoSegmentsOf(mpd, zero);
+                        videoSegmentsAt = Date.now() / 1000;
+                    }
                 } catch (e) {
                     if (mine === playing) markedState = 'error: ' + String(e && e.message).slice(0, 40);
                 }
@@ -1315,7 +1325,9 @@
             // break rather than making one, and is asked for again the next times, a few of them.
             async function readSeparators(at, end, mine) {
                 const from = at - SEPARATED_FAR_S;
-                const to = Math.min(end - SEGMENT_NOT_YET_S, at + SEPARATED_FAR_S);
+                const newest = videoSegments.reduce((most, s) => Math.max(most, s.time + s.duration), -Infinity);
+                const fresh = newest + (Date.now() / 1000 - videoSegmentsAt) - SEGMENT_FRESH_S;
+                const to = Math.min(end - SEGMENT_NOT_YET_S, fresh, at + SEPARATED_FAR_S);
                 const todo = videoSegments.filter(s => (!whole || s.height === WHOLE_HEIGHT) && s.time + s.duration > from && s.time < to &&
                     (!blacks.has(s.key) || (blackMisses.has(s.key) && blackMisses.get(s.key) < TRIES)));
                 const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, blacksOf);
