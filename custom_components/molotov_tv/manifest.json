@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/renaudallard/homeassistant_molotov_tv/issues",
   "requirements": ["pychromecast>=14.0.0"],
-  "version": "2026.11.8"
+  "version": "2026.11.9"
 }
