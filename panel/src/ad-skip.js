@@ -60,7 +60,8 @@
             const UPPER = 2;
             // Marked breaks this close are one; and the shape of a break on a stream that marks
             // nothing but cuts itself at each one: a jingle between two stretches of adverts, of one
-            // to seven minutes (just over six in BFMTV's long breaks at night).
+            // to seven minutes (just over six in BFMTV's long breaks at night), or one such stretch
+            // alone between two longer ones.
             const MERGE_GAP_S = 10;
             const JINGLE_MAX_S = 10;
             const HALF_MIN_S = 60;
@@ -564,6 +565,21 @@
                             length(before) >= HALF_MIN_S && length(before) <= HALF_MAX_S &&
                             length(after) >= HALF_MIN_S && length(after) <= HALF_MAX_S;
                         if (shaped) raw.push([before.start, after.end]);
+                    }
+                    // A break in one piece, as RMC Story's in the morning: one to seven minutes between
+                    // two longer stretches, the one after it maybe still on air. Only on a stream that
+                    // shows it cuts itself at its breaks, by one of the shape above: one cut at its
+                    // programmes would lose a short one.
+                    if (raw.length > 0) {
+                        for (let i = 1; i + 1 < stretches.length; i++) {
+                            const before = stretches[i - 1];
+                            const block = stretches[i];
+                            const after = stretches[i + 1];
+                            if (before.end === null || block.end === null) continue;
+                            const single = length(block) >= HALF_MIN_S && length(block) <= HALF_MAX_S &&
+                                length(before) > HALF_MAX_S && (after.end === null || length(after) > HALF_MAX_S);
+                            if (single) raw.push([block.start, block.end]);
+                        }
                     }
                 }
                 return merge(raw, MERGE_GAP_S);
