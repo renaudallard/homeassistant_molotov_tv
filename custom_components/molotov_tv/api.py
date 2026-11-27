@@ -749,7 +749,6 @@ class MolotovApi:
     @staticmethod
     async def _read_discard(resp) -> None:
         await resp.read()
-        return None
 
     async def _do_request(
         self,
