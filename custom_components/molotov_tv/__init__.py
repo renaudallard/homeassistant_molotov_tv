@@ -158,7 +158,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 },
             )
             _LOGGER.info("Molotov TV sidebar panel registered")
-        except Exception as err:
+        # A panel that cannot be registered must not keep the rest from loading.
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Failed to register sidebar panel: %s", err)
 
     # Pre-import platform modules in executor to avoid blocking the event loop

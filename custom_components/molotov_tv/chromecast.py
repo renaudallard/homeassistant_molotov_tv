@@ -44,6 +44,11 @@ from .const import CAST_RECONNECT_ATTEMPTS, CAST_RECONNECT_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
+# pychromecast raises socket, protocol and its own errors with no common base,
+# and calls back on its own threads: calls into it and callbacks out of it
+# catch Exception and log, so a Chromecast that fails never takes the
+# integration down.
+
 # Timeout for blocking Chromecast operations (seconds)
 CAST_CONNECT_TIMEOUT = 30
 CAST_MEDIA_TIMEOUT = 15
@@ -133,7 +138,7 @@ class MediaStatusListener:
         """Called by pychromecast when media status changes."""
         try:
             self._callback(status)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Media status callback error: %s", err)
 
 
@@ -256,7 +261,7 @@ def _notify_connection_status(host: str, connected: bool) -> None:
     for callback in callbacks:
         try:
             callback(host, connected)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Connection callback failed: %s", err)
 
 
@@ -272,7 +277,7 @@ def get_current_app_id(host: str) -> str | None:
             app_id = getattr(cast.status, "app_id", None)
             return app_id
         return None
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Failed to get current app ID for %s: %s", host, err)
         return None
 
@@ -328,7 +333,7 @@ def is_cast_connected(host: str) -> bool:
             and cast.socket_client is not None
             and cast.socket_client.is_connected
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -362,12 +367,12 @@ def _attempt_reconnect(host: str) -> bool:
             for listener in listeners:
                 try:
                     cast.media_controller.register_status_listener(listener)
-                except Exception as err:
+                except Exception as err:  # noqa: BLE001
                     _LOGGER.debug("Failed to re-register listener: %s", err)
             if conn.ad_skip_handler is not None:
                 try:
                     cast.register_handler(conn.ad_skip_handler)
-                except Exception as err:
+                except Exception as err:  # noqa: BLE001
                     _LOGGER.debug("Failed to re-register the ad break handler: %s", err)
 
             # Update connection only if it's still registered
@@ -399,7 +404,7 @@ def _attempt_reconnect(host: str) -> bool:
             _notify_connection_status(host, True)
             return True
 
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Reconnect attempt %d/%d to %s failed: %s",
                 attempt + 1,
@@ -460,7 +465,7 @@ def _connect_to_chromecast(host: str) -> Any | None:
     except ImportError:
         _LOGGER.error("pychromecast is not available")
         return None
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Chromecast %s not reachable: %s", host, err)
         return None
     cast.wait(timeout=CAST_CONNECT_TIMEOUT)
@@ -468,7 +473,7 @@ def _connect_to_chromecast(host: str) -> Any | None:
         _LOGGER.warning("Chromecast %s connection timed out", host)
         try:
             cast.disconnect()
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Failed to disconnect: %s", err)
         return None
     return cast
@@ -617,7 +622,7 @@ def _cast_media_blocking(
             try:
                 _LOGGER.debug("Disconnecting chromecast")
                 cast.disconnect()
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Failed to disconnect: %s", err)
 
 
@@ -720,7 +725,7 @@ def _cast_switch_media_blocking(
         _LOGGER.info("Quick switch successful on %s: %s", host, title)
         return True
 
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Quick switch failed on %s: %s", host, err)
         return False
 
@@ -739,7 +744,7 @@ def get_cast_position(host: str) -> tuple[float, float] | None:
         if status and status.current_time is not None:
             duration = status.duration if status.duration else 0.0
             return (float(status.current_time), float(duration))
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Failed to get cast position: %s", err)
 
     return None
@@ -769,7 +774,7 @@ def get_cast_volume(host: str) -> tuple[float, bool] | None:
             is_muted = getattr(status, "volume_muted", False)
             if volume_level is not None:
                 return (float(volume_level), bool(is_muted))
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Failed to get cast volume: %s", err)
 
     return None
@@ -884,7 +889,7 @@ def _cast_register_listener(
             conn.cast.register_handler(handler)
             with _cast_lock:
                 conn.ad_skip_handler = handler
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Failed to register listener: %s", err)
 
 
@@ -900,7 +905,7 @@ def _cast_select_track(host: str, track_id: int) -> None:
         # Explicitly update active tracks
         cast.media_controller.update_active_track_ids([track_id])
         _LOGGER.debug("Selected track %s on %s", track_id, host)
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.error("Failed to select track: %s", err)
 
 
@@ -975,7 +980,7 @@ def _cast_control(host: str, action: str, *args: Any) -> bool:
 
         _LOGGER.debug("Cast %s completed", action)
         return True
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.error("Cast %s failed: %s", action, err)
         # Check if this was a connection issue
         if not is_cast_connected(host):

@@ -901,7 +901,8 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
                 _LOGGER.info("Quick switched to: %s", title)
                 return True
 
-        except Exception as err:
+        # Whatever failed, the caller falls back to a full cast.
+        except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Quick switch preparation failed: %s", err)
 
         return False
@@ -2634,9 +2635,11 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             if dt_util.utcnow() - fetched_at < CAST_DISCOVERY_TTL:
                 return targets
 
+        # Discovery that fails, in zeroconf or in pychromecast, finds no
+        # targets: an address can still be given by hand.
         try:
             zconf = await async_get_instance(self.hass)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Failed to get Zeroconf instance: %s", err)
             return []
 
@@ -2644,7 +2647,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
             targets = await self.hass.async_add_executor_job(
                 discover_cast_targets_blocking, zconf
             )
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Chromecast discovery failed: %s", err)
             return []
 

@@ -71,7 +71,8 @@ def _truncate_text(value: str, limit: int = 500) -> str:
 async def _read_error_body(resp) -> str | None:
     try:
         body = await resp.text()
-    except Exception:  # pragma: no cover - best effort logging
+    # Best effort, for logging: an error body that cannot be read is none.
+    except Exception:  # noqa: BLE001 # pragma: no cover
         return None
     body = body.strip()
     if not body:
