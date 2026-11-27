@@ -118,7 +118,8 @@ def decode_asset_payload(encoded: str) -> dict[str, Any] | None:
     try:
         raw = base64.urlsafe_b64decode(encoded + padding)
         data = json.loads(raw.decode("utf-8"))
-    except Exception:
+    # Not base64, not UTF-8, not JSON (all ValueError), or nested too deep.
+    except (ValueError, RecursionError):
         return None
     if isinstance(data, dict):
         return data
