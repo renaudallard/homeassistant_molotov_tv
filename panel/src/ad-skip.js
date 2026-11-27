@@ -809,6 +809,10 @@
             // readable the moment it is listed.
             const SEGMENT_NOT_YET_S = 1;
             const SEGMENT_FRESH_S = 8;
+            // A segment still refused after TRIES looks is asked for again this often: the service
+            // refuses one rendition of a small channel now and then for some minutes (Toute l'Histoire,
+            // Automoto and AB 1 in November 2026), and answers again after.
+            const SEGMENT_AGAIN_S = 60;
             const MARKED_EVERY_MS = 30000;
             const LOOK_EVERY_MS = 4000;
             // A recording has no more strips of thumbnails, nor caption segments.
@@ -1320,16 +1324,22 @@
                 return AdRule.separatorEnds(sizes, segment.time, segment.duration / sizes.length, AdRule.BLACKS[segment.height]);
             }
 
+            // Whether a segment that could not be read, as miss ({times, at}) says, is asked for again:
+            // at the next looks, TRIES times in all, then once every SEGMENT_AGAIN_S.
+            function readAgain(miss) {
+                return miss !== undefined && (miss.times < TRIES || Date.now() / 1000 - miss.at >= SEGMENT_AGAIN_S);
+            }
+
             // The blacks around the playhead (at, with the live point at end, s since 1970), read where
             // not known yet, and the breaks they make. One that cannot be read has none, which ends a
-            // break rather than making one, and is asked for again the next times, a few of them.
+            // break rather than making one, and is asked for again (see readAgain).
             async function readSeparators(at, end, mine) {
                 const from = at - SEPARATED_FAR_S;
                 const newest = videoSegments.reduce((most, s) => Math.max(most, s.time + s.duration), -Infinity);
                 const fresh = newest + (Date.now() / 1000 - videoSegmentsAt) - SEGMENT_FRESH_S;
                 const to = Math.min(end - SEGMENT_NOT_YET_S, fresh, at + SEPARATED_FAR_S);
                 const todo = videoSegments.filter(s => (!whole || s.height === WHOLE_HEIGHT) && s.time + s.duration > from && s.time < to &&
-                    (!blacks.has(s.key) || (blackMisses.has(s.key) && blackMisses.get(s.key) < TRIES)));
+                    (!blacks.has(s.key) || readAgain(blackMisses.get(s.key))));
                 const got = await each(todo, whole ? WHOLE_AT_ONCE : AT_ONCE, blacksOf);
                 if (mine !== playing) return;
                 // Every read refused by the browser: when a segment read whole is not, and part of it
@@ -1352,7 +1362,7 @@
                 todo.forEach((s, i) => {
                     const failed = typeof got[i] === 'string';
                     if (failed) {
-                        blackMisses.set(s.key, (blackMisses.get(s.key) || 0) + 1);
+                        blackMisses.set(s.key, { times: (blackMisses.has(s.key) ? blackMisses.get(s.key).times : 0) + 1, at: Date.now() / 1000 });
                         readFailures++;
                         readFailure = got[i];
                     } else {
