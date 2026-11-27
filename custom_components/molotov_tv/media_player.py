@@ -914,7 +914,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
         slot_id = self._acquire_stream_slot(session_id)
 
         try:
-            asset_url, title, is_live = self._build_cast_request(media_id)
+            asset_url, title, _is_live = self._build_cast_request(media_id)
             asset_data = await self._api.async_get_asset_stream(asset_url)
 
             _LOGGER.debug(
@@ -2699,7 +2699,7 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
     def _resolve_cast_target(self, cast_target: str | None) -> str | None:
         if not cast_target:
             return None
-        alias, host = split_manual_target(cast_target)
+        _alias, host = split_manual_target(cast_target)
         if host and host != cast_target:
             return host
         if not cast_target.startswith("media_player."):
