@@ -809,10 +809,13 @@
             // readable the moment it is listed.
             const SEGMENT_NOT_YET_S = 1;
             const SEGMENT_FRESH_S = 8;
-            // A segment still refused after TRIES looks is asked for again this often: the service
-            // refuses one rendition of a small channel now and then for some minutes (Toute l'Histoire,
-            // Automoto and AB 1 in November 2026), and answers again after.
+            // A segment still refused after TRIES looks is asked for again this much later, and twice
+            // as long after each of the SEGMENT_LATER tries that fail: the service refuses one
+            // rendition of a small channel now and then for some minutes (Toute l'Histoire, Automoto
+            // and AB 1 in November 2026), and answers again after. What it goes on refusing is let be,
+            // rather than asked for every minute while in reach.
             const SEGMENT_AGAIN_S = 60;
+            const SEGMENT_LATER = 4;
             const MARKED_EVERY_MS = 30000;
             const LOOK_EVERY_MS = 4000;
             // A recording has no more strips of thumbnails, nor caption segments.
@@ -1325,9 +1328,12 @@
             }
 
             // Whether a segment that could not be read, as miss ({times, at}) says, is asked for again:
-            // at the next looks, TRIES times in all, then once every SEGMENT_AGAIN_S.
+            // at the next looks, TRIES times in all, then SEGMENT_AGAIN_S later, twice as long after
+            // each later try, SEGMENT_LATER times.
             function readAgain(miss) {
-                return miss !== undefined && (miss.times < TRIES || Date.now() / 1000 - miss.at >= SEGMENT_AGAIN_S);
+                if (miss === undefined) return false;
+                const later = miss.times - TRIES;
+                return later < 0 || (later < SEGMENT_LATER && Date.now() / 1000 - miss.at >= SEGMENT_AGAIN_S * 2 ** later);
             }
 
             // The blacks around the playhead (at, with the live point at end, s since 1970), read where
