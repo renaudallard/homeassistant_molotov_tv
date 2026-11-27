@@ -1758,10 +1758,11 @@
                         const early = b => [b[0], b[1] - GUESS_EARLY_S];
                         if (!live) {
                             // The blacks between the adverts first, whose ends are in them, then the
-                            // pictures and captions, to some seconds before where they end.
+                            // pictures and captions, to some seconds before where they end, or to the
+                            // end of those blacks when they run into them.
                             const here = b => now >= b[0] && now < b[1] - LAST_MOMENT_S;
                             const s = recordedSeparated.filter(here)[0];
-                            const guesses = recorded.map(b => [AdRule.offeredFrom(b, recordedSeparated), early(b)[1]]);
+                            const guesses = recorded.map(b => [AdRule.offeredFrom(b, recordedSeparated), AdRule.reachSeparated(early(b), recordedSeparated)[1]]);
                             const inside = s ? [s[0], AdRule.askedEnd(s, guesses)] : guesses.filter(here)[0];
                             if (inside) end = inside[1];
                         } else if (!env.joining()) {
