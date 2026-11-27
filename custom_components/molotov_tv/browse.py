@@ -49,7 +49,6 @@ from .const import (
     MEDIA_SEARCH_PREFIX,
     MEDIA_SEARCH_RESULT_PREFIX,
 )
-from .models import EpgData
 from .helpers import (
     encode_asset_payload,
     find_on_demand_copy,
@@ -59,7 +58,7 @@ from .helpers import (
     parse_papi_on_air,
     parse_papi_recordings,
 )
-from .models import BrowseAsset
+from .models import BrowseAsset, EpgData
 
 _LOGGER = logging.getLogger(__name__)
 

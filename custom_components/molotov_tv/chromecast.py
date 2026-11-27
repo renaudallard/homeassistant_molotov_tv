@@ -31,10 +31,10 @@ Official Receiver URL: https://chromecast.cloud-01.molotov.tv/
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant

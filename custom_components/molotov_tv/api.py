@@ -35,14 +35,14 @@ refresh-and-retry, 5xx/429 backoff, auth locking) is provider-agnostic.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 import json
 import logging
 import random
-from typing import Any
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import quote, urljoin
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
