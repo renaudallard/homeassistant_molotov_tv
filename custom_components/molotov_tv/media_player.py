@@ -818,11 +818,14 @@ class MolotovTvMediaPlayer(CoordinatorEntity[MolotovEpgCoordinator], MediaPlayer
 
         # If already casting to this target, try quick switch
         session = self._cast_sessions.get(resolved_target) if resolved_target else None
-        if session and session.connected:
-            if await self._async_try_quick_switch(
+        if (
+            session
+            and session.connected
+            and await self._async_try_quick_switch(
                 media_id, receiver_type, resolved_target
-            ):
-                return
+            )
+        ):
+            return
 
         # Fall back to full cast
         await self._async_cast_media(media_id, target, receiver_type=receiver_type)
